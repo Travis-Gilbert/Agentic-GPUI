@@ -9,6 +9,17 @@ pub struct GrainParams {
     pub opacity_sidebar: f32,
     pub scale: f32,
     pub speed: f32,
+    pub contrast: f32,
+    pub roughness: f32,
+    pub fiber: f32,
+    pub fiber_size: f32,
+    pub crumples: f32,
+    pub crumple_size: f32,
+    pub folds: f32,
+    pub fold_count: f32,
+    pub fade: f32,
+    pub drops: f32,
+    pub seed: f32,
 }
 
 /// Renderer-neutral canvas dot-grid parameters.
@@ -29,6 +40,17 @@ impl TokenSet {
             opacity_sidebar: self.required_number("texture.grain.opacity.sidebar"),
             scale: self.required_number("texture.grain.scale"),
             speed: self.required_number("texture.grain.speed"),
+            contrast: self.required_number("texture.grain.contrast"),
+            roughness: self.required_number("texture.grain.roughness"),
+            fiber: self.required_number("texture.grain.fiber"),
+            fiber_size: self.required_number("texture.grain.fiberSize"),
+            crumples: self.required_number("texture.grain.crumples"),
+            crumple_size: self.required_number("texture.grain.crumpleSize"),
+            folds: self.required_number("texture.grain.folds"),
+            fold_count: self.required_number("texture.grain.foldCount"),
+            fade: self.required_number("texture.grain.fade"),
+            drops: self.required_number("texture.grain.drops"),
+            seed: self.required_number("texture.grain.seed"),
         }
     }
 

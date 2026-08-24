@@ -92,6 +92,14 @@ impl TokenSet {
             insert_neutral(&mut neutrals, path, lightness, chroma, law.hue);
         }
 
+        let raw = raw
+            .keys()
+            .map(|path| {
+                resolve_alias_value(path, &raw, &neutrals, &mut BTreeSet::new())
+                    .map(|value| (path.clone(), value))
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
+
         Ok(Self { law, raw, neutrals })
     }
 
@@ -260,6 +268,52 @@ fn neutral_lightness(raw: &BTreeMap<String, Value>, path: &str) -> Result<f32, T
 
 fn alias_path(value: &str) -> Option<&str> {
     value.strip_prefix('{')?.strip_suffix('}')
+}
+
+fn resolve_alias_value(
+    path: &str,
+    raw: &BTreeMap<String, Value>,
+    neutrals: &BTreeMap<String, NeutralSample>,
+    seen: &mut BTreeSet<String>,
+) -> Result<Value, TokenError> {
+    if !seen.insert(path.to_owned()) {
+        return Err(TokenError::AliasCycle(path.to_owned()));
+    }
+    if let Some(neutral) = neutrals.get(path) {
+        return Ok(Value::String(neutral.color.hex()));
+    }
+    let value = raw
+        .get(path)
+        .ok_or_else(|| TokenError::MissingToken(path.to_owned()))?;
+    resolve_nested_aliases(value, raw, neutrals, seen)
+}
+
+fn resolve_nested_aliases(
+    value: &Value,
+    raw: &BTreeMap<String, Value>,
+    neutrals: &BTreeMap<String, NeutralSample>,
+    seen: &mut BTreeSet<String>,
+) -> Result<Value, TokenError> {
+    match value {
+        Value::String(string) => alias_path(string).map_or_else(
+            || Ok(value.clone()),
+            |alias| resolve_alias_value(alias, raw, neutrals, seen),
+        ),
+        Value::Array(values) => values
+            .iter()
+            .map(|value| resolve_nested_aliases(value, raw, neutrals, &mut seen.clone()))
+            .collect::<Result<Vec<_>, _>>()
+            .map(Value::Array),
+        Value::Object(values) => values
+            .iter()
+            .map(|(key, value)| {
+                resolve_nested_aliases(value, raw, neutrals, &mut seen.clone())
+                    .map(|value| (key.clone(), value))
+            })
+            .collect::<Result<serde_json::Map<_, _>, _>>()
+            .map(Value::Object),
+        _ => Ok(value.clone()),
+    }
 }
 
 fn collect_tokens(value: &Value, prefix: &str, output: &mut BTreeMap<String, Value>) {

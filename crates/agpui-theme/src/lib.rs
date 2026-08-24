@@ -11,7 +11,7 @@ mod tokens;
 use std::sync::OnceLock;
 
 pub use color::Rgba;
-pub use grain::{bake_grain_png, grain_parameter_hash, GrainBakeReceipt};
+pub use grain::{bake_grain_png, grain_parameter_hash, GrainBakeReceipt, GrainOracleReceipt};
 pub use prose::{ProseHighlightStyle, PROSE_CAPTURES};
 pub use texture::{DotGridParams, GrainParams};
 pub use tokens::{NeutralLaw, NeutralSample, TokenSet};
@@ -169,6 +169,17 @@ mod tests {
         assert_eq!(params.opacity_sidebar, 0.07);
         assert_eq!(params.scale, 0.8);
         assert_eq!(params.speed, 0.0);
+        assert_eq!(params.contrast, 1.0);
+        assert_eq!(params.roughness, 1.0);
+        assert_eq!(params.fiber, 0.0);
+        assert_eq!(params.fiber_size, 0.2);
+        assert_eq!(params.crumples, 0.0);
+        assert_eq!(params.crumple_size, 0.35);
+        assert_eq!(params.folds, 0.0);
+        assert_eq!(params.fold_count, 1.0);
+        assert_eq!(params.fade, 0.0);
+        assert_eq!(params.drops, 0.0);
+        assert_eq!(params.seed, 5.8);
     }
 
     #[test]
@@ -296,8 +307,52 @@ mod tests {
         assert_eq!(first_receipt, second_receipt);
         assert_eq!(fs::read(&first).unwrap(), fs::read(&second).unwrap());
         assert_eq!(first_receipt.parameter_hash, grain_parameter_hash(params));
+        assert_eq!(first_receipt.oracle.package, "@paper-design/shaders");
+        assert_eq!(first_receipt.oracle.version, "0.0.77");
+        assert_eq!(
+            first_receipt.oracle.shader_sha256,
+            "b2fa3e8281bf85f9505880056d0cec947454604f4c780e11257ffec416d7e8ef"
+        );
+        assert_eq!(
+            first_receipt.oracle.noise_sha256,
+            "5116a06c428a75e2db9bd55062c560bb02600383ee54da007f1628e845b2b73a"
+        );
+        assert_eq!(
+            first_receipt.oracle.bake_contract,
+            "paperTexture-static-opaque-page-v1"
+        );
         for path in [first, second, first_sidecar, second_sidecar] {
             let _ = fs::remove_file(path);
+        }
+    }
+
+    #[test]
+    fn grain_hash_covers_every_shader_parameter() {
+        let baseline = TokenSet::builtin().grain();
+        let baseline_hash = grain_parameter_hash(baseline);
+        let mutations: [fn(&mut GrainParams); 17] = [
+            |value| value.color_back.r ^= 1,
+            |value| value.color_front.r ^= 1,
+            |value| value.opacity_page += 0.001,
+            |value| value.opacity_sidebar += 0.001,
+            |value| value.scale += 0.001,
+            |value| value.speed += 0.001,
+            |value| value.contrast += 0.001,
+            |value| value.roughness += 0.001,
+            |value| value.fiber += 0.001,
+            |value| value.fiber_size += 0.001,
+            |value| value.crumples += 0.001,
+            |value| value.crumple_size += 0.001,
+            |value| value.folds += 0.001,
+            |value| value.fold_count += 0.001,
+            |value| value.fade += 0.001,
+            |value| value.drops += 0.001,
+            |value| value.seed += 0.001,
+        ];
+        for mutate in mutations {
+            let mut changed = baseline;
+            mutate(&mut changed);
+            assert_ne!(grain_parameter_hash(changed), baseline_hash);
         }
     }
 
@@ -307,6 +362,15 @@ mod tests {
         assert!(matches!(
             TokenSet::from_dtcg_str(&source),
             Err(TokenError::AuthoredNeutral(path)) if path == "color.cream.25"
+        ));
+    }
+
+    #[test]
+    fn malformed_alias_is_rejected_during_parse() {
+        let source = TOKEN_SOURCE.replacen("{surface.page}", "{missing.surface}", 1);
+        assert!(matches!(
+            TokenSet::from_dtcg_str(&source),
+            Err(TokenError::MissingToken(path)) if path == "missing.surface"
         ));
     }
 }
