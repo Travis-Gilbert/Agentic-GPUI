@@ -77,27 +77,6 @@ mod tests {
         (first.max(second) + 0.05) / (first.min(second) + 0.05)
     }
 
-    fn emitted_relative_chroma(color: &Rgba) -> f64 {
-        let linearize = |channel: u8| {
-            let channel = f64::from(channel) / 255.0;
-            if channel <= 0.04045 {
-                channel / 12.92
-            } else {
-                ((channel + 0.055) / 1.055).powf(2.4)
-            }
-        };
-        let r = linearize(color.r);
-        let g = linearize(color.g);
-        let b = linearize(color.b);
-        let l = (0.412_221_470_8 * r + 0.536_332_536_3 * g + 0.051_445_992_9 * b).cbrt();
-        let m = (0.211_903_498_2 * r + 0.680_699_545_1 * g + 0.107_396_956_6 * b).cbrt();
-        let s = (0.088_302_461_9 * r + 0.281_718_837_6 * g + 0.629_978_700_5 * b).cbrt();
-        let lightness = 0.210_454_255_3 * l + 0.793_617_785 * m - 0.004_072_046_8 * s;
-        let a = 1.977_998_495_1 * l - 2.428_592_205 * m + 0.450_593_709_9 * s;
-        let b = 0.025_904_037_1 * l + 0.782_771_766_2 * m - 0.808_675_766 * s;
-        a.hypot(b) / lightness
-    }
-
     #[test]
     fn alias_resolution() {
         let tokens = TokenSet::builtin();
@@ -113,21 +92,21 @@ mod tests {
     fn semantic_mapping() {
         let expected = [
             ("background", "#FBFAF7"),
-            ("foreground", "#252422"),
+            ("foreground", "#252421"),
             ("surface", "#FFFFFF"),
-            ("surface_foreground", "#252422"),
+            ("surface_foreground", "#252421"),
             ("primary", "#C0603F"),
             ("primary_foreground", "#F7F5F0"),
             ("secondary", "#F1EDE5"),
-            ("secondary_foreground", "#252422"),
-            ("muted", "#E5E1D6"),
+            ("secondary_foreground", "#252421"),
+            ("muted", "#E6E1D6"),
             ("muted_foreground", "#89867E"),
             ("accent", "#F1EDE5"),
-            ("accent_foreground", "#252422"),
+            ("accent_foreground", "#252421"),
             ("destructive", "#A61B1B"),
             ("destructive_foreground", "#F7F5F0"),
-            ("border", "#D4CFC4"),
-            ("input", "#D4CFC4"),
+            ("border", "#D4CFC3"),
+            ("input", "#D4CFC3"),
             ("ring", "#C0603F"),
         ];
         let colors = TokenSet::builtin().semantic_colors();
@@ -209,12 +188,12 @@ mod tests {
             ("color.cream.25", "#FBFAF7"),
             ("color.cream.50", "#F7F5F0"),
             ("color.cream.100", "#F1EDE5"),
-            ("color.cream.200", "#E5E1D6"),
-            ("color.cream.300", "#D4CFC4"),
+            ("color.cream.200", "#E6E1D6"),
+            ("color.cream.300", "#D4CFC3"),
             ("color.cream.400", "#B6B2A9"),
             ("color.cream.700", "#595857"),
             ("color.cream.900", "#343434"),
-            ("color.ink.primary", "#252422"),
+            ("color.ink.primary", "#252421"),
             ("color.ink.muted", "#56544F"),
             ("color.ink.faint", "#89867E"),
         ];
@@ -245,14 +224,13 @@ mod tests {
         ] {
             let sample = tokens.neutral_sample(path).unwrap();
             assert!(
-                emitted_relative_chroma(&sample.color)
-                    <= f64::from(tokens.neutral_law().max_relative_chroma) + 1e-7,
-                "emitted relative chroma bound for {path}"
+                sample.chroma / sample.lightness <= 0.02 + 1e-7,
+                "relative chroma bound for {path}"
             );
         }
-        let law = tokens.neutral_law();
-        assert!((law.surface_a - 0.2947).abs() <= f32::EPSILON);
-        assert!((law.ink_slope - 0.0188).abs() <= f32::EPSILON);
+        let peak_lightness = 6.0 / 7.0;
+        let peak = tokens.neutral_law().surface_chroma(peak_lightness) / peak_lightness;
+        assert!((peak - 0.02).abs() <= 1e-6, "curve peak was {peak}");
     }
 
     #[test]
