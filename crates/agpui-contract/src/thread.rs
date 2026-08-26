@@ -170,6 +170,31 @@ pub enum PartStatus {
     Failed,
 }
 
+/// Whether a usage part should name the provider model in product chrome.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelDisclosure {
+    /// The model is an implementation detail of the managed Theorem agent.
+    #[default]
+    TheoremManaged,
+    /// The principal supplied the provider credential and should see which of
+    /// their configured models handled the turn.
+    UserProvided,
+}
+
+impl ModelDisclosure {
+    /// Format user-facing usage without leaking a managed model choice.
+    #[must_use]
+    pub fn usage_label(self, input_tokens: u64, output_tokens: u64, model: &str) -> String {
+        let tokens = format!("{input_tokens} in - {output_tokens} out");
+        match self {
+            Self::TheoremManaged => tokens,
+            Self::UserProvided if model.trim().is_empty() => tokens,
+            Self::UserProvided => format!("{model} - {tokens}"),
+        }
+    }
+}
+
 impl PartStatus {
     /// Whether this part is still moving, which gates every motion effect.
     #[must_use]
@@ -277,6 +302,8 @@ pub enum ThreadPart {
         input_tokens: u64,
         output_tokens: u64,
         model: String,
+        #[serde(default)]
+        model_disclosure: ModelDisclosure,
     },
     /// A part the runtime retained byte-for-byte but this projection does not
     /// name. It renders as an inert notice and acquires no authority.
@@ -735,5 +762,21 @@ mod tests {
         for field in ["partId", "toolCallId", "toolName", "argumentsPreview"] {
             assert!(wire.contains(field), "{field} missing from {wire}");
         }
+    }
+
+    #[test]
+    fn managed_usage_hides_the_model_name() {
+        assert_eq!(
+            ModelDisclosure::TheoremManaged.usage_label(4_190, 105, "qwen3.7-max"),
+            "4190 in - 105 out"
+        );
+    }
+
+    #[test]
+    fn user_provided_usage_names_the_model() {
+        assert_eq!(
+            ModelDisclosure::UserProvided.usage_label(120, 32, "claude-opus-5"),
+            "claude-opus-5 - 120 in - 32 out"
+        );
     }
 }
