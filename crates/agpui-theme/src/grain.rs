@@ -97,6 +97,10 @@ pub fn bake_grain_png(
         let mut encoder = png::Encoder::new(&mut png_bytes, TILE_SIZE, TILE_SIZE);
         encoder.set_color(png::ColorType::Rgba);
         encoder.set_depth(png::BitDepth::Eight);
+        // Polars enables `flate2/zlib-rs` in the connected product graph.
+        // Pin png's backend-independent encoder so Cargo feature unification
+        // cannot change the byte identity of this generated artifact.
+        encoder.set_deflate_compression(png::DeflateCompression::FdeflateUltraFast);
         let mut writer = encoder.write_header()?;
         writer.write_image_data(&tile_rgba(params))?;
     }
