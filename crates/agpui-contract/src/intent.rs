@@ -14,6 +14,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::composer::{ComposerQueueLane, ComposerQuote, ComposerTriggerKind};
+use crate::thread::{MessageFeedback, ThreadSuggestionAction};
 
 /// What the composer asks the host to do. The leaf never sends a run itself.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,6 +71,36 @@ const fn is_false(value: &bool) -> bool {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "intent", rename_all = "snake_case")]
 pub enum ThreadIntent {
+    /// Replace this exact projected message with the shared edit composer.
+    BeginEdit {
+        message_id: String,
+        edit_index: usize,
+    },
+    /// Fork at this assistant turn and run its preceding user message again.
+    Reload {
+        message_id: String,
+        edit_index: usize,
+    },
+    /// Select one opaque branch identity supplied by the host projection.
+    SwitchBranch {
+        branch_id: String,
+        #[serde(default, skip_serializing_if = "is_false")]
+        switch_during_run: bool,
+    },
+    /// Submit feedback through a host adapter. Projection policy decides
+    /// whether this intent can be raised at all.
+    Feedback {
+        message_id: String,
+        feedback: MessageFeedback,
+    },
+    /// Ask the host to materialize the canonical message copy text.
+    ExportMessage { message_id: String, text: String },
+    /// Apply one host-authorized suggestion from inside the viewport.
+    Suggestion {
+        suggestion_id: String,
+        text: String,
+        action: ThreadSuggestionAction,
+    },
     /// Answer an open approval. `approved` is the reader's literal answer; the
     /// leaf never supplies one on their behalf.
     Approval { approval_id: String, approved: bool },
@@ -163,6 +194,46 @@ mod tests {
         assert_eq!(wire["source"], "composer");
         assert_eq!(
             serde_json::from_value::<LeafPayload>(wire).unwrap(),
+            payload
+        );
+    }
+
+    #[test]
+    fn message_behavior_intents_round_trip_opaque_identity_and_payloads() {
+        let payload = LeafPayload::Thread {
+            intents: vec![
+                ThreadIntent::BeginEdit {
+                    message_id: "chatmessage_user".to_owned(),
+                    edit_index: 2,
+                },
+                ThreadIntent::Reload {
+                    message_id: "chatmessage_assistant".to_owned(),
+                    edit_index: 3,
+                },
+                ThreadIntent::SwitchBranch {
+                    branch_id: "chatbranch_opaque".to_owned(),
+                    switch_during_run: true,
+                },
+                ThreadIntent::Feedback {
+                    message_id: "chatmessage_assistant".to_owned(),
+                    feedback: MessageFeedback::Negative,
+                },
+                ThreadIntent::ExportMessage {
+                    message_id: "chatmessage_assistant".to_owned(),
+                    text: "canonical copy text".to_owned(),
+                },
+                ThreadIntent::Suggestion {
+                    suggestion_id: "suggestion_follow_up".to_owned(),
+                    text: "Continue".to_owned(),
+                    action: ThreadSuggestionAction::Insert,
+                },
+            ],
+        };
+        let wire = serde_json::to_value(&payload).expect("message intents serialize");
+        assert_eq!(wire["intents"][2]["branch_id"], "chatbranch_opaque");
+        assert_eq!(wire["intents"][2]["switch_during_run"], true);
+        assert_eq!(
+            serde_json::from_value::<LeafPayload>(wire).expect("message intents parse"),
             payload
         );
     }

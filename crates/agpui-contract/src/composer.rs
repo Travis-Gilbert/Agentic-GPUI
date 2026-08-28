@@ -85,6 +85,26 @@ pub struct ComposerQuote {
     pub text: String,
 }
 
+/// Safe display chip lifted from a message while editing it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComposerEditChip {
+    pub chip_id: String,
+    pub kind: String,
+    pub label: String,
+}
+
+/// Renderer-facing facts for the one active edit session.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComposerEdit {
+    pub source_message_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_message_id: Option<String>,
+    #[serde(default)]
+    pub chips: Vec<ComposerEditChip>,
+}
+
 /// The queue lane is part of composer chrome, never part of transcript data.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -169,6 +189,8 @@ pub struct ComposerDocument {
     pub run_state: ThreadRunState,
     #[serde(default)]
     pub mode: ComposerMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edit: Option<ComposerEdit>,
     #[serde(default)]
     pub submit_mode: ComposerSubmitMode,
     #[serde(default)]
@@ -270,7 +292,11 @@ impl ComposerDocument {
         {
             return SendAffordance::Blocked(SendBlock::AttachmentPending);
         }
-        if live_draft.trim().is_empty() && self.attachments.is_empty() {
+        let has_edit_chips = self
+            .edit
+            .as_ref()
+            .is_some_and(|edit| !edit.chips.is_empty());
+        if live_draft.trim().is_empty() && self.attachments.is_empty() && !has_edit_chips {
             return SendAffordance::Blocked(SendBlock::Empty);
         }
         if self.mode != ComposerMode::Edit && self.is_send_disabled {

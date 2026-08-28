@@ -37,6 +37,9 @@ pub struct ThreadDocument {
     pub pinned_to_bottom: bool,
     #[serde(default)]
     pub messages: Vec<ThreadMessage>,
+    /// Empty- and follow-up suggestions rendered inside the thread viewport.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub suggestions: Vec<ThreadSuggestion>,
 }
 
 const fn default_true() -> bool {
@@ -121,6 +124,150 @@ pub enum ThreadActor {
     System,
 }
 
+/// What selecting one viewport suggestion does to the ordinary composer.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThreadSuggestionAction {
+    /// Submit the suggestion as a message. The existing composer draft is not
+    /// cleared because the suggestion does not originate in that editor.
+    #[default]
+    Send,
+    /// Insert at the current caret when the host supports it.
+    Insert,
+    /// Replace the ordinary composer draft.
+    Replace,
+}
+
+/// One host-authorized prompt chip in the viewport.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadSuggestion {
+    pub suggestion_id: String,
+    pub text: String,
+    #[serde(default)]
+    pub action: ThreadSuggestionAction,
+}
+
+/// Message-level lifecycle used by the Error primitive.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThreadMessageState {
+    #[default]
+    Complete,
+    Running,
+    Incomplete,
+}
+
+/// Why an incomplete message stopped.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThreadMessageReason {
+    Error,
+    Cancelled,
+    Length,
+    Other,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadMessageStatus {
+    #[serde(default)]
+    pub state: ThreadMessageState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<ThreadMessageReason>,
+}
+
+impl ThreadMessageStatus {
+    /// Assistant UI mounts its Error primitive only for this exact pair.
+    #[must_use]
+    pub const fn shows_error(self) -> bool {
+        matches!(self.state, ThreadMessageState::Incomplete)
+            && matches!(self.reason, Some(ThreadMessageReason::Error))
+    }
+
+    fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageFeedback {
+    Positive,
+    Negative,
+}
+
+/// Host-decided message action capabilities and canonical copy text.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageActions {
+    #[serde(default)]
+    pub copy_text: String,
+    #[serde(default)]
+    pub can_copy: bool,
+    #[serde(default)]
+    pub can_edit: bool,
+    #[serde(default)]
+    pub can_reload: bool,
+    #[serde(default)]
+    pub can_feedback: bool,
+    #[serde(default)]
+    pub can_export: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub submitted_feedback: Option<MessageFeedback>,
+}
+
+impl MessageActions {
+    fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+}
+
+/// Branch-picker facts for the message that owns the active head choice.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageBranch {
+    /// Opaque host identity. The local runtime uses decimal branch numbers;
+    /// the durable chat service uses `chatbranch_*` records.
+    pub branch_id: String,
+    #[serde(default = "default_one")]
+    pub number: usize,
+    #[serde(default = "default_one")]
+    pub count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_branch_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_branch_id: Option<String>,
+    #[serde(default)]
+    pub can_switch: bool,
+    #[serde(default)]
+    pub switch_during_run: bool,
+}
+
+const fn default_one() -> usize {
+    1
+}
+
+impl Default for MessageBranch {
+    fn default() -> Self {
+        Self {
+            branch_id: String::new(),
+            number: 1,
+            count: 1,
+            previous_branch_id: None,
+            next_branch_id: None,
+            can_switch: false,
+            switch_during_run: false,
+        }
+    }
+}
+
+impl MessageBranch {
+    fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+}
+
 impl ThreadActor {
     /// Semantic actor name exposed to assistive technology.
     ///
@@ -143,6 +290,17 @@ impl ThreadActor {
 pub struct ThreadMessage {
     pub message_id: String,
     pub actor: ThreadActor,
+    #[serde(default, skip_serializing_if = "ThreadMessageStatus::is_default")]
+    pub status: ThreadMessageStatus,
+    /// Index in the active transcript used only as a validated intent key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edit_index: Option<usize>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub editing: bool,
+    #[serde(default, skip_serializing_if = "MessageActions::is_default")]
+    pub actions: MessageActions,
+    #[serde(default, skip_serializing_if = "MessageBranch::is_default")]
+    pub branch: MessageBranch,
     #[serde(default)]
     pub parts: Vec<ThreadPart>,
 }
@@ -261,6 +419,9 @@ pub enum ThreadPart {
         /// Already redacted upstream. The leaf never sees raw arguments.
         #[serde(default)]
         arguments_preview: String,
+        /// Read-only subagent transcript owned by this tool part.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        messages: Vec<ThreadMessage>,
     },
     ToolResult {
         part_id: String,
@@ -568,11 +729,13 @@ mod tests {
                     message_id: "m1".to_owned(),
                     actor: ThreadActor::Theorem,
                     parts: vec![text_part("p1", PartStatus::Running)],
+                    ..ThreadMessage::default()
                 },
                 ThreadMessage {
                     message_id: "m2".to_owned(),
                     actor: ThreadActor::Theorem,
                     parts: vec![text_part("p2", PartStatus::Complete)],
+                    ..ThreadMessage::default()
                 },
             ],
             ..ThreadDocument::default()
@@ -592,6 +755,7 @@ mod tests {
                 message_id: "m1".to_owned(),
                 actor: ThreadActor::Theorem,
                 parts: vec![text_part("p1", PartStatus::Running)],
+                ..ThreadMessage::default()
             }],
             ..ThreadDocument::default()
         };
@@ -652,12 +816,86 @@ mod tests {
                         expanded: true,
                     }),
                 ],
+                ..ThreadMessage::default()
             }],
+            suggestions: Vec::new(),
         };
         let encoded = serde_json::to_string(&document).expect("document serializes");
         let decoded: ThreadDocument = serde_json::from_str(&encoded).expect("document decodes");
         assert_eq!(decoded, document);
         decoded.validate().expect("the pinned schema validates");
+    }
+
+    #[test]
+    fn neutral_message_behavior_is_sparse_but_active_behavior_round_trips() {
+        let neutral = ThreadMessage {
+            message_id: "neutral".to_owned(),
+            actor: ThreadActor::Theorem,
+            parts: vec![text_part("neutral-text", PartStatus::Complete)],
+            ..ThreadMessage::default()
+        };
+        let neutral_wire = serde_json::to_value(&neutral).expect("neutral message serializes");
+        for absent in ["status", "editIndex", "editing", "actions", "branch"] {
+            assert!(
+                neutral_wire.get(absent).is_none(),
+                "{absent} leaked into {neutral_wire}"
+            );
+        }
+
+        let active = ThreadMessage {
+            message_id: "active".to_owned(),
+            actor: ThreadActor::Theorem,
+            status: ThreadMessageStatus {
+                state: ThreadMessageState::Incomplete,
+                reason: Some(ThreadMessageReason::Error),
+            },
+            edit_index: Some(4),
+            editing: true,
+            actions: MessageActions {
+                copy_text: "copy me".to_owned(),
+                can_copy: true,
+                can_edit: true,
+                can_reload: true,
+                can_feedback: true,
+                can_export: true,
+                submitted_feedback: Some(MessageFeedback::Positive),
+            },
+            branch: MessageBranch {
+                branch_id: "chatbranch_selected".to_owned(),
+                number: 2,
+                count: 3,
+                previous_branch_id: Some("chatbranch_previous".to_owned()),
+                next_branch_id: Some("chatbranch_next".to_owned()),
+                can_switch: true,
+                switch_during_run: true,
+            },
+            parts: vec![text_part("active-text", PartStatus::Incomplete)],
+        };
+        let active_wire = serde_json::to_value(&active).expect("active message serializes");
+        for present in ["status", "editIndex", "editing", "actions", "branch"] {
+            assert!(
+                active_wire.get(present).is_some(),
+                "{present} missing from {active_wire}"
+            );
+        }
+        assert_eq!(
+            serde_json::from_value::<ThreadMessage>(active_wire).expect("active message parses"),
+            active
+        );
+        assert!(active.status.shows_error());
+        for reason in [
+            ThreadMessageReason::Cancelled,
+            ThreadMessageReason::Length,
+            ThreadMessageReason::Other,
+        ] {
+            assert!(
+                !ThreadMessageStatus {
+                    state: ThreadMessageState::Incomplete,
+                    reason: Some(reason),
+                }
+                .shows_error()
+            );
+        }
     }
 
     fn approval(status: PartStatus, approved: Option<bool>) -> ApprovalPart {
@@ -681,9 +919,11 @@ mod tests {
             approval(PartStatus::RequiresAction, Some(true)).outcome(),
             ApprovalOutcome::Awaiting
         );
-        assert!(approval(PartStatus::RequiresAction, None)
-            .outcome()
-            .is_open());
+        assert!(
+            approval(PartStatus::RequiresAction, None)
+                .outcome()
+                .is_open()
+        );
     }
 
     #[test]
@@ -743,6 +983,7 @@ mod tests {
                         expanded: false,
                     }),
                 ],
+                ..ThreadMessage::default()
             }],
             ..ThreadDocument::default()
         };
@@ -766,6 +1007,7 @@ mod tests {
             tool_name: "graph.read".to_owned(),
             status: PartStatus::Running,
             arguments_preview: "{}".to_owned(),
+            messages: Vec::new(),
         })
         .expect("the part serializes");
         for field in ["partId", "toolCallId", "toolName", "argumentsPreview"] {
