@@ -13,6 +13,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::composer::{ComposerQueueLane, ComposerQuote, ComposerTriggerKind};
+
 /// What the composer asks the host to do. The leaf never sends a run itself.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "intent", rename_all = "snake_case")]
@@ -21,9 +23,17 @@ pub enum ComposerIntent {
     /// refuses, it restores the draft by bumping `draft_revision`.
     Submit {
         text: String,
+        /// Optional quote metadata captured at the same instant as the text.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        quote: Option<ComposerQuote>,
+        /// Queue into the interrupting lane rather than the ordinary FIFO lane.
+        #[serde(default, skip_serializing_if = "is_false")]
+        steer: bool,
     },
     /// Abort the live run.
     Cancel,
+    /// Leave an edit composer without cancelling the thread's active run.
+    EndEdit,
     /// The draft moved. The host persists it per scope; it is not a command.
     DraftChanged {
         text: String,
@@ -33,6 +43,25 @@ pub enum ComposerIntent {
     RemoveAttachment {
         attachment_id: String,
     },
+    /// Clear the quote without mutating the text draft.
+    DismissQuote,
+    MoveQueueItem {
+        queue_item_id: String,
+        lane: ComposerQueueLane,
+    },
+    RemoveQueueItem {
+        queue_item_id: String,
+    },
+    /// A host-supplied slash command or mention was chosen. GPUI has already
+    /// applied the item's editor-local insertion text.
+    SelectTrigger {
+        trigger_item_id: String,
+        kind: ComposerTriggerKind,
+    },
+}
+
+const fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// Something the reader asked for that only the host can do.
@@ -81,6 +110,8 @@ mod tests {
     fn intents_are_internally_tagged_so_a_host_can_match_on_one_key() {
         let wire = serde_json::to_value(ComposerIntent::Submit {
             text: "hello".into(),
+            quote: None,
+            steer: false,
         })
         .unwrap();
         assert_eq!(wire["intent"], "submit");
@@ -106,6 +137,21 @@ mod tests {
             serde_json::from_value::<ComposerIntent>(wire).unwrap(),
             ComposerIntent::Cancel
         );
+
+        let wire = serde_json::to_value(ComposerIntent::EndEdit).unwrap();
+        assert_eq!(wire, serde_json::json!({"intent": "end_edit"}));
+    }
+
+    #[test]
+    fn trigger_selection_returns_stable_identity_to_the_host() {
+        let wire = serde_json::to_value(ComposerIntent::SelectTrigger {
+            trigger_item_id: "mention-ada".to_owned(),
+            kind: ComposerTriggerKind::Mention,
+        })
+        .unwrap();
+        assert_eq!(wire["intent"], "select_trigger");
+        assert_eq!(wire["trigger_item_id"], "mention-ada");
+        assert_eq!(wire["kind"], "mention");
     }
 
     #[test]
