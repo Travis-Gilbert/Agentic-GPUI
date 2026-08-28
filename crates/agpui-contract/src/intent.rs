@@ -61,16 +61,18 @@ pub enum ThreadIntent {
     OpenCitation { source_id: String },
 }
 
-/// One drained batch from the thread leaf, tagged by which queue spoke.
+/// One drained batch from a leaf, tagged by which queue spoke.
 ///
 /// The thread leaf owns two queues - the transcript's and the composer's - so
 /// a drained payload has to say which one it came from. The drawer leaf raises
-/// a bare command and needs no envelope.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// a typed canvas command and uses the same envelope so the host can match on
+/// `source`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "source", rename_all = "snake_case")]
 pub enum LeafPayload {
     Thread { intents: Vec<ThreadIntent> },
     Composer { intents: Vec<ComposerIntent> },
+    Drawer { command: serde_json::Value },
 }
 
 #[cfg(test)]
@@ -115,6 +117,24 @@ mod tests {
         };
         let wire = serde_json::to_value(&payload).unwrap();
         assert_eq!(wire["source"], "composer");
+        assert_eq!(
+            serde_json::from_value::<LeafPayload>(wire).unwrap(),
+            payload
+        );
+    }
+
+    #[test]
+    fn a_drawer_command_arrives_in_the_same_envelope() {
+        let payload = LeafPayload::Drawer {
+            command: serde_json::json!({
+                "schema": "theorem-surface-command/1",
+                "action": "select",
+                "programId": "program-1"
+            }),
+        };
+        let wire = serde_json::to_value(&payload).unwrap();
+        assert_eq!(wire["source"], "drawer");
+        assert_eq!(wire["command"]["action"], "select");
         assert_eq!(
             serde_json::from_value::<LeafPayload>(wire).unwrap(),
             payload
