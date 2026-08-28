@@ -122,7 +122,9 @@ pub enum ThreadActor {
 }
 
 impl ThreadActor {
-    /// Display name shown beside the turn.
+    /// Semantic actor name exposed to assistive technology.
+    ///
+    /// Product chrome does not render this as a visible per-message label.
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
@@ -130,17 +132,6 @@ impl ThreadActor {
             Self::Theorem => "Theorem",
             Self::Insight => "Insight",
             Self::System => "System",
-        }
-    }
-
-    /// Single-glyph avatar seed. Kept here so both renderers agree.
-    #[must_use]
-    pub const fn initial(self) -> &'static str {
-        match self {
-            Self::User => "Y",
-            Self::Theorem => "T",
-            Self::Insight => "I",
-            Self::System => "S",
         }
     }
 }
@@ -168,6 +159,39 @@ pub enum PartStatus {
     Complete,
     Incomplete,
     Failed,
+}
+
+/// Whether a usage part should name the provider model in product chrome.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelDisclosure {
+    /// The model is an implementation detail of the managed Theorem agent.
+    #[default]
+    TheoremManaged,
+    /// The principal supplied the provider credential and should see which of
+    /// their configured models handled the turn.
+    UserProvided,
+}
+
+impl ModelDisclosure {
+    /// Provider/model attribution permitted in the transcript.
+    ///
+    /// Token counts deliberately do not ride this label. They belong to the
+    /// inspector, while this method answers only whether the principal owns
+    /// the provider configuration strongly enough for its identity to be
+    /// useful product information.
+    #[must_use]
+    pub fn transcript_attribution(self, provider: &str, model: &str) -> Option<String> {
+        let provider = provider.trim();
+        let model = model.trim();
+        match self {
+            Self::TheoremManaged => None,
+            Self::UserProvided if provider.is_empty() && model.is_empty() => None,
+            Self::UserProvided if provider.is_empty() => Some(model.to_owned()),
+            Self::UserProvided if model.is_empty() => Some(provider.to_owned()),
+            Self::UserProvided => Some(format!("{provider}/{model}")),
+        }
+    }
 }
 
 impl PartStatus {
@@ -217,6 +241,14 @@ pub enum ThreadPart {
     Progress {
         part_id: String,
         label: String,
+        /// Opaque invocation identity used only to keep one expandable lane
+        /// stable as its progress part moves from running to complete.
+        #[serde(default)]
+        lane_id: String,
+        /// Product-safe role such as "Drafting" or "Verification". This is
+        /// never a provider, model, or internal head id.
+        #[serde(default)]
+        lane_label: String,
         #[serde(default)]
         status: PartStatus,
     },
@@ -276,7 +308,11 @@ pub enum ThreadPart {
         part_id: String,
         input_tokens: u64,
         output_tokens: u64,
+        #[serde(default)]
+        provider: String,
         model: String,
+        #[serde(default)]
+        model_disclosure: ModelDisclosure,
     },
     /// A part the runtime retained byte-for-byte but this projection does not
     /// name. It renders as an inert notice and acquires no authority.
@@ -735,5 +771,33 @@ mod tests {
         for field in ["partId", "toolCallId", "toolName", "argumentsPreview"] {
             assert!(wire.contains(field), "{field} missing from {wire}");
         }
+    }
+
+    #[test]
+    fn managed_usage_has_no_transcript_attribution() {
+        assert_eq!(
+            ModelDisclosure::TheoremManaged.transcript_attribution("dashscope", "qwen3.7-max"),
+            None
+        );
+    }
+
+    #[test]
+    fn user_provided_usage_names_provider_and_model_without_tokens() {
+        assert_eq!(
+            ModelDisclosure::UserProvided.transcript_attribution("anthropic", "claude-opus-5"),
+            Some("anthropic/claude-opus-5".to_owned())
+        );
+    }
+
+    #[test]
+    fn user_provided_attribution_degrades_without_inventing_a_provider() {
+        assert_eq!(
+            ModelDisclosure::UserProvided.transcript_attribution("", "private-model"),
+            Some("private-model".to_owned())
+        );
+        assert_eq!(
+            ModelDisclosure::UserProvided.transcript_attribution("", ""),
+            None
+        );
     }
 }
