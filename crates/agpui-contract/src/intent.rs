@@ -1,9 +1,10 @@
 //! What a leaf asks its host to do.
 //!
-//! The return channel of [`crate::thread`] and [`crate::composer`]. Documents
-//! travel host to leaf and never come back; intents travel leaf to host and
-//! carry no renderer state, because a host that had to understand how the
-//! thread was drawn in order to act on it would be reading pixels.
+//! The return channel of [`crate::thread`], [`crate::composer`], and the native
+//! document editor. Projection documents travel host to leaf and never come
+//! back; intents travel leaf to host and carry no renderer state, because a
+//! host that had to understand how a surface was drawn in order to act on it
+//! would be reading pixels.
 //!
 //! Both directions live in this crate for the same reason: the leaf and the
 //! host are separate binaries built from separate workspaces, and a wire
@@ -61,6 +62,34 @@ pub enum ThreadIntent {
     OpenCitation { source_id: String },
 }
 
+/// A canonical document change the GPUI editor asks its host to commit.
+///
+/// The document leaf owns transient editor entities and a local Loro working
+/// session. The product host remains the durable authority, so a canonical
+/// snapshot or an optimistic code proposal crosses this renderer-neutral
+/// contract instead of the leaf calling a graph API itself.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DocumentIntent {
+    /// Authored prose changed and the complete canonical Loro snapshot is
+    /// ready for the host's revision endpoint.
+    CanonicalChanged {
+        document_id: String,
+        block_id: String,
+        snapshot: Vec<u8>,
+        /// Complete agent-readable projection of the same post-edit state.
+        markdown_projection: String,
+    },
+    /// A code editor proposes a replacement against the exact text it opened.
+    /// The filesystem or Git remains write authority and may refuse it.
+    ProposeCodeEdit {
+        document_id: String,
+        block_id: String,
+        expected: String,
+        replacement: String,
+    },
+}
+
 /// One drained batch from a leaf, tagged by which queue spoke.
 ///
 /// The thread leaf owns two queues - the transcript's and the composer's - so
@@ -73,6 +102,7 @@ pub enum LeafPayload {
     Thread { intents: Vec<ThreadIntent> },
     Composer { intents: Vec<ComposerIntent> },
     Drawer { command: serde_json::Value },
+    Document { intents: Vec<DocumentIntent> },
 }
 
 #[cfg(test)]
@@ -135,6 +165,31 @@ mod tests {
         let wire = serde_json::to_value(&payload).unwrap();
         assert_eq!(wire["source"], "drawer");
         assert_eq!(wire["command"]["action"], "select");
+        assert_eq!(
+            serde_json::from_value::<LeafPayload>(wire).unwrap(),
+            payload
+        );
+    }
+
+    #[test]
+    fn document_edits_cross_the_leaf_boundary_as_typed_payloads() {
+        let payload = LeafPayload::Document {
+            intents: vec![DocumentIntent::CanonicalChanged {
+                document_id: "note:one".into(),
+                block_id: "block:body".into(),
+                snapshot: vec![0, 1, 2, 255],
+                markdown_projection: "# One\n\nEdited body.".into(),
+            }],
+        };
+
+        let wire = serde_json::to_value(&payload).unwrap();
+        assert_eq!(wire["source"], "document");
+        assert_eq!(wire["intents"][0]["kind"], "canonical_changed");
+        assert_eq!(wire["intents"][0]["document_id"], "note:one");
+        assert_eq!(
+            wire["intents"][0]["markdown_projection"],
+            "# One\n\nEdited body."
+        );
         assert_eq!(
             serde_json::from_value::<LeafPayload>(wire).unwrap(),
             payload
