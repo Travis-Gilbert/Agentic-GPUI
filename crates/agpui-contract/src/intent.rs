@@ -137,6 +137,8 @@ pub enum LeafPayload {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn intents_are_internally_tagged_so_a_host_can_match_on_one_key() {
         let wire = serde_json::to_value(ComposerIntent::Submit {
