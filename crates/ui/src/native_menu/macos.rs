@@ -201,7 +201,15 @@ fn ns_image_for_icon(
 }
 
 /// Extract the AppKit `NSView` pointer from the window's raw handle.
+///
+/// A `test-support` build has no such view -- and asking a GPUI test window
+/// for one panics rather than returning the error the trait promises, so it
+/// must not be asked. See `Root::new`. A popup therefore does not open under
+/// test; a test that needs a menu it can read wants `fallback::show`.
 fn ns_view_ptr(window: &Window) -> Option<usize> {
+    if cfg!(feature = "test-support") {
+        return None;
+    }
     let handle = HasWindowHandle::window_handle(window).ok()?;
     let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
         return None;

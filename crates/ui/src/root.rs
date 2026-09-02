@@ -96,7 +96,17 @@ impl Root {
 
     /// Create a new Root view.
     pub fn new(view: impl Into<AnyView>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        #[cfg(all(target_os = "macos", not(test)))]
+        // `not(test)` only covers this crate's own test binary. A downstream
+        // `#[gpui::test]` links the ordinary build, so it reaches this line with
+        // a window that has no platform window behind it -- and GPUI's test
+        // window answers `raw-window-handle` by panicking rather than by
+        // returning the error the trait promises, so absence cannot be probed
+        // for. `test-support` is the test build saying so.
+        #[cfg(all(
+            target_os = "macos",
+            not(test),
+            not(feature = "test-support")
+        ))]
         gpui_base::install_window_hit_test_forwarder(window);
 
         Self {
