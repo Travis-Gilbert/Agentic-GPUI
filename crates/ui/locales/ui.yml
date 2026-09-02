@@ -148,6 +148,12 @@ ComboBox:
     zh-TW: "沒有結果"
     it: "Nessun risultato"
 Dock:
+  MoreTabs:
+    en: "More tabs"
+    zh-CN: "更多标签页"
+    zh-HK: "更多分頁"
+    zh-TW: "更多分頁"
+    it: "Altre schede"
   Unnamed:
     en: Unnamed
     zh-CN: 未命名

@@ -188,6 +188,9 @@ pub struct Button {
     base: gpui_base::Button,
     icon: Option<ButtonIcon>,
     label: Option<SharedString>,
+    /// An accessible name for a button whose content carries none, set through
+    /// [`Button::accessibility_label`]. The visible label is the default.
+    accessibility_label: Option<SharedString>,
     children: Vec<AnyElement>,
     disabled: bool,
     pub(crate) selected: bool,
@@ -231,6 +234,7 @@ impl Button {
             base: gpui_base::Button::new(id),
             icon: None,
             label: None,
+            accessibility_label: None,
             children: Vec::new(),
             disabled: false,
             selected: false,
@@ -303,6 +307,16 @@ impl Button {
     }
 
     /// Set label to the Button, if no label is set, the button will be in Icon Button mode.
+    /// Set the accessible name, for a button whose visible content is an icon.
+    ///
+    /// A button with no label and no text is a dead end for a screen reader:
+    /// it is announced as "button" and nothing else. Where the visible
+    /// affordance is a glyph, this is the name.
+    pub fn accessibility_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.accessibility_label = Some(label.into());
+        self
+    }
+
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
         self.label = Some(label.into());
         self
@@ -606,7 +620,16 @@ impl RenderOnce for Button {
             })
             .refine_style(&instance_style);
 
-        let accessibility_label = self.label.clone();
+        // A visible label names the button; failing that, its tooltip does.
+        // A tooltip is the text a sighted reader is given on hover, so it is
+        // already the name of the affordance -- withholding it from assistive
+        // technology would leave every icon-only button in the library
+        // announced as "button" and nothing more.
+        let accessibility_label = self
+            .accessibility_label
+            .clone()
+            .or_else(|| self.label.clone())
+            .or_else(|| self.tooltip.as_ref().map(|(tooltip, _)| tooltip.clone()));
         let content = h_flex()
             .id("label")
             .size_full()

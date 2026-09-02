@@ -169,6 +169,11 @@ impl RenderOnce for Breadcrumb {
         }
 
         h_flex()
+            // `BreadcrumbItem` renders `Role::ListItem`, and a listitem whose
+            // ancestors hold no list is an ARIA violation that assistive
+            // technology reports rather than repairs. The root is the list.
+            .id("breadcrumb")
+            .role(Role::List)
             .gap_1p5()
             .text_sm()
             .text_color(cx.theme().muted_foreground)

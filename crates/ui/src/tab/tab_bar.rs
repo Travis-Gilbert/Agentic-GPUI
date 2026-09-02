@@ -2,8 +2,9 @@ use std::{cell::RefCell, rc::Rc, time::Duration};
 
 use gpui::{
     Anchor, AnyElement, App, Background, Bounds, Edges, ElementId, InteractiveElement, IntoElement,
-    ParentElement, Pixels, RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement as _,
-    StyleRefinement, Styled, Window, div, prelude::FluentBuilder as _, px,
+    ParentElement, Pixels, RenderOnce, Role, ScrollHandle, SharedString,
+    StatefulInteractiveElement as _, StyleRefinement, Styled, Window, div,
+    prelude::FluentBuilder as _, px,
 };
 use gpui_base::{Spring, spring};
 use rust_i18n::t;
@@ -49,7 +50,7 @@ impl TabIndicatorBounds {
 #[derive(IntoElement)]
 pub struct TabBar {
     id: ElementId,
-    base: gpui_base::Tabs,
+    base: gpui::Stateful<gpui::Div>,
     style: StyleRefinement,
     scroll_handle: Option<ScrollHandle>,
     prefix: Option<AnyElement>,
@@ -70,7 +71,7 @@ impl TabBar {
         let id = id.into();
         Self {
             id: id.clone(),
-            base: gpui_base::Tabs::new(id).px(px(-1.)),
+            base: div().id(id).px(px(-1.)),
             style: StyleRefinement::default(),
             children: SmallVec::new(),
             scroll_handle: None,
@@ -499,8 +500,14 @@ impl RenderOnce for TabBar {
             .when_some(self.prefix, |this, prefix| this.child(prefix))
             .child(
                 h_flex().id("tabs").flex_1().overflow_x_hidden().child(
+                    // The tablist is this element rather than the bar, because
+                    // ARIA lets a tablist own tabs and nothing else. The bar
+                    // also carries the prefix, the suffix and the overflow
+                    // menu, and a button among the tabs is a violation
+                    // assistive technology reports rather than repairs.
                     h_flex()
                         .id("tabs-inner")
+                        .role(Role::TabList)
                         .relative()
                         .gap(gap)
                         .overflow_x_scroll()
@@ -523,6 +530,7 @@ impl RenderOnce for TabBar {
                     Button::new("more")
                         .xsmall()
                         .ghost()
+                        .accessibility_label(t!("Dock.MoreTabs"))
                         .dropdown_caret(true)
                         .dropdown_menu(move |mut this, _, _| {
                             this = this.scrollable(true);
