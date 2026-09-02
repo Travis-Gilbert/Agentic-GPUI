@@ -4,11 +4,12 @@
 //! https://github.com/zed-industries/zed/blob/main/crates/gpui/examples/input.rs
 use gpui::TextAlign;
 use gpui::{
-    Action, App, AppContext, Bounds, ClipboardItem, Context, Edges, Entity, EntityInputHandler,
-    EventEmitter, FocusHandle, Focusable, InteractiveElement as _, IntoElement, KeyBinding,
-    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _,
-    Pixels, Point, Render, ScrollHandle, ScrollWheelEvent, SharedString, Styled as _, Subscription,
-    UTF16Selection, Window, actions, div, point, prelude::FluentBuilder as _, px,
+    Action, App, AppContext, Bounds, ClipboardItem, Context, Edges, EnterKeyHint, Entity,
+    EntityInputHandler, EventEmitter, FocusHandle, Focusable, InteractiveElement as _, IntoElement,
+    KeyBinding, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ParentElement as _, Pixels, Point, Render, ScrollHandle, ScrollWheelEvent, SharedString,
+    Styled as _, Subscription, TextInputHints, TextInputKind, UTF16Selection, Window, actions, div,
+    point, prelude::FluentBuilder as _, px,
 };
 use ropey::{Rope, RopeSlice};
 use serde::Deserialize;
@@ -2998,6 +2999,54 @@ impl<M: InputModeKind> EntityInputHandler for InputBaseState<M> {
 
         None
     }
+
+    /// What keyboard this field wants, and what its return key does.
+    ///
+    /// Derived rather than configured, because the state already knows both
+    /// answers. A separate setter would be a second place to say the same
+    /// thing, and the two would drift the first time one was set without the
+    /// other.
+    ///
+    /// The mask is the honest source for the keyboard. [`super::NumberInput`]
+    /// calls [`Self::ensure_number_mask`] as it renders, so a number field
+    /// always carries [`MaskPattern::Number`] and nothing else does.
+    /// `number_step` is not a marker: it defaults to `Some(1.0)` on every
+    /// input, so a field can become a number input later.
+    ///
+    /// Only a platform with a software keyboard acts on this -- on the web it
+    /// becomes `inputmode` and `enterkeyhint` -- so a desktop field is
+    /// unaffected either way.
+    fn text_input_hints(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> TextInputHints {
+        let kind = match self.mask_pattern {
+            // `fraction` is a limit, not a switch: `Some(0)` is the only value
+            // that forbids a decimal point, and `None` means unlimited, which
+            // is what `ensure_number_mask` gives a plain NumberInput.
+            MaskPattern::Number {
+                fraction: Some(0), ..
+            } => TextInputKind::Numeric,
+            MaskPattern::Number { .. } => TextInputKind::Decimal,
+            // A character mask is arbitrary -- a date, a card number, a
+            // licence plate -- so it says nothing about which keyboard to
+            // raise, and prose is the safe answer: every character is
+            // reachable from it.
+            MaskPattern::Pattern { .. } | MaskPattern::None => TextInputKind::Text,
+        };
+
+        let enter_key = if M::MULTI_LINE {
+            // Enter inserts a newline here, whatever else is bound.
+            EnterKeyHint::Enter
+        } else if self.submit_on_enter {
+            EnterKeyHint::Send
+        } else {
+            EnterKeyHint::Next
+        };
+
+        TextInputHints { kind, enter_key }
+    }
 }
 
 impl<M: InputModeKind> Focusable for InputBaseState<M> {
@@ -3210,6 +3259,97 @@ mod tests {
                 f(crate::input::InputState::new(window, cx))
             })
         }
+    }
+
+    #[gpui::test]
+    fn text_input_hints_come_from_what_the_field_already_is(cx: &mut TestAppContext) {
+        cx.update(crate::init);
+
+        // A plain single-line field: prose, and Enter moves on rather than
+        // submitting, because nothing asked it to submit.
+        let plain = InputView::build(cx, |state| state);
+        let mut plain_cx = VisualTestContext::from_window(plain.window_handle.into(), cx);
+        let hints = plain_cx.update(|window, cx| {
+            plain
+                .input
+                .update(cx, |state, cx| state.text_input_hints(window, cx))
+        });
+        assert_eq!(
+            hints,
+            TextInputHints {
+                kind: TextInputKind::Text,
+                enter_key: EnterKeyHint::Next,
+            }
+        );
+
+        // The same field told to submit on Enter. Its keyboard should say so.
+        let submitting = InputView::build(cx, |state| state.submit_on_enter(true));
+        let mut submitting_cx = VisualTestContext::from_window(submitting.window_handle.into(), cx);
+        let hints = submitting_cx.update(|window, cx| {
+            submitting
+                .input
+                .update(cx, |state, cx| state.text_input_hints(window, cx))
+        });
+        assert_eq!(hints.enter_key, EnterKeyHint::Send);
+
+        // A grouped number with two fraction digits wants a decimal point.
+        let money = InputView::build(cx, |state| {
+            state.mask_pattern(MaskPattern::Number {
+                separator: Some(','),
+                fraction: Some(2),
+            })
+        });
+        let mut money_cx = VisualTestContext::from_window(money.window_handle.into(), cx);
+        let hints = money_cx.update(|window, cx| {
+            money
+                .input
+                .update(cx, |state, cx| state.text_input_hints(window, cx))
+        });
+        assert_eq!(hints.kind, TextInputKind::Decimal);
+
+        // `fraction: None` is unlimited, not zero -- `mask("1234567.1234567")`
+        // keeps every digit -- so this is the shape `ensure_number_mask` gives
+        // a plain NumberInput, and it still wants a decimal point.
+        let unlimited = InputView::build(cx, |state| {
+            state.mask_pattern(MaskPattern::Number {
+                separator: None,
+                fraction: None,
+            })
+        });
+        let mut unlimited_cx = VisualTestContext::from_window(unlimited.window_handle.into(), cx);
+        let hints = unlimited_cx.update(|window, cx| {
+            unlimited
+                .input
+                .update(cx, |state, cx| state.text_input_hints(window, cx))
+        });
+        assert_eq!(hints.kind, TextInputKind::Decimal);
+
+        // Only `Some(0)` forbids a decimal point, so only it asks for a
+        // digits-only keypad.
+        let counted = InputView::build(cx, |state| {
+            state.mask_pattern(MaskPattern::Number {
+                separator: None,
+                fraction: Some(0),
+            })
+        });
+        let mut counted_cx = VisualTestContext::from_window(counted.window_handle.into(), cx);
+        let hints = counted_cx.update(|window, cx| {
+            counted
+                .input
+                .update(cx, |state, cx| state.text_input_hints(window, cx))
+        });
+        assert_eq!(hints.kind, TextInputKind::Numeric);
+
+        // A textarea inserts a newline on Enter whatever else is bound, so it
+        // never claims to submit.
+        let textarea = InputView::build_textarea(cx, |state| state.submit_on_enter(true));
+        let mut textarea_cx = VisualTestContext::from_window(textarea.window_handle.into(), cx);
+        let hints = textarea_cx.update(|window, cx| {
+            textarea
+                .input
+                .update(cx, |state, cx| state.text_input_hints(window, cx))
+        });
+        assert_eq!(hints.enter_key, EnterKeyHint::Enter);
     }
 
     #[gpui::test]
