@@ -530,7 +530,7 @@ impl RenderOnce for TabBar {
                     Button::new("more")
                         .xsmall()
                         .ghost()
-                        .accessibility_label(t!("Dock.MoreTabs"))
+                        .aria_label(t!("Dock.MoreTabs"))
                         .dropdown_caret(true)
                         .dropdown_menu(move |mut this, _, _| {
                             this = this.scrollable(true);

@@ -11,6 +11,7 @@ use gpui::{
     RenderOnce, SharedString, StyleRefinement, Styled, Window, div, list, prelude::FluentBuilder,
     px,
 };
+use rust_i18n::t;
 use std::{rc::Rc, time::Duration};
 
 use crate::animation::{EffectTransition, ease_in_out_cubic};
@@ -365,6 +366,13 @@ impl RenderOnce for SidebarToggleButton {
                 this.on_click(move |ev, window, cx| {
                     on_click(ev, window, cx);
                 })
+            })
+            // The icon carries the state and the direction; a reader gets
+            // neither. Name it for what pressing it does, which is the half a
+            // reader needs and the half the icon can only imply.
+            .aria_label(match collapsed {
+                true => t!("Sidebar.Expand"),
+                false => t!("Sidebar.Collapse"),
             })
             .icon(Icon::new(icon).size_4())
     }

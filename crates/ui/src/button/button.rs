@@ -189,8 +189,8 @@ pub struct Button {
     icon: Option<ButtonIcon>,
     label: Option<SharedString>,
     /// An accessible name for a button whose content carries none, set through
-    /// [`Button::accessibility_label`]. The visible label is the default.
-    accessibility_label: Option<SharedString>,
+    /// [`Button::aria_label`]. The visible label is the default.
+    aria_label: Option<SharedString>,
     children: Vec<AnyElement>,
     disabled: bool,
     pub(crate) selected: bool,
@@ -234,7 +234,7 @@ impl Button {
             base: gpui_base::Button::new(id),
             icon: None,
             label: None,
-            accessibility_label: None,
+            aria_label: None,
             children: Vec::new(),
             disabled: false,
             selected: false,
@@ -306,17 +306,31 @@ impl Button {
         self
     }
 
-    /// Set label to the Button, if no label is set, the button will be in Icon Button mode.
     /// Set the accessible name, for a button whose visible content is an icon.
     ///
-    /// A button with no label and no text is a dead end for a screen reader:
-    /// it is announced as "button" and nothing else. Where the visible
+    /// A button with no label and no tooltip is a dead end for a screen
+    /// reader: it is announced as "button" and nothing else. Where the visible
     /// affordance is a glyph, this is the name.
-    pub fn accessibility_label(mut self, label: impl Into<SharedString>) -> Self {
-        self.accessibility_label = Some(label.into());
+    pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.aria_label = Some(label.into());
         self
     }
 
+    /// The name assistive technology announces for this button.
+    ///
+    /// An explicit name wins. Failing that a visible label names the button,
+    /// and failing that its tooltip does: a tooltip is the text a sighted
+    /// reader is given on hover, so it is already the name of the affordance,
+    /// and withholding it would leave every icon-only button in the library
+    /// announced as "button" and nothing more.
+    fn accessible_name(&self) -> Option<SharedString> {
+        self.aria_label
+            .clone()
+            .or_else(|| self.label.clone())
+            .or_else(|| self.tooltip.as_ref().map(|(tooltip, _)| tooltip.clone()))
+    }
+
+    /// Set label to the Button, if no label is set, the button will be in Icon Button mode.
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
         self.label = Some(label.into());
         self
@@ -508,6 +522,7 @@ impl RenderOnce for Button {
         let hoverable = self.hoverable();
         let disabled = self.disabled;
         let loading = self.loading;
+        let accessible_name = self.accessible_name();
         let mut base = self.base;
         let children = self.children;
         let instance_style = base.style().clone();
@@ -620,16 +635,6 @@ impl RenderOnce for Button {
             })
             .refine_style(&instance_style);
 
-        // A visible label names the button; failing that, its tooltip does.
-        // A tooltip is the text a sighted reader is given on hover, so it is
-        // already the name of the affordance -- withholding it from assistive
-        // technology would leave every icon-only button in the library
-        // announced as "button" and nothing more.
-        let accessibility_label = self
-            .accessibility_label
-            .clone()
-            .or_else(|| self.label.clone())
-            .or_else(|| self.tooltip.as_ref().map(|(tooltip, _)| tooltip.clone()));
         let content = h_flex()
             .id("label")
             .size_full()
@@ -685,7 +690,7 @@ impl RenderOnce for Button {
                         .refine_style(&instance_style)
                 })
         })
-        .when_some(accessibility_label, |this, label| {
+        .when_some(accessible_name, |this, label| {
             this.accessibility_label(label)
         })
         .when_some(self.toggled, |this, toggled| {
@@ -1247,6 +1252,42 @@ mod tests {
     use super::*;
     use crate::IconName;
     use gpui::{linear_color_stop, linear_gradient, px};
+
+    #[test]
+    fn accessible_name_prefers_the_most_specific_source() {
+        let icon_only = Button::new("zoom-in").icon(IconName::Plus);
+        assert_eq!(
+            icon_only.accessible_name(),
+            None,
+            "an icon carries no name, so a button with only an icon has none"
+        );
+
+        let tooltipped = Button::new("zoom-in")
+            .icon(IconName::Plus)
+            .tooltip("Zoom in");
+        assert_eq!(
+            tooltipped.accessible_name(),
+            Some("Zoom in".into()),
+            "a tooltip already names the affordance for a sighted reader"
+        );
+
+        let labelled = Button::new("save").label("Save").tooltip("Save the file");
+        assert_eq!(
+            labelled.accessible_name(),
+            Some("Save".into()),
+            "the visible label is what a sighted reader is asked to say aloud"
+        );
+
+        let named = Button::new("save")
+            .label("Save")
+            .tooltip("Save the file")
+            .aria_label("Save draft");
+        assert_eq!(
+            named.accessible_name(),
+            Some("Save draft".into()),
+            "an explicit name overrides every derived one"
+        );
+    }
 
     #[gpui::test]
     fn disabled_legacy_button_keeps_existing_pointer_blocking(cx: &mut gpui::TestAppContext) {

@@ -339,6 +339,9 @@ impl TabGroupSkin {
                     .icon(IconName::Ellipsis)
                     .xsmall()
                     .ghost()
+                    // The one control on the title bar with no tooltip to fall
+                    // back on, so it says what it is directly.
+                    .aria_label(t!("Dock.PanelMenu"))
                     .tab_stop(false)
                     .dropdown_menu(move |menu, window, cx| {
                         menu.when_some(panel.clone(), |menu, panel| {
@@ -510,9 +513,7 @@ impl TabGroupSkin {
                                 // it reaches the DOM as a child element, and a
                                 // reader asked for the tab's name gets nothing
                                 // from a child it has not descended into.
-                                Some(tab_name) => {
-                                    this.aria_label(tab_name.clone()).child(tab_name)
-                                }
+                                Some(tab_name) => this.aria_label(tab_name.clone()).child(tab_name),
                                 None => this.child(panel_title(panel, window, cx)),
                             })
                             // A collapsed group shows no tab as active: the
