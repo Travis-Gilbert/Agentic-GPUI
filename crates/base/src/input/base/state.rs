@@ -321,6 +321,9 @@ pub struct InputBaseState<M: InputModeKind> {
     pub(super) masked: bool,
     pub(super) clean_on_escape: bool,
     pub(super) submit_on_enter: bool,
+    /// Whether this field searches rather than composes prose.
+    /// See [`Self::search_field`].
+    pub(super) search_field: bool,
     pub(super) show_whitespaces: bool,
     /// This flag tells the renderer to prefer the end of the current visual line.
     pub(crate) cursor_line_end_affinity: bool,
@@ -618,6 +621,7 @@ impl<M: InputModeKind> InputBaseState<M> {
             masked: false,
             clean_on_escape: false,
             submit_on_enter: false,
+            search_field: false,
             show_whitespaces: false,
             loading: false,
             pattern: None,
@@ -1012,6 +1016,32 @@ impl<M: InputModeKind> InputBaseState<M> {
 
     pub fn set_submit_on_enter(&mut self, submit: bool, cx: &mut Context<Self>) {
         self.submit_on_enter = submit;
+        cx.notify();
+    }
+
+    /// Declare that this field searches rather than composes prose.
+    ///
+    /// Purely a keyboard hint: nothing else reads it, so a desktop field is
+    /// unaffected. On a platform with a software keyboard it becomes
+    /// `inputmode="search"` and, for a field that acts on Enter, an
+    /// `enterkeyhint` of "search" rather than "send".
+    ///
+    /// This is the one hint [`Self::text_input_hints`] cannot derive, and the
+    /// exception proves that method's rule. A mask says which characters are
+    /// legal and `submit_on_enter` says whether the return key acts, but
+    /// nothing stored here distinguishes a find box from any other short text
+    /// field. They want different keyboards, so the field has to say so. Every
+    /// other hint stays derived, because every other hint is already implied.
+    ///
+    /// Default is `false`.
+    #[doc(hidden)]
+    pub fn search_field(mut self, searching: bool) -> Self {
+        self.search_field = searching;
+        self
+    }
+
+    pub fn set_search_field(&mut self, searching: bool, cx: &mut Context<Self>) {
+        self.search_field = searching;
         cx.notify();
     }
 
@@ -3021,19 +3051,26 @@ impl<M: InputModeKind> EntityInputHandler for InputBaseState<M> {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> TextInputHints {
-        let kind = match self.mask_pattern {
-            // `fraction` is a limit, not a switch: `Some(0)` is the only value
-            // that forbids a decimal point, and `None` means unlimited, which
-            // is what `ensure_number_mask` gives a plain NumberInput.
-            MaskPattern::Number {
-                fraction: Some(0), ..
-            } => TextInputKind::Numeric,
-            MaskPattern::Number { .. } => TextInputKind::Decimal,
-            // A character mask is arbitrary -- a date, a card number, a
-            // licence plate -- so it says nothing about which keyboard to
-            // raise, and prose is the safe answer: every character is
-            // reachable from it.
-            MaskPattern::Pattern { .. } | MaskPattern::None => TextInputKind::Text,
+        let kind = if self.search_field {
+            // Declared, not derived: see [`Self::search_field`] for why this
+            // one hint cannot come from anything already stored.
+            TextInputKind::Search
+        } else {
+            match self.mask_pattern {
+                // `fraction` is a limit, not a switch: `Some(0)` is the only
+                // value that forbids a decimal point, and `None` means
+                // unlimited, which is what `ensure_number_mask` gives a plain
+                // NumberInput.
+                MaskPattern::Number {
+                    fraction: Some(0), ..
+                } => TextInputKind::Numeric,
+                MaskPattern::Number { .. } => TextInputKind::Decimal,
+                // A character mask is arbitrary -- a date, a card number, a
+                // licence plate -- so it says nothing about which keyboard to
+                // raise, and prose is the safe answer: every character is
+                // reachable from it.
+                MaskPattern::Pattern { .. } | MaskPattern::None => TextInputKind::Text,
+            }
         };
 
         // The negation of the newline rule in `on_enter`, which is
@@ -3043,7 +3080,11 @@ impl<M: InputModeKind> EntityInputHandler for InputBaseState<M> {
         // way round -- multi-line always means "enter" -- would mislabel every
         // chat composer, which is the commonest submitting multi-line field
         // there is.
-        let enter_key = if self.submit_on_enter {
+        let enter_key = if self.submit_on_enter && self.search_field {
+            // A find box's Enter runs the search again rather than dispatching
+            // a message, and "Search" is the key cap that says so.
+            EnterKeyHint::Search
+        } else if self.submit_on_enter {
             EnterKeyHint::Send
         } else if M::MULTI_LINE {
             EnterKeyHint::Enter
@@ -3362,6 +3403,41 @@ mod tests {
                 .update(cx, |state, cx| state.text_input_hints(window, cx))
         });
         assert_eq!(hints.enter_key, EnterKeyHint::Send);
+
+        // A find box: the one hint no stored state implies, so the field
+        // declares it. Its Enter runs the search again, which is a different
+        // key cap from a composer's.
+        let finding = InputView::build(cx, |state| state.search_field(true).submit_on_enter(true));
+        let mut finding_cx = VisualTestContext::from_window(finding.window_handle.into(), cx);
+        let hints = finding_cx.update(|window, cx| {
+            finding
+                .input
+                .update(cx, |state, cx| state.text_input_hints(window, cx))
+        });
+        assert_eq!(
+            hints,
+            TextInputHints {
+                kind: TextInputKind::Search,
+                enter_key: EnterKeyHint::Search,
+            }
+        );
+
+        // A search field whose Enter does nothing still wants the search
+        // keyboard; only the key cap depends on whether it acts.
+        let idle_search = InputView::build(cx, |state| state.search_field(true));
+        let mut idle_cx = VisualTestContext::from_window(idle_search.window_handle.into(), cx);
+        let hints = idle_cx.update(|window, cx| {
+            idle_search
+                .input
+                .update(cx, |state, cx| state.text_input_hints(window, cx))
+        });
+        assert_eq!(
+            hints,
+            TextInputHints {
+                kind: TextInputKind::Search,
+                enter_key: EnterKeyHint::Next,
+            }
+        );
 
         // A textarea that does not submit keeps the plain newline key.
         let textarea = InputView::build_textarea(cx, |state| state);
