@@ -67,6 +67,7 @@ pub mod resizable {
 pub mod scroll;
 pub mod searchable_list;
 pub mod select;
+pub mod selectable_text;
 pub mod separator;
 pub mod setting;
 pub mod sheet;

@@ -160,6 +160,28 @@ impl TextView {
         }
     }
 
+    /// Create a new plain text view.
+    ///
+    /// Nothing in `text` is markup: an id keeps its underscores, a path
+    /// keeps its backslashes, and an angle-bracketed value stays visible.
+    pub fn plain(id: impl Into<ElementId>, text: impl Into<SharedString>) -> Self {
+        Self {
+            id: id.into(),
+            format: Some(TextViewFormat::Plain),
+            text: Some(text.into()),
+            text_view_style: TextViewStyle::default(),
+            style: StyleRefinement::default(),
+            state: None,
+            selectable: false,
+            selection_format: SelectionFormat::default(),
+            scrollable: false,
+            code_block_actions: None,
+            table_actions: None,
+            link_click_handler: None,
+            markdown_extensions: Arc::default(),
+        }
+    }
+
     /// Set [`TextViewStyle`].
     pub fn style(mut self, style: TextViewStyle) -> Self {
         self.text_view_style = style;
@@ -340,10 +362,12 @@ impl Element for TextView {
                 SharedString::from(format!("{}/state", self.id)),
                 cx,
                 move |_, cx| {
-                    if default_format == TextViewFormat::Markdown {
-                        TextViewState::markdown(default_text.as_str(), cx)
-                    } else {
-                        TextViewState::html(default_text.as_str(), cx)
+                    match default_format {
+                        TextViewFormat::Markdown => {
+                            TextViewState::markdown(default_text.as_str(), cx)
+                        }
+                        TextViewFormat::Html => TextViewState::html(default_text.as_str(), cx),
+                        TextViewFormat::Plain => TextViewState::plain(default_text.as_str(), cx),
                     }
                 },
             );

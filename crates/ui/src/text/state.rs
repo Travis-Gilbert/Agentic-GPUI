@@ -49,6 +49,8 @@ pub(super) enum TextViewFormat {
     Markdown,
     /// HTML view
     Html,
+    /// Plain text view, where nothing is markup.
+    Plain,
 }
 
 /// The format of the text returned by
@@ -114,6 +116,12 @@ impl TextViewState {
     /// Create a HTML TextViewState.
     pub fn html(text: &str, cx: &mut Context<Self>) -> Self {
         Self::new(TextViewFormat::Html, text, cx)
+    }
+
+    /// Create a plain text TextViewState, where the text is taken literally
+    /// rather than parsed as markup.
+    pub fn plain(text: &str, cx: &mut Context<Self>) -> Self {
+        Self::new(TextViewFormat::Plain, text, cx)
     }
 
     /// Create a new TextViewState.
@@ -299,6 +307,8 @@ impl TextViewState {
         match self.format {
             TextViewFormat::Markdown => self.selection_format,
             TextViewFormat::Html => SelectionFormat::Plain,
+            // Plain text has no source distinct from what is rendered.
+            TextViewFormat::Plain => SelectionFormat::Plain,
         }
     }
 
@@ -777,6 +787,7 @@ fn parse_content(
     let new_document = match format {
         TextViewFormat::Markdown => format::markdown::parse(&source, &mut node_cx),
         TextViewFormat::Html => format::html::parse(&source, &mut node_cx),
+        TextViewFormat::Plain => format::plain::parse(&source, &mut node_cx),
     }?;
 
     if options.append {
