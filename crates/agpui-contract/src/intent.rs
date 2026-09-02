@@ -42,6 +42,16 @@ pub enum ComposerIntent {
     },
     /// Open the host's file picker. The leaf has no file system.
     PickAttachment,
+    /// Admit a large text paste through the host's ordinary attachment path.
+    /// The renderer classifies and names the paste; the host still validates,
+    /// uploads, scans, resolves, and receipts it like any browser file.
+    AddPastedFile {
+        /// Client identity shared by the optimistic span and host upload.
+        attachment_id: String,
+        name: String,
+        media_type: String,
+        text: String,
+    },
     RemoveAttachment {
         attachment_id: String,
     },
