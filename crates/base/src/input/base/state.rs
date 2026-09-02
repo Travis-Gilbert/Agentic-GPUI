@@ -3036,11 +3036,17 @@ impl<M: InputModeKind> EntityInputHandler for InputBaseState<M> {
             MaskPattern::Pattern { .. } | MaskPattern::None => TextInputKind::Text,
         };
 
-        let enter_key = if M::MULTI_LINE {
-            // Enter inserts a newline here, whatever else is bound.
-            EnterKeyHint::Enter
-        } else if self.submit_on_enter {
+        // The negation of the newline rule in `on_enter`, which is
+        // `is_multi_line() && (!submit_on_enter || shift)`: `submit_on_enter`
+        // is the outer condition in both, so a multi-line field that submits
+        // says so, and keeps Shift+Enter for the newline. Reading it the other
+        // way round -- multi-line always means "enter" -- would mislabel every
+        // chat composer, which is the commonest submitting multi-line field
+        // there is.
+        let enter_key = if self.submit_on_enter {
             EnterKeyHint::Send
+        } else if M::MULTI_LINE {
+            EnterKeyHint::Enter
         } else {
             EnterKeyHint::Next
         };
@@ -3340,9 +3346,25 @@ mod tests {
         });
         assert_eq!(hints.kind, TextInputKind::Numeric);
 
-        // A textarea inserts a newline on Enter whatever else is bound, so it
-        // never claims to submit.
-        let textarea = InputView::build_textarea(cx, |state| state.submit_on_enter(true));
+        // A multi-line field that submits on Enter says "send", because that
+        // is what its own `on_enter` does: `insert_newline` is
+        // `is_multi_line() && (!submit_on_enter || shift)`, so a plain Enter
+        // here submits and Shift+Enter is the newline. This is the chat
+        // composer's shape, and the case the first draft of this method got
+        // backwards.
+        let submitting_textarea =
+            InputView::build_textarea(cx, |state| state.submit_on_enter(true));
+        let mut submitting_cx =
+            VisualTestContext::from_window(submitting_textarea.window_handle.into(), cx);
+        let hints = submitting_cx.update(|window, cx| {
+            submitting_textarea
+                .input
+                .update(cx, |state, cx| state.text_input_hints(window, cx))
+        });
+        assert_eq!(hints.enter_key, EnterKeyHint::Send);
+
+        // A textarea that does not submit keeps the plain newline key.
+        let textarea = InputView::build_textarea(cx, |state| state);
         let mut textarea_cx = VisualTestContext::from_window(textarea.window_handle.into(), cx);
         let hints = textarea_cx.update(|window, cx| {
             textarea
