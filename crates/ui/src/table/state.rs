@@ -21,6 +21,15 @@ use gpui::{
 
 use super::*;
 
+/// Hover group naming one column header.
+///
+/// The header's parts share it so a part can react to the pointer being
+/// anywhere over the header rather than only over itself.
+#[inline]
+fn col_header_group(col_ix: usize) -> SharedString {
+    SharedString::from(format!("table-col-header:{col_ix}"))
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum SelectionMode {
     Column,
@@ -222,6 +231,12 @@ pub struct TableState<D: TableDelegate> {
     pub col_movable: bool,
     /// Enable/disable fixed columns feature.
     pub col_fixed: bool,
+    /// Whether a striped table pads the space below its last row with empty
+    /// rows, default is `true`.
+    pub fill_empty_rows: bool,
+    /// Whether a hairline is drawn down the right edge of every cell,
+    /// default is `false`.
+    pub column_dividers: bool,
 
     pub vertical_scroll_handle: UniformListScrollHandle,
     pub horizontal_scroll_handle: VirtualListScrollHandle,
@@ -282,6 +297,8 @@ where
             col_movable: true,
             col_resizable: true,
             col_fixed: true,
+            fill_empty_rows: true,
+            column_dividers: false,
             _load_more_task: Task::ready(()),
             _measure: Vec::new(),
         };
@@ -370,6 +387,30 @@ where
     /// requires `row_selectable` to be enabled.
     pub fn row_header(mut self, row_header: bool) -> Self {
         self.row_header = row_header;
+        self
+    }
+
+    /// Set whether the space below the last row is padded with empty rows,
+    /// default is `true`.
+    ///
+    /// Only effective when `stripe` is enabled — an unstriped table never draws
+    /// them. Set to `false` to keep the banding and leave the space below the
+    /// last row blank, so a reader counting rows counts only rows that carry
+    /// data.
+    pub fn fill_empty_rows(mut self, fill_empty_rows: bool) -> Self {
+        self.fill_empty_rows = fill_empty_rows;
+        self
+    }
+
+    /// Set whether a hairline is drawn down the right edge of every cell,
+    /// default is `false`.
+    ///
+    /// Rows are already separated by `table_row_border`; this draws the same
+    /// hairline down every cell, header cells included, for a table read as a
+    /// grid of fields rather than as a list of rows. Where a resize handle
+    /// already draws one, the two land on the same pixel.
+    pub fn column_dividers(mut self, column_dividers: bool) -> Self {
+        self.column_dividers = column_dividers;
         self
     }
 
@@ -664,7 +705,13 @@ where
         cx: &mut Context<Self>,
     ) {
         self.right_clicked_row = row_ix;
-        self.right_clicked_cell = None;
+        // A right-click inside a cell marks that cell and then reaches the row
+        // the cell sits in, so the row's mark joins the cell's rather than
+        // replacing it. A right-click that marks any other row drops the cell,
+        // as does the dismissing click outside the table.
+        if self.right_clicked_cell.map(|(cell_row, _)| cell_row) != row_ix {
+            self.right_clicked_cell = None;
+        }
         cx.emit(TableEvent::RightClickedRow(row_ix));
     }
 
@@ -680,9 +727,11 @@ where
             return;
         }
 
-        cx.stop_propagation();
+        // Deliberately no `stop_propagation`. The event carries on to the row
+        // the cell sits in and to any context menu wrapped around the table, so
+        // a table with cell selection on still opens its row menu on a
+        // right-click. The row records itself; this records the cell.
         self.right_clicked_cell = Some((row_ix, col_ix));
-        self.right_clicked_row = None;
         cx.emit(TableEvent::RightClickedCell(row_ix, col_ix));
     }
 
@@ -1229,7 +1278,7 @@ where
         _row_ix: Option<usize>,
         col_ix: usize,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Div {
         let Some(col_group) = self.col_groups.get(col_ix) else {
             return div();
@@ -1245,6 +1294,9 @@ where
             .overflow_hidden()
             .whitespace_nowrap()
             .table_cell_size(self.options.size)
+            .when(self.column_dividers, |this| {
+                this.border_r_1().border_color(cx.theme().table_row_border)
+            })
             .map(|this| match col_padding {
                 Some(padding) => this
                     .pl(padding.left)
@@ -1432,7 +1484,16 @@ where
                 .rounded(cx.theme().radius / 2.)
                 .map(|this| match is_on {
                     true => this,
-                    false => this.opacity(0.5),
+                    // A sorted column's arrow reports the table's state, so it
+                    // is always there to read. An unsorted column's chevrons
+                    // report nothing; they are an offer, and an offer that
+                    // sits in the row of column names at rest reads as one
+                    // more thing the table is saying. It arrives with the
+                    // pointer that can take it instead.
+                    false => this
+                        .opacity(0.5)
+                        .invisible()
+                        .group_hover(col_header_group(col_ix), |this| this.visible()),
                 })
                 .hover(|this| this.bg(cx.theme().tokens.secondary).opacity(7.))
                 .active(|this| this.bg(cx.theme().tokens.secondary_active).opacity(1.))
@@ -1440,9 +1501,13 @@ where
                     cx.listener(move |table, _, window, cx| table.perform_sort(col_ix, window, cx)),
                 )
                 .child(
-                    Icon::new(icon)
-                        .size_3()
-                        .text_color(cx.theme().secondary_foreground),
+                    div()
+                        .debug_selector(move || format!("table-sort-icon:{col_ix}"))
+                        .child(
+                            Icon::new(icon)
+                                .size_3()
+                                .text_color(cx.theme().secondary_foreground),
+                        ),
                 ),
         )
     }
@@ -1464,6 +1529,7 @@ where
             .child(
                 self.render_cell(None, col_ix, window, cx)
                     .id(("col-header", col_ix))
+                    .group(col_header_group(col_ix))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.on_col_head_click(col_ix, window, cx);
                     }))
@@ -2269,7 +2335,7 @@ where
         let actual_height = row_height * rows_count as f32;
         let extra_rows_count =
             self.calculate_extra_rows_needed(total_height, actual_height, row_height);
-        let render_rows_count = if self.options.stripe {
+        let render_rows_count = if self.options.stripe && self.fill_empty_rows {
             rows_count + extra_rows_count
         } else {
             rows_count
