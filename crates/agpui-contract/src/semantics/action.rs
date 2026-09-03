@@ -114,6 +114,20 @@ pub enum ActionRefusal {
     /// the id is real and the retry is the same gesture against
     /// `surface_id`, not a re-read of the tree.
     TargetOutsideSurface { surface_id: String },
+    /// The window publishes more than one surface root, and the target's
+    /// declared parent chain reaches none of them.
+    ///
+    /// A window's snapshot holds every surface painted into it, so a lookup by
+    /// id alone can find a node belonging to another one.
+    /// [`Self::TargetOutsideSurface`] catches that when the node says where it
+    /// belongs. This is the case where it does not say: with one root
+    /// published an unscoped node can only be part of it, so it is allowed
+    /// through; with several, "unscoped" means "could be any of them", and the
+    /// gesture would activate a control the receipt cannot honestly place
+    /// under the surface the action named. The recovery is a declared parent
+    /// on the target, not a different action: this is a surface that has not
+    /// declared its chain.
+    TargetUnscoped,
     /// The dispatcher was built for one window and handed another.
     ///
     /// Every lookup a dispatcher performs -- the snapshot, the target, the
@@ -195,6 +209,8 @@ mod tests {
             ActionRefusal::TargetOutsideSurface {
                 surface_id: "thread".into(),
             },
+            ActionRefusal::TargetUnscoped,
+            ActionRefusal::WindowMismatch,
         ] {
             let json = serde_json::to_string(&ActionOutcome::Refused(refusal.clone()))
                 .expect("serializes");

@@ -99,19 +99,22 @@ pub struct SnapshotDiff {
     /// A row has no bounds until it materializes, so there is no `moved`
     /// counterpart here.
     pub reading_changed: Vec<NodeChange>,
-    /// The nodes both frames published appear in a different sequence, or one
-    /// of them appears more than once in a frame.
+    /// The nodes both frames published appear in a different sequence, or an
+    /// id one of them publishes more than once differs inside a repeat.
     ///
     /// Registration order is hashed, and `added`/`removed`/`changed` are all
     /// keyed by id, so this is the only report a pure reshuffle produces. It
-    /// is the residual after the set difference: inserting a node in the
-    /// middle of the tree does not set it, because the ids the two frames
-    /// share are still in the same relative order.
+    /// is the residual after the per-id walks: inserting a node in the middle
+    /// of the tree does not set it, because the ids the two frames share are
+    /// still in the same relative order, and a field change inside a
+    /// once-published node does not, because `changed` already carries it.
+    /// [`residual`] is what is left.
     pub node_order_changed: bool,
     /// The same, for the reading order.
     ///
-    /// A frame that publishes one row twice sets this: the hash carries both
-    /// entries, and the per-id walks above deliberately report an id once.
+    /// A frame that publishes one row twice sets this whenever the repeat is
+    /// not the same in both frames: the hash carries every entry, and the
+    /// per-id walks above deliberately report an id once.
     pub reading_order_changed: bool,
 }
 
@@ -120,7 +123,8 @@ impl SnapshotDiff {
     ///
     /// Ids are matched on their first occurrence. A duplicate id is a defect
     /// [`Snapshot::lint`](super::Snapshot::lint) reports; the diff neither
-    /// hides it nor reports the same id twice.
+    /// hides it nor reports the same id twice, so a change confined to a
+    /// repeat lands in the order flags rather than in `changed`.
     #[must_use]
     pub fn between(before: &Snapshot, after: &Snapshot) -> Self {
         let mut diff = Self::default();
@@ -183,12 +187,8 @@ impl SnapshotDiff {
 
         let added_ids: HashSet<&str> = diff.added.iter().map(|node| node.id.as_str()).collect();
         let removed_ids: HashSet<&str> = diff.removed.iter().map(String::as_str).collect();
-        diff.node_order_changed = order_changed(
-            &before.nodes.iter().map(|node| node.id.as_str()).collect::<Vec<_>>(),
-            &after.nodes.iter().map(|node| node.id.as_str()).collect::<Vec<_>>(),
-            &removed_ids,
-            &added_ids,
-        );
+        diff.node_order_changed = residual(&before.nodes, &removed_ids, node_id, hashed_fields)
+            != residual(&after.nodes, &added_ids, node_id, hashed_fields);
 
         let rows_added: HashSet<&str> = diff
             .reading_added
@@ -196,19 +196,16 @@ impl SnapshotDiff {
             .map(|item| item.id.as_str())
             .collect();
         let rows_removed: HashSet<&str> = diff.reading_removed.iter().map(String::as_str).collect();
-        diff.reading_order_changed = order_changed(
-            &before
-                .reading_order
-                .iter()
-                .map(|item| item.id.as_str())
-                .collect::<Vec<_>>(),
-            &after
-                .reading_order
-                .iter()
-                .map(|item| item.id.as_str())
-                .collect::<Vec<_>>(),
+        diff.reading_order_changed = residual(
+            &before.reading_order,
             &rows_removed,
+            reading_item_id,
+            hashed_reading_fields,
+        ) != residual(
+            &after.reading_order,
             &rows_added,
+            reading_item_id,
+            hashed_reading_fields,
         );
 
         diff
@@ -243,29 +240,41 @@ impl SnapshotDiff {
     }
 }
 
-/// Did the ids the two frames share move relative to one another?
+/// The part of one frame's sequence the per-id walks above do not carry.
 ///
-/// The added and removed sets are dropped first so an insertion or a deletion
-/// does not read as a reshuffle. What remains is each frame's sequence of
-/// surviving ids, with multiplicity, and the hash covers exactly that: two
-/// sequences that differ hash differently, and two that match hash the same.
-fn order_changed(
-    before: &[&str],
-    after: &[&str],
-    removed: &HashSet<&str>,
-    added: &HashSet<&str>,
-) -> bool {
-    let kept_before: Vec<&str> = before
-        .iter()
-        .copied()
-        .filter(|id| !removed.contains(id))
-        .collect();
-    let kept_after: Vec<&str> = after
-        .iter()
-        .copied()
-        .filter(|id| !added.contains(id))
-        .collect();
-    kept_before != kept_after
+/// Ids only one frame published drop out first, so an insertion or a deletion
+/// does not read as a reshuffle. Every surviving id keeps its position, so a
+/// reshuffle still shows. The first occurrence of an id carries no fields --
+/// `changed` and `reading_changed` already report what moved inside it -- and
+/// every occurrence after the first carries its hashed fields, because those
+/// walks report an id once while the hash covers them all. Without that last
+/// part, `[a(x), a(y)]` becoming `[a(x), a(z)]` would hash differently and
+/// diff empty, and the receipt would say the frame did not move.
+fn residual<'a, T>(
+    entries: &'a [T],
+    skip: &HashSet<&str>,
+    id: fn(&'a T) -> &'a str,
+    hashed: fn(&'a T) -> Map<String, Value>,
+) -> Vec<(&'a str, Option<Map<String, Value>>)> {
+    let mut seen: HashSet<&str> = HashSet::new();
+    let mut kept = Vec::new();
+    for entry in entries {
+        let entry_id = id(entry);
+        if skip.contains(entry_id) {
+            continue;
+        }
+        let repeat = !seen.insert(entry_id);
+        kept.push((entry_id, repeat.then(|| hashed(entry))));
+    }
+    kept
+}
+
+fn node_id(node: &Node) -> &str {
+    node.id.as_str()
+}
+
+fn reading_item_id(item: &SemanticReadingItem) -> &str {
+    item.id.as_str()
 }
 
 fn hashed_fields(node: &Node) -> Map<String, Value> {
@@ -588,5 +597,69 @@ mod tests {
         let diff = SnapshotDiff::between(&before, &rows_swapped);
         assert!(!diff.node_order_changed);
         assert!(diff.reading_order_changed);
+    }
+
+    /// The per-id walk reports `thread.m1` once, so a change confined to the
+    /// second publication of it has nowhere else to land. The hash carries
+    /// both entries, and two hashes with an empty summary is the one thing
+    /// this module exists to prevent.
+    #[test]
+    fn a_change_inside_a_repeated_row_is_reported() {
+        let mut first_draft = row("thread.m1");
+        first_draft.text = Some("the first draft".into());
+        let before = with_rows(vec![node("thread")], vec![row("thread.m1"), first_draft]);
+
+        let mut second_draft = row("thread.m1");
+        second_draft.text = Some("the second draft".into());
+        let after = with_rows(vec![node("thread")], vec![row("thread.m1"), second_draft]);
+
+        assert_ne!(canonical_hash(&before), canonical_hash(&after));
+        let diff = SnapshotDiff::between(&before, &after);
+        assert!(
+            diff.reading_changed.is_empty(),
+            "the repeat is not the id's first occurrence: {diff:#?}"
+        );
+        assert!(diff.reading_order_changed, "{diff:#?}");
+        assert!(!diff.is_empty());
+    }
+
+    /// The same hole on the other half of the tree.
+    #[test]
+    fn a_change_inside_a_repeated_node_is_reported() {
+        let before = snapshot(vec![node("composer-send"), node("composer-send")]);
+        let mut repeat = node("composer-send");
+        repeat.disabled = true;
+        let after = snapshot(vec![node("composer-send"), repeat]);
+
+        assert_ne!(canonical_hash(&before), canonical_hash(&after));
+        let diff = SnapshotDiff::between(&before, &after);
+        assert!(
+            diff.changed.is_empty(),
+            "the repeat is not the id's first occurrence: {diff:#?}"
+        );
+        assert!(diff.node_order_changed, "{diff:#?}");
+
+        // And a node published once keeps reporting through `changed`: the
+        // residual carries no fields for a first occurrence.
+        let mut disabled = node("composer-send");
+        disabled.disabled = true;
+        let single = SnapshotDiff::between(
+            &snapshot(vec![node("composer-send")]),
+            &snapshot(vec![disabled]),
+        );
+        assert_eq!(single.changed.len(), 1);
+        assert!(!single.node_order_changed, "{single:#?}");
+    }
+
+    /// The residual must not fire on a repeat that did not move: two readings
+    /// of one frame hash the same, so their diff has to be empty.
+    #[test]
+    fn an_unchanged_repeat_is_not_a_reshuffle() {
+        let frame = with_rows(
+            vec![node("thread"), node("thread")],
+            vec![row("thread.m1"), row("thread.m1")],
+        );
+        let diff = SnapshotDiff::between(&frame, &frame);
+        assert!(diff.is_empty(), "{diff:#?}");
     }
 }
