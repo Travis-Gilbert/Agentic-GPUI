@@ -1,0 +1,288 @@
+//! The canonical state hash: what changed, with geometry left out.
+//!
+//! New in SPEC-AGPUI-SEMANTIC-TREE-1.0 D5. Nothing here is ported.
+//!
+//! A receipt claims a frame produced a change. The claim is only evidence if
+//! the number it compares is a function of semantic state and nothing else, so
+//! `bounds`, `visible`, `hovered`, `pressed`, `labels`, `describes`,
+//! `value_min`, `value_max`, `live_atomic`, and `generation` are excluded on
+//! purpose. A hover, a resize, or a re-layout does not change the hash.
+
+use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
+
+use super::node::{LiveRegion, Node, SemanticReadingItem};
+use super::role::Role;
+use super::snapshot::Snapshot;
+
+/// The projection [`canonical_hash`] hashes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HashView {
+    /// A marker, always true, so the hashed document says out loud that the
+    /// registry's frame counter is not part of it.
+    pub generation_independent: bool,
+    pub nodes: Vec<HashNode>,
+    pub reading_order: Vec<HashReadingItem>,
+}
+
+/// One node's semantic state, geometry and pointer transients removed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "this is a projection of Node's ARIA state, one field per state"
+)]
+pub struct HashNode {
+    pub id: String,
+    pub role: Role,
+    pub parent: Option<String>,
+    pub text: Option<String>,
+    pub description: Option<String>,
+    pub value: Option<String>,
+    pub placeholder: Option<String>,
+    pub focused: bool,
+    pub disabled: bool,
+    pub read_only: bool,
+    pub selected: bool,
+    pub checked: Option<bool>,
+    pub expanded: Option<bool>,
+    pub value_now: Option<f32>,
+    pub level: Option<u32>,
+    pub busy: bool,
+    pub invalid: bool,
+    pub required: bool,
+    pub live: Option<LiveRegion>,
+    pub modal: bool,
+}
+
+/// One unmaterialized row's state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HashReadingItem {
+    pub id: String,
+    pub parent: Option<String>,
+    pub role: Role,
+    pub text: Option<String>,
+    pub focused: bool,
+    pub selected: bool,
+}
+
+/// The field names [`HashNode`] carries, in declaration order.
+///
+/// [`SnapshotDiff`](super::diff::SnapshotDiff) walks this list so a change
+/// report names the same fields the hash covers, and in the same order.
+pub const HASHED_NODE_FIELDS: [&str; 19] = [
+    "role",
+    "parent",
+    "text",
+    "description",
+    "value",
+    "placeholder",
+    "focused",
+    "disabled",
+    "read_only",
+    "selected",
+    "checked",
+    "expanded",
+    "value_now",
+    "level",
+    "busy",
+    "invalid",
+    "required",
+    "live",
+    "modal",
+];
+
+impl HashNode {
+    pub(crate) fn of(node: &Node) -> Self {
+        Self {
+            id: node.id.clone(),
+            role: node.role,
+            parent: node.parent.clone(),
+            text: node.text.clone(),
+            description: node.description.clone(),
+            value: node.value.clone(),
+            placeholder: node.placeholder.clone(),
+            focused: node.focused,
+            disabled: node.disabled,
+            read_only: node.read_only,
+            selected: node.selected,
+            checked: node.checked,
+            expanded: node.expanded,
+            value_now: finite(node.value_now),
+            level: node.level,
+            busy: node.busy,
+            invalid: node.invalid,
+            required: node.required,
+            live: node.live,
+            modal: node.modal,
+        }
+    }
+}
+
+impl HashReadingItem {
+    fn of(item: &SemanticReadingItem) -> Self {
+        Self {
+            id: item.id.clone(),
+            parent: item.parent.clone(),
+            role: item.role,
+            text: item.text.clone(),
+            focused: item.focused,
+            selected: item.selected,
+        }
+    }
+}
+
+/// JSON has no NaN and no infinity, so a non-finite slider value is recorded
+/// as absent rather than making the whole snapshot unhashable.
+fn finite(value: Option<f32>) -> Option<f32> {
+    value.filter(|number| number.is_finite())
+}
+
+impl HashView {
+    /// The hashed projection of one snapshot, in registration order.
+    #[must_use]
+    pub fn of(snapshot: &Snapshot) -> Self {
+        Self {
+            generation_independent: true,
+            nodes: snapshot.nodes.iter().map(HashNode::of).collect(),
+            reading_order: snapshot
+                .reading_order
+                .iter()
+                .map(HashReadingItem::of)
+                .collect(),
+        }
+    }
+}
+
+impl Snapshot {
+    /// The projection [`canonical_hash`] hashes.
+    #[must_use]
+    pub fn hash_view(&self) -> HashView {
+        HashView::of(self)
+    }
+}
+
+/// SHA-256 over the canonical JSON of [`HashView`].
+///
+/// Canonical means `serde_json`'s object representation, whose keys are
+/// sorted, written compactly with no whitespace.
+///
+/// # Panics
+///
+/// Unreachable. [`HashView`] has only string keys and finite floats, which
+/// `serde_json` cannot fail to represent.
+#[must_use]
+pub fn canonical_hash(snapshot: &Snapshot) -> [u8; 32] {
+    let view = serde_json::to_value(snapshot.hash_view())
+        .expect("HashView has only string keys and finite floats");
+    let canonical = serde_json::to_string(&view).expect("a serde_json::Value always serializes");
+    Sha256::digest(canonical.as_bytes()).into()
+}
+
+/// The lowercase hex of a canonical hash, for receipts a person reads.
+#[must_use]
+pub fn hex(hash: &[u8; 32]) -> String {
+    use std::fmt::Write as _;
+    hash.iter().fold(String::with_capacity(64), |mut out, byte| {
+        let _ = write!(out, "{byte:02x}");
+        out
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{canonical_hash, hex, HASHED_NODE_FIELDS};
+    use crate::semantics::node::{Node, Rect};
+    use crate::semantics::role::Role;
+    use crate::semantics::snapshot::Snapshot;
+
+    fn button(id: &str) -> Node {
+        Node {
+            id: id.into(),
+            role: Role::Button,
+            visible: true,
+            bounds: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 20.0,
+                height: 20.0,
+            },
+            ..Node::default()
+        }
+    }
+
+    fn snapshot(nodes: Vec<Node>) -> Snapshot {
+        Snapshot {
+            generation: 1,
+            nodes,
+            reading_order: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn geometry_and_pointer_transients_do_not_change_the_hash() {
+        let before = snapshot(vec![button("composer-send")]);
+        let mut moved = button("composer-send");
+        moved.bounds = Rect {
+            x: 400.0,
+            y: 91.5,
+            width: 28.0,
+            height: 28.0,
+        };
+        moved.hovered = true;
+        moved.pressed = true;
+        moved.visible = false;
+        moved.labels = Some("send".into());
+        moved.describes = Some("composer".into());
+        moved.value_min = Some(0.0);
+        moved.value_max = Some(1.0);
+        moved.live_atomic = true;
+        let after = Snapshot {
+            generation: 97,
+            ..snapshot(vec![moved])
+        };
+        assert_eq!(canonical_hash(&before), canonical_hash(&after));
+    }
+
+    #[test]
+    fn a_disabled_flip_changes_the_hash() {
+        let before = snapshot(vec![button("composer-send")]);
+        let mut disabled = button("composer-send");
+        disabled.disabled = true;
+        assert_ne!(canonical_hash(&before), canonical_hash(&snapshot(vec![disabled])));
+    }
+
+    #[test]
+    fn registration_order_is_part_of_the_hash() {
+        let one = snapshot(vec![button("a"), button("b")]);
+        let other = snapshot(vec![button("b"), button("a")]);
+        assert_ne!(canonical_hash(&one), canonical_hash(&other));
+    }
+
+    #[test]
+    fn a_non_finite_slider_value_still_hashes() {
+        let mut broken = button("slider");
+        broken.role = Role::Slider;
+        broken.value_now = Some(f32::NAN);
+        let mut absent = button("slider");
+        absent.role = Role::Slider;
+        assert_eq!(
+            canonical_hash(&snapshot(vec![broken])),
+            canonical_hash(&snapshot(vec![absent]))
+        );
+    }
+
+    #[test]
+    fn the_hash_is_stable_across_runs() {
+        let hash = canonical_hash(&snapshot(vec![button("composer-send")]));
+        assert_eq!(hex(&hash).len(), 64);
+        assert_eq!(hash, canonical_hash(&snapshot(vec![button("composer-send")])));
+    }
+
+    #[test]
+    fn every_hashed_field_is_named_once() {
+        let mut sorted = HASHED_NODE_FIELDS.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), HASHED_NODE_FIELDS.len());
+    }
+}

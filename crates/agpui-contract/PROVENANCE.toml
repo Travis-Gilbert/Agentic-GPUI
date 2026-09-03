@@ -1,0 +1,96 @@
+# Provenance for `agpui-contract`.
+#
+# SPEC-AGPUI-SEMANTIC-TREE-1.0 D1 and D7. One row per module, so a reader can
+# tell at a glance which code was ported and which was written here, and a
+# future upstream sync can tell whether the source it came from has moved.
+#
+# `upstream_sha256` is the digest of the upstream file at `upstream_commit`,
+# fetched from the pinned tree rather than asserted. `local_sha256` is the
+# digest of the file in this repository at the move recorded in `moved_in`.
+# Neither is a claim that the two are equal: the port adapted the source, and
+# the ledger's job is to say what it started from.
+
+schema = "theorem-provenance/1"
+package = "agpui-contract"
+path = "rustyredcore_THG/crates/agpui-contract"
+
+[upstream.gpui-box]
+repository = "https://github.com/fran0220/gpui-box"
+commit = "e993d0f4e2dbd4a9697db79c6428a623856444a4"
+license = "MIT OR Apache-2.0"
+copyright = "Copyright (c) 2026 GPUI Box contributors"
+
+[[module]]
+path = "src/semantics/role.rs"
+status = "ported"
+upstream = "gpui-box"
+upstream_path = "crates/gpui-kit-semantics/src/lib.rs"
+upstream_sha256 = "a05c7a40cf8634f470ea94a87ee0f6258bc6eb184b1f94713c96b155b452ed49"
+moved_in = "SPEC-AGPUI-SEMANTIC-TREE-1.0 D1"
+moved_from = "apps/theoremweb/crates/gpui/chat/src/kit/semantics.rs"
+note = "Role and its AccessKit vocabulary. `accepts_typed_text` is new: the SetValue gesture needs to name the roles that can receive one."
+
+[[module]]
+path = "src/semantics/node.rs"
+status = "ported"
+upstream = "gpui-box"
+upstream_path = "crates/gpui-kit-semantics/src/lib.rs"
+upstream_sha256 = "a05c7a40cf8634f470ea94a87ee0f6258bc6eb184b1f94713c96b155b452ed49"
+moved_in = "SPEC-AGPUI-SEMANTIC-TREE-1.0 D1"
+moved_from = "apps/theoremweb/crates/gpui/chat/src/kit/semantics.rs"
+note = "Node, Rect, SemanticReadingItem, LiveRegion. Rect gained area/center/overlaps/contains because the dispatcher aims a real press at recorded geometry."
+
+[[module]]
+path = "src/semantics/snapshot.rs"
+status = "ported"
+upstream = "gpui-box"
+upstream_path = "crates/gpui-kit-semantics/src/lib.rs"
+upstream_sha256 = "a05c7a40cf8634f470ea94a87ee0f6258bc6eb184b1f94713c96b155b452ed49"
+moved_in = "SPEC-AGPUI-SEMANTIC-TREE-1.0 D1"
+moved_from = "apps/theoremweb/crates/gpui/chat/src/kit/semantics.rs"
+note = "Snapshot and its queries. `reading_order` and `lint` are new in D3 of the spec."
+
+[[module]]
+path = "src/semantics/redact.rs"
+status = "ported"
+upstream = "gpui-box"
+upstream_path = "crates/gpui-kit-semantics/src/lib.rs"
+upstream_sha256 = "a05c7a40cf8634f470ea94a87ee0f6258bc6eb184b1f94713c96b155b452ed49"
+moved_in = "SPEC-AGPUI-SEMANTIC-TREE-1.0 D1"
+moved_from = "apps/theoremweb/crates/gpui/chat/src/kit/semantics.rs"
+
+[[module]]
+path = "src/semantics/ident.rs"
+status = "ported"
+upstream = "gpui-box"
+upstream_path = "crates/gpui-kit/src/foundation/ident.rs"
+upstream_sha256 = "e70a76f13dc45f4b66f3b558f490e8990a252c165a6a6b0044c59acb4415ecd0"
+moved_in = "SPEC-AGPUI-SEMANTIC-TREE-1.0 D1"
+moved_from = "apps/theoremweb/crates/gpui/chat/src/kit/ident.rs"
+note = "`element_id` and `indexed_element_id` did not move: they return gpui::ElementId, so they stay in `agpui` as the IdentElementExt trait. `parse` and `is_valid` are new -- the Ident law was a convention until D2 of the spec made it checkable."
+
+[[module]]
+path = "src/semantics/hash.rs"
+status = "new"
+introduced_in = "SPEC-AGPUI-SEMANTIC-TREE-1.0 D5"
+
+[[module]]
+path = "src/semantics/diff.rs"
+status = "new"
+introduced_in = "SPEC-AGPUI-SEMANTIC-TREE-1.0 D6"
+
+[[module]]
+path = "src/semantics/action.rs"
+status = "new"
+introduced_in = "SPEC-AGPUI-SEMANTIC-TREE-1.0 D7"
+
+[[module]]
+path = "src/semantics/receipt.rs"
+status = "new"
+introduced_in = "SPEC-AGPUI-SEMANTIC-TREE-1.0 D8"
+
+[[module]]
+path = "tests/boundary.rs"
+status = "new"
+introduced_in = "SPEC-AGPUI-SEMANTIC-TREE-1.0 D1"
+note = "Walks the resolved dependency graph and fails if any gpui package is reachable. The renderer-free claim is the reason this package can be named by crates that have no renderer, so it is tested rather than asserted."
