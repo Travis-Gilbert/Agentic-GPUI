@@ -140,8 +140,17 @@ impl HashReadingItem {
 
 /// JSON has no NaN and no infinity, so a non-finite slider value is recorded
 /// as absent rather than making the whole snapshot unhashable.
+///
+/// Negative zero is folded onto positive zero for the receipt invariant, not
+/// for tidiness: `serde_json` writes `-0.0` and `0.0` as different bytes, so
+/// they hash differently, while `SnapshotDiff` compares them as
+/// `serde_json::Value` numbers, where IEEE equality calls them the same. A
+/// slider crossing zero would otherwise mint a receipt whose hashes moved and
+/// whose summary was empty.
 fn finite(value: Option<f32>) -> Option<f32> {
-    value.filter(|number| number.is_finite())
+    value
+        .filter(|number| number.is_finite())
+        .map(|number| if number == 0.0 { 0.0 } else { number })
 }
 
 impl HashView {
@@ -290,6 +299,36 @@ mod tests {
         assert_eq!(
             canonical_hash(&snapshot(vec![broken])),
             canonical_hash(&snapshot(vec![absent]))
+        );
+    }
+
+    /// The receipt invariant, at the one value where the hash and the diff
+    /// disagreed about equality.
+    ///
+    /// `serde_json` writes `-0.0` and `0.0` as different bytes, so they hash
+    /// differently, while `SnapshotDiff` compares them as `Value` numbers,
+    /// where IEEE equality calls them the same. A slider crossing zero minted
+    /// a receipt whose hashes moved and whose summary was empty.
+    #[test]
+    fn a_slider_crossing_zero_does_not_move_the_hash_behind_an_empty_diff() {
+        let mut negative = button("volume");
+        negative.role = Role::Slider;
+        negative.value_now = Some(-0.0);
+        let mut positive = negative.clone();
+        positive.value_now = Some(0.0);
+
+        assert_eq!(
+            canonical_hash(&snapshot(vec![negative.clone()])),
+            canonical_hash(&snapshot(vec![positive.clone()])),
+            "signed zero moved the hash that the diff reads as unchanged"
+        );
+
+        // The sign is the only thing folded: a real move still shows.
+        let mut moved = negative;
+        moved.value_now = Some(0.5);
+        assert_ne!(
+            canonical_hash(&snapshot(vec![positive])),
+            canonical_hash(&snapshot(vec![moved]))
         );
     }
 
