@@ -119,7 +119,13 @@ pub enum ThreadIntent {
         node_refs: Vec<String>,
     },
     /// Open a cited source.
-    OpenCitation { source_id: String },
+    ///
+    /// `part_id` is the clicked citation, `source_id` the source it names. The
+    /// wire does not require a source id to be unique across a thread -- a
+    /// per-response `source-1` is ordinary -- so the source id alone does not
+    /// say which turn was clicked, and resolving by it opened whichever
+    /// message used it first.
+    OpenCitation { part_id: String, source_id: String },
 }
 
 /// A canonical document change the GPUI editor asks its host to commit.
