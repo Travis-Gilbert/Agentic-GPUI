@@ -114,6 +114,17 @@ pub enum ActionRefusal {
     /// the id is real and the retry is the same gesture against
     /// `surface_id`, not a re-read of the tree.
     TargetOutsideSurface { surface_id: String },
+    /// The dispatcher was built for one window and handed another.
+    ///
+    /// Every lookup a dispatcher performs -- the snapshot, the target, the
+    /// focus handle -- reads the window it was built for, while platform
+    /// input is delivered to the window it is given. When those differ the
+    /// gesture would land in unrelated UI and the receipt would describe the
+    /// other window, so there is no reading of the result that is true. The
+    /// recovery is a dispatcher built for the window the caller means. This
+    /// is a host bug rather than something the action said wrong, and it is
+    /// on the wire because the receipt is the only channel a dispatch has.
+    WindowMismatch,
 }
 
 /// Whether the frame after the action is the frame the action produced.

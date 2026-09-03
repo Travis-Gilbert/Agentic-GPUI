@@ -2,12 +2,21 @@
 //!
 //! New in SPEC-AGPUI-SEMANTIC-TREE-1.0 D6. Nothing here is ported.
 //!
-//! The diff is keyed by id and reports exactly the fields
+//! The diff reports exactly what
 //! [`canonical_hash`](super::hash::canonical_hash) covers -- both halves of
 //! the tree, `nodes` and `reading_order` -- so a receipt whose hashes differ
 //! always reports something, and one whose hashes match can still report
 //! `moved`. Bounds are the only thing the hash leaves out, which is why
 //! `moved` is the one report that does not imply a hash change.
+//!
+//! The hash covers two things a per-id walk cannot see. `HashView` keeps both
+//! vectors in publication order, so the same ids registered in a different
+//! sequence hash differently; and it keeps every entry, so an id published
+//! twice hashes differently from the same id published once. Both are
+//! reported by [`SnapshotDiff::node_order_changed`] and
+//! [`SnapshotDiff::reading_order_changed`] -- without them a receipt could
+//! carry two different hashes and an empty summary, which is the one thing
+//! this module exists to prevent.
 
 use std::collections::HashSet;
 
@@ -46,6 +55,11 @@ pub struct DiffSummary {
     pub reading_removed: usize,
     /// Unmaterialized rows whose hashed state moved.
     pub reading_changed: usize,
+    /// The surviving nodes were registered in a different sequence, or one of
+    /// them was registered more than once.
+    pub node_order_changed: bool,
+    /// The same, for the reading order.
+    pub reading_order_changed: bool,
 }
 
 impl DiffSummary {
@@ -58,6 +72,8 @@ impl DiffSummary {
             && self.reading_added == 0
             && self.reading_removed == 0
             && self.reading_changed == 0
+            && !self.node_order_changed
+            && !self.reading_order_changed
     }
 }
 
@@ -83,6 +99,20 @@ pub struct SnapshotDiff {
     /// A row has no bounds until it materializes, so there is no `moved`
     /// counterpart here.
     pub reading_changed: Vec<NodeChange>,
+    /// The nodes both frames published appear in a different sequence, or one
+    /// of them appears more than once in a frame.
+    ///
+    /// Registration order is hashed, and `added`/`removed`/`changed` are all
+    /// keyed by id, so this is the only report a pure reshuffle produces. It
+    /// is the residual after the set difference: inserting a node in the
+    /// middle of the tree does not set it, because the ids the two frames
+    /// share are still in the same relative order.
+    pub node_order_changed: bool,
+    /// The same, for the reading order.
+    ///
+    /// A frame that publishes one row twice sets this: the hash carries both
+    /// entries, and the per-id walks above deliberately report an id once.
+    pub reading_order_changed: bool,
 }
 
 impl SnapshotDiff {
@@ -151,6 +181,36 @@ impl SnapshotDiff {
             }
         }
 
+        let added_ids: HashSet<&str> = diff.added.iter().map(|node| node.id.as_str()).collect();
+        let removed_ids: HashSet<&str> = diff.removed.iter().map(String::as_str).collect();
+        diff.node_order_changed = order_changed(
+            &before.nodes.iter().map(|node| node.id.as_str()).collect::<Vec<_>>(),
+            &after.nodes.iter().map(|node| node.id.as_str()).collect::<Vec<_>>(),
+            &removed_ids,
+            &added_ids,
+        );
+
+        let rows_added: HashSet<&str> = diff
+            .reading_added
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect();
+        let rows_removed: HashSet<&str> = diff.reading_removed.iter().map(String::as_str).collect();
+        diff.reading_order_changed = order_changed(
+            &before
+                .reading_order
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            &after
+                .reading_order
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            &rows_removed,
+            &rows_added,
+        );
+
         diff
     }
 
@@ -163,6 +223,8 @@ impl SnapshotDiff {
             && self.reading_added.is_empty()
             && self.reading_removed.is_empty()
             && self.reading_changed.is_empty()
+            && !self.node_order_changed
+            && !self.reading_order_changed
     }
 
     #[must_use]
@@ -175,8 +237,35 @@ impl SnapshotDiff {
             reading_added: self.reading_added.len(),
             reading_removed: self.reading_removed.len(),
             reading_changed: self.reading_changed.len(),
+            node_order_changed: self.node_order_changed,
+            reading_order_changed: self.reading_order_changed,
         }
     }
+}
+
+/// Did the ids the two frames share move relative to one another?
+///
+/// The added and removed sets are dropped first so an insertion or a deletion
+/// does not read as a reshuffle. What remains is each frame's sequence of
+/// surviving ids, with multiplicity, and the hash covers exactly that: two
+/// sequences that differ hash differently, and two that match hash the same.
+fn order_changed(
+    before: &[&str],
+    after: &[&str],
+    removed: &HashSet<&str>,
+    added: &HashSet<&str>,
+) -> bool {
+    let kept_before: Vec<&str> = before
+        .iter()
+        .copied()
+        .filter(|id| !removed.contains(id))
+        .collect();
+    let kept_after: Vec<&str> = after
+        .iter()
+        .copied()
+        .filter(|id| !added.contains(id))
+        .collect();
+    kept_before != kept_after
 }
 
 fn hashed_fields(node: &Node) -> Map<String, Value> {
@@ -330,7 +419,22 @@ mod tests {
         let before = snapshot(vec![node("row")]);
         let after = snapshot(vec![node("row"), node("row")]);
         let diff = SnapshotDiff::between(&before, &after);
-        assert!(diff.is_empty(), "{diff:?}");
+
+        // The per-id walks still report an id once: the second registration
+        // is not a second `added` entry, and the field walk does not compare
+        // the node against itself.
+        assert!(diff.added.is_empty());
+        assert!(diff.changed.is_empty());
+        assert!(diff.moved.is_empty());
+
+        // This assertion used to be `diff.is_empty()`, which enshrined the
+        // defect: `canonical_hash` keeps both entries, so the two frames hash
+        // differently and a receipt reporting nothing would be claiming a
+        // change it could not name.
+        assert_ne!(canonical_hash(&before), canonical_hash(&after));
+        assert!(diff.node_order_changed, "{diff:?}");
+        assert!(!diff.is_empty());
+
         assert_eq!(after.lint().len(), 2, "the lint still reports the duplicate");
     }
 
@@ -399,5 +503,90 @@ mod tests {
                 "hashes moved and the summary claimed nothing changed"
             );
         }
+    }
+    /// The other half of the invariant: publication order and multiplicity
+    /// are hashed, and a per-id walk cannot see either.
+    ///
+    /// Every pair here hashed differently and summarized empty before
+    /// `node_order_changed` / `reading_order_changed` existed, which is a
+    /// receipt claiming a frame changed while reporting nothing that did.
+    #[test]
+    fn no_reshuffle_escapes_a_receipt_whose_hashes_moved() {
+        let base = with_rows(
+            vec![node("thread"), node("composer")],
+            vec![row("thread.m1"), row("thread.m2")],
+        );
+        for after in [
+            // The same nodes, registered the other way round.
+            with_rows(
+                vec![node("composer"), node("thread")],
+                vec![row("thread.m1"), row("thread.m2")],
+            ),
+            // The same rows, published the other way round.
+            with_rows(
+                vec![node("thread"), node("composer")],
+                vec![row("thread.m2"), row("thread.m1")],
+            ),
+            // One node registered twice.
+            with_rows(
+                vec![node("thread"), node("composer"), node("thread")],
+                vec![row("thread.m1"), row("thread.m2")],
+            ),
+            // One row published twice.
+            with_rows(
+                vec![node("thread"), node("composer")],
+                vec![row("thread.m1"), row("thread.m2"), row("thread.m1")],
+            ),
+        ] {
+            assert_ne!(canonical_hash(&base), canonical_hash(&after));
+            assert!(
+                !SnapshotDiff::between(&base, &after).summary().is_empty(),
+                "hashes moved and the summary claimed nothing changed"
+            );
+        }
+    }
+
+    /// The order report is the residual after the set difference, so an
+    /// ordinary insertion must not set it -- otherwise every frame that adds
+    /// a row also claims the tree was reshuffled and the signal is noise.
+    #[test]
+    fn inserting_in_the_middle_is_not_a_reshuffle() {
+        let before = with_rows(
+            vec![node("thread"), node("composer")],
+            vec![row("thread.m1"), row("thread.m3")],
+        );
+        let after = with_rows(
+            vec![node("thread"), node("banner"), node("composer")],
+            vec![row("thread.m1"), row("thread.m2"), row("thread.m3")],
+        );
+        let diff = SnapshotDiff::between(&before, &after);
+        assert_eq!(diff.added.len(), 1);
+        assert_eq!(diff.reading_added.len(), 1);
+        assert!(!diff.node_order_changed, "an insertion is not a move");
+        assert!(!diff.reading_order_changed, "an insertion is not a move");
+
+        // And the reverse: a deletion is not a reshuffle either.
+        let back = SnapshotDiff::between(&after, &before);
+        assert_eq!(back.removed.len(), 1);
+        assert_eq!(back.reading_removed.len(), 1);
+        assert!(!back.node_order_changed);
+        assert!(!back.reading_order_changed);
+    }
+
+    #[test]
+    fn a_swap_names_the_half_that_moved() {
+        let before = with_rows(vec![node("a"), node("b")], vec![row("r1"), row("r2")]);
+        let nodes_swapped = with_rows(vec![node("b"), node("a")], vec![row("r1"), row("r2")]);
+        let diff = SnapshotDiff::between(&before, &nodes_swapped);
+        assert!(diff.node_order_changed);
+        assert!(
+            !diff.reading_order_changed,
+            "the reading order did not move and must not be reported"
+        );
+
+        let rows_swapped = with_rows(vec![node("a"), node("b")], vec![row("r2"), row("r1")]);
+        let diff = SnapshotDiff::between(&before, &rows_swapped);
+        assert!(!diff.node_order_changed);
+        assert!(diff.reading_order_changed);
     }
 }

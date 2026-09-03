@@ -39,7 +39,8 @@ pub struct Snapshot {
 pub enum LintFinding {
     /// A node names a parent no node published.
     OrphanParent { id: String, parent: String },
-    /// Two nodes published the same id in one frame.
+    /// One frame published the same id twice in one half of the tree --
+    /// either two nodes, or two reading items.
     DuplicateId { id: String },
     /// An id is outside the [`Ident`] grammar.
     MalformedId { id: String },
@@ -171,8 +172,14 @@ impl Snapshot {
     /// Ordering is deterministic: node findings in registration order (each
     /// node's malformed id, then its duplicate, then its orphan parent or the
     /// cycle its chain closes into), then
-    /// reading-item findings in publication order, then [`LintFinding::MissingWindow`]
+    /// reading-item findings in publication order (malformed id, then
+    /// duplicate, then missing parent), then [`LintFinding::MissingWindow`]
     /// last. An empty result is the contract a surface's story test asserts.
+    ///
+    /// The two halves keep separate duplicate sets. A row that materializes
+    /// between frames is legitimately both a reading item and a node, so an
+    /// id appearing once in each is not a duplicate; the same id published
+    /// twice inside either half is.
     #[must_use]
     pub fn lint(&self) -> Vec<LintFinding> {
         let mut findings = Vec::new();
@@ -202,9 +209,15 @@ impl Snapshot {
                 }
             }
         }
+        let mut seen_rows: HashSet<&str> = HashSet::new();
         for item in &self.reading_order {
             if !Ident::is_valid(&item.id) {
                 findings.push(LintFinding::MalformedId {
+                    id: item.id.clone(),
+                });
+            }
+            if !seen_rows.insert(item.id.as_str()) {
+                findings.push(LintFinding::DuplicateId {
                     id: item.id.clone(),
                 });
             }
@@ -451,6 +464,49 @@ mod tests {
                 node("row", Some("panel")),
             ],
             reading_order: Vec::new(),
+        };
+        assert_eq!(snapshot.lint(), Vec::new());
+    }
+
+    #[test]
+    fn the_same_row_published_twice_is_a_duplicate() {
+        // `canonical_hash` keeps every reading entry, so a frame that
+        // publishes one row twice hashes differently from one that publishes
+        // it once. Only the node half was checked for duplicates before, so
+        // this frame linted clean while carrying an id an action could not
+        // address unambiguously.
+        let row = SemanticReadingItem {
+            id: "thread.m1".into(),
+            parent: Some("thread".into()),
+            role: Role::Row,
+            ..SemanticReadingItem::default()
+        };
+        let snapshot = Snapshot {
+            generation: 1,
+            nodes: vec![window("thread")],
+            reading_order: vec![row.clone(), row],
+        };
+        assert_eq!(
+            snapshot.lint(),
+            vec![LintFinding::DuplicateId {
+                id: "thread.m1".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn a_row_that_shares_an_id_with_a_node_is_not_a_duplicate() {
+        // A row materializing between frames is legitimately both, so the two
+        // halves keep separate duplicate sets.
+        let snapshot = Snapshot {
+            generation: 1,
+            nodes: vec![window("thread"), node("thread.m1", Some("thread"))],
+            reading_order: vec![SemanticReadingItem {
+                id: "thread.m1".into(),
+                parent: Some("thread".into()),
+                role: Role::Row,
+                ..SemanticReadingItem::default()
+            }],
         };
         assert_eq!(snapshot.lint(), Vec::new());
     }

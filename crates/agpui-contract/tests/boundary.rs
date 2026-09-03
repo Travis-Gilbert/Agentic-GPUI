@@ -10,6 +10,37 @@ use std::process::Command;
 
 use serde_json::Value;
 
+/// The resolved graph rooted at this package, with every feature on.
+///
+/// `--all-features` is the whole of why this is a function rather than two
+/// copies of the same six lines. `cargo metadata` resolves *default* features
+/// by default, and an optional dependency behind a feature this package does
+/// not enable by default is simply absent from `resolve.nodes` -- so a
+/// renderer added behind `[features] preview = ["dep:gpui"]` would leave the
+/// walk below finding nothing and the boundary claim standing. Today there is
+/// no `[features]` table at all and the flag changes no byte of the output;
+/// it is here so that adding one cannot quietly narrow the oracle.
+fn metadata() -> Value {
+    let manifest = format!("{}/Cargo.toml", env!("CARGO_MANIFEST_DIR"));
+    let output = Command::new(option_env!("CARGO").unwrap_or("cargo"))
+        .args([
+            "metadata",
+            "--format-version",
+            "1",
+            "--all-features",
+            "--manifest-path",
+        ])
+        .arg(&manifest)
+        .output()
+        .expect("cargo metadata runs");
+    assert!(
+        output.status.success(),
+        "cargo metadata failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).expect("metadata is JSON")
+}
+
 /// Whether this package name means a renderer entered the contract.
 ///
 /// A roster of names was the first version of this and it was already wrong:
@@ -29,18 +60,7 @@ fn is_renderer(package: &str) -> bool {
 
 #[test]
 fn no_renderer_package_is_reachable_from_agpui_contract() {
-    let manifest = format!("{}/Cargo.toml", env!("CARGO_MANIFEST_DIR"));
-    let output = Command::new(option_env!("CARGO").unwrap_or("cargo"))
-        .args(["metadata", "--format-version", "1", "--manifest-path"])
-        .arg(&manifest)
-        .output()
-        .expect("cargo metadata runs");
-    assert!(
-        output.status.success(),
-        "cargo metadata failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let metadata: Value = serde_json::from_slice(&output.stdout).expect("metadata is JSON");
+    let metadata = metadata();
 
     let mut name_of: HashMap<&str, &str> = HashMap::new();
     let mut root = None;
@@ -92,13 +112,7 @@ fn the_resolve_walk_actually_sees_the_declared_dependencies() {
     // Guards the test above against silently passing on an empty walk: if the
     // metadata shape changes and nothing is reached, `renderers` is trivially
     // empty and the boundary stops being checked.
-    let manifest = format!("{}/Cargo.toml", env!("CARGO_MANIFEST_DIR"));
-    let output = Command::new(option_env!("CARGO").unwrap_or("cargo"))
-        .args(["metadata", "--format-version", "1", "--manifest-path"])
-        .arg(&manifest)
-        .output()
-        .expect("cargo metadata runs");
-    let metadata: Value = serde_json::from_slice(&output.stdout).expect("metadata is JSON");
+    let metadata = metadata();
     let names: HashSet<&str> = metadata["packages"]
         .as_array()
         .expect("packages")
