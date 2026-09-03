@@ -3,17 +3,19 @@
 //! New in SPEC-AGPUI-SEMANTIC-TREE-1.0 D6. Nothing here is ported.
 //!
 //! The diff is keyed by id and reports exactly the fields
-//! [`canonical_hash`](super::hash::canonical_hash) covers, so a receipt whose
-//! hashes differ always has a non-empty `changed`, `added`, or `removed`, and
-//! one whose hashes match can still report `moved`.
+//! [`canonical_hash`](super::hash::canonical_hash) covers -- both halves of
+//! the tree, `nodes` and `reading_order` -- so a receipt whose hashes differ
+//! always reports something, and one whose hashes match can still report
+//! `moved`. Bounds are the only thing the hash leaves out, which is why
+//! `moved` is the one report that does not imply a hash change.
 
 use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use super::hash::{HashNode, HASHED_NODE_FIELDS};
-use super::node::Node;
+use super::hash::{HashNode, HashReadingItem, HASHED_NODE_FIELDS, HASHED_READING_FIELDS};
+use super::node::{Node, SemanticReadingItem};
 use super::snapshot::Snapshot;
 
 /// One field of one node, before and after.
@@ -38,12 +40,24 @@ pub struct DiffSummary {
     pub removed: usize,
     pub changed: usize,
     pub moved: usize,
+    /// Unmaterialized rows only the later frame published.
+    pub reading_added: usize,
+    /// Unmaterialized rows only the earlier frame published.
+    pub reading_removed: usize,
+    /// Unmaterialized rows whose hashed state moved.
+    pub reading_changed: usize,
 }
 
 impl DiffSummary {
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        self.added == 0 && self.removed == 0 && self.changed == 0 && self.moved == 0
+        self.added == 0
+            && self.removed == 0
+            && self.changed == 0
+            && self.moved == 0
+            && self.reading_added == 0
+            && self.reading_removed == 0
+            && self.reading_changed == 0
     }
 }
 
@@ -59,6 +73,16 @@ pub struct SnapshotDiff {
     pub changed: Vec<NodeChange>,
     /// Nodes whose bounds moved and whose hashed state did not.
     pub moved: Vec<String>,
+    /// Reading items only the later frame published, in its publication order.
+    pub reading_added: Vec<SemanticReadingItem>,
+    /// Ids only the earlier frame's reading order published, in its order.
+    pub reading_removed: Vec<String>,
+    /// Reading items whose hashed state moved, in the later frame's order,
+    /// fields in [`HASHED_READING_FIELDS`] order.
+    ///
+    /// A row has no bounds until it materializes, so there is no `moved`
+    /// counterpart here.
+    pub reading_changed: Vec<NodeChange>,
 }
 
 impl SnapshotDiff {
@@ -100,6 +124,33 @@ impl SnapshotDiff {
             }
         }
 
+        let mut seen_rows_after: HashSet<&str> = HashSet::new();
+        for item in &after.reading_order {
+            if !seen_rows_after.insert(item.id.as_str()) {
+                continue;
+            }
+            let Some(previous) = before.reading_item(&item.id) else {
+                diff.reading_added.push(item.clone());
+                continue;
+            };
+            let fields = changed_reading_fields(previous, item);
+            if !fields.is_empty() {
+                diff.reading_changed.push(NodeChange {
+                    id: item.id.clone(),
+                    fields,
+                });
+            }
+        }
+
+        let mut seen_rows_before: HashSet<&str> = HashSet::new();
+        for item in &before.reading_order {
+            if seen_rows_before.insert(item.id.as_str())
+                && after.reading_item(&item.id).is_none()
+            {
+                diff.reading_removed.push(item.id.clone());
+            }
+        }
+
         diff
     }
 
@@ -109,6 +160,9 @@ impl SnapshotDiff {
             && self.removed.is_empty()
             && self.changed.is_empty()
             && self.moved.is_empty()
+            && self.reading_added.is_empty()
+            && self.reading_removed.is_empty()
+            && self.reading_changed.is_empty()
     }
 
     #[must_use]
@@ -118,6 +172,9 @@ impl SnapshotDiff {
             removed: self.removed.len(),
             changed: self.changed.len(),
             moved: self.moved.len(),
+            reading_added: self.reading_added.len(),
+            reading_removed: self.reading_removed.len(),
+            reading_changed: self.reading_changed.len(),
         }
     }
 }
@@ -129,14 +186,32 @@ fn hashed_fields(node: &Node) -> Map<String, Value> {
     }
 }
 
-fn changed_fields(before: &Node, after: &Node) -> Vec<FieldChange> {
-    let before_fields = hashed_fields(before);
-    let after_fields = hashed_fields(after);
-    HASHED_NODE_FIELDS
+fn hashed_reading_fields(item: &SemanticReadingItem) -> Map<String, Value> {
+    match serde_json::to_value(HashReadingItem::of(item)) {
+        Ok(Value::Object(map)) => map,
+        _ => Map::new(),
+    }
+}
+
+fn changed_reading_fields(
+    before: &SemanticReadingItem,
+    after: &SemanticReadingItem,
+) -> Vec<FieldChange> {
+    let before_fields = hashed_reading_fields(before);
+    let after_fields = hashed_reading_fields(after);
+    field_changes(&HASHED_READING_FIELDS, &before_fields, &after_fields)
+}
+
+fn field_changes(
+    names: &[&str],
+    before: &Map<String, Value>,
+    after: &Map<String, Value>,
+) -> Vec<FieldChange> {
+    names
         .iter()
         .filter_map(|field| {
-            let old = before_fields.get(*field).cloned().unwrap_or(Value::Null);
-            let new = after_fields.get(*field).cloned().unwrap_or(Value::Null);
+            let old = before.get(*field).cloned().unwrap_or(Value::Null);
+            let new = after.get(*field).cloned().unwrap_or(Value::Null);
             (old != new).then(|| FieldChange {
                 field: (*field).to_owned(),
                 before: old,
@@ -146,12 +221,36 @@ fn changed_fields(before: &Node, after: &Node) -> Vec<FieldChange> {
         .collect()
 }
 
+fn changed_fields(before: &Node, after: &Node) -> Vec<FieldChange> {
+    let before_fields = hashed_fields(before);
+    let after_fields = hashed_fields(after);
+    field_changes(&HASHED_NODE_FIELDS, &before_fields, &after_fields)
+}
+
 #[cfg(test)]
 mod tests {
     use super::SnapshotDiff;
-    use crate::semantics::node::{Node, Rect};
+    use crate::semantics::hash::canonical_hash;
+    use crate::semantics::node::{Node, Rect, SemanticReadingItem};
     use crate::semantics::role::Role;
     use crate::semantics::snapshot::Snapshot;
+
+    fn row(id: &str) -> SemanticReadingItem {
+        SemanticReadingItem {
+            id: id.into(),
+            role: Role::Row,
+            text: Some("a message".into()),
+            ..SemanticReadingItem::default()
+        }
+    }
+
+    fn with_rows(nodes: Vec<Node>, reading_order: Vec<SemanticReadingItem>) -> Snapshot {
+        Snapshot {
+            generation: 1,
+            nodes,
+            reading_order,
+        }
+    }
 
     fn node(id: &str) -> Node {
         Node {
@@ -241,5 +340,64 @@ mod tests {
         let diff = SnapshotDiff::between(&one, &one.clone());
         assert!(diff.is_empty());
         assert!(diff.summary().is_empty());
+    }
+
+    #[test]
+    fn a_row_the_thread_scrolled_past_is_reported_like_any_other_removal() {
+        let before = with_rows(vec![node("thread")], vec![row("thread.m1"), row("thread.m2")]);
+        let after = with_rows(vec![node("thread")], vec![row("thread.m2"), row("thread.m3")]);
+        let diff = SnapshotDiff::between(&before, &after);
+        assert_eq!(
+            diff.reading_added
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["thread.m3"]
+        );
+        assert_eq!(diff.reading_removed, vec!["thread.m1".to_string()]);
+        assert!(diff.added.is_empty() && diff.removed.is_empty());
+    }
+
+    #[test]
+    fn a_selected_row_that_never_materialized_still_reports_the_field() {
+        let before = with_rows(vec![node("thread")], vec![row("thread.m1")]);
+        let mut chosen = row("thread.m1");
+        chosen.selected = true;
+        let after = with_rows(vec![node("thread")], vec![chosen]);
+        let diff = SnapshotDiff::between(&before, &after);
+        assert_eq!(diff.reading_changed.len(), 1);
+        assert_eq!(diff.reading_changed[0].id, "thread.m1");
+        assert_eq!(
+            diff.reading_changed[0]
+                .fields
+                .iter()
+                .map(|field| field.field.as_str())
+                .collect::<Vec<_>>(),
+            vec!["selected"]
+        );
+    }
+
+    #[test]
+    fn no_reading_order_change_escapes_a_receipt_whose_hashes_moved() {
+        // The contract this module states: what `canonical_hash` covers, the
+        // diff reports. `reading_order` is half of what it covers, so a frame
+        // that only moves a row used to hash differently and summarize empty.
+        let base = with_rows(vec![node("thread")], vec![row("thread.m1")]);
+        let mut renamed = row("thread.m1");
+        renamed.text = Some("an edited message".into());
+        let mut refocused = row("thread.m1");
+        refocused.focused = true;
+        for after in [
+            with_rows(vec![node("thread")], vec![renamed]),
+            with_rows(vec![node("thread")], vec![refocused]),
+            with_rows(vec![node("thread")], Vec::new()),
+            with_rows(vec![node("thread")], vec![row("thread.m9")]),
+        ] {
+            assert_ne!(canonical_hash(&base), canonical_hash(&after));
+            assert!(
+                !SnapshotDiff::between(&base, &after).summary().is_empty(),
+                "hashes moved and the summary claimed nothing changed"
+            );
+        }
     }
 }

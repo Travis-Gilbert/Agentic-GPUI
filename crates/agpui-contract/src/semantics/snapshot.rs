@@ -48,6 +48,16 @@ pub enum LintFinding {
     MissingWindow,
     /// A reading item names a parent no node published.
     ReadingItemParentMissing { id: String, parent: String },
+    /// This node's parent chain never terminates: walking it revisits an id.
+    ///
+    /// A chain that closes on itself reaches no root, so it reaches no
+    /// [`Role::Window`] either. [`Snapshot::ancestors_of`] and
+    /// [`Snapshot::descendants_of`] both refuse to loop on one, which is what
+    /// keeps a cycle from hanging a consumer -- and is also why nothing
+    /// noticed it. The ancestor set a caller gets back is truncated at the
+    /// repeat, so an occlusion or containment decision taken from it is
+    /// answered from part of the chain.
+    ParentCycle { id: String },
 }
 
 impl Snapshot {
@@ -139,10 +149,28 @@ impl Snapshot {
         self
     }
 
+    /// Whether walking this node's parent chain revisits an id.
+    ///
+    /// Separate from [`Snapshot::ancestors_of`], which stops at the repeat and
+    /// reports the prefix: the caller there wants the chain it can trust, and
+    /// this one wants to know the chain is untrustworthy.
+    fn chain_repeats(&self, id: &str) -> bool {
+        let mut visited = BTreeSet::from([id.to_string()]);
+        let mut current = id;
+        while let Some(parent) = self.find(current).and_then(|node| node.parent.as_deref()) {
+            if !visited.insert(parent.to_string()) {
+                return true;
+            }
+            current = parent;
+        }
+        false
+    }
+
     /// Reports the defects one frame's tree carries.
     ///
     /// Ordering is deterministic: node findings in registration order (each
-    /// node's malformed id, then its duplicate, then its orphan parent), then
+    /// node's malformed id, then its duplicate, then its orphan parent or the
+    /// cycle its chain closes into), then
     /// reading-item findings in publication order, then [`LintFinding::MissingWindow`]
     /// last. An empty result is the contract a surface's story test asserts.
     #[must_use]
@@ -166,6 +194,10 @@ impl Snapshot {
                     findings.push(LintFinding::OrphanParent {
                         id: node.id.clone(),
                         parent: parent.clone(),
+                    });
+                } else if self.chain_repeats(&node.id) {
+                    findings.push(LintFinding::ParentCycle {
+                        id: node.id.clone(),
                     });
                 }
             }
@@ -352,5 +384,74 @@ mod tests {
                 LintFinding::MissingWindow,
             ]
         );
+    }
+
+    #[test]
+    fn a_parent_chain_that_closes_on_itself_is_reported() {
+        // Every declared parent is published, so `OrphanParent` sees nothing
+        // wrong; the defect is that neither `panel` nor `row` reaches a root.
+        let snapshot = Snapshot {
+            generation: 1,
+            nodes: vec![
+                window("leaf"),
+                node("panel", Some("row")),
+                node("row", Some("panel")),
+            ],
+            reading_order: Vec::new(),
+        };
+        assert_eq!(
+            snapshot.lint(),
+            vec![
+                LintFinding::ParentCycle {
+                    id: "panel".into()
+                },
+                LintFinding::ParentCycle { id: "row".into() },
+            ]
+        );
+        // The reason it matters: the chain a caller gets back is the prefix
+        // before the repeat, not the whole chain, and nothing else says so.
+        assert_eq!(snapshot.ancestors_of("row"), vec!["panel"]);
+    }
+
+    #[test]
+    fn a_node_hanging_off_a_cycle_is_reported_too() {
+        let snapshot = Snapshot {
+            generation: 1,
+            nodes: vec![
+                window("leaf"),
+                node("a", Some("b")),
+                node("b", Some("a")),
+                node("leaf-child", Some("leaf")),
+                node("dangling", Some("a")),
+            ],
+            reading_order: Vec::new(),
+        };
+        assert_eq!(
+            snapshot.lint(),
+            vec![
+                LintFinding::ParentCycle { id: "a".into() },
+                LintFinding::ParentCycle { id: "b".into() },
+                LintFinding::ParentCycle {
+                    id: "dangling".into()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_chain_that_ends_at_a_parentless_node_is_not_a_cycle() {
+        // Most nodes in this repository declare no parent at all: they are in
+        // the window their registry is for. A chain that terminates is fine
+        // however short it is, and only a chain that never terminates is not.
+        let snapshot = Snapshot {
+            generation: 1,
+            nodes: vec![
+                window("leaf"),
+                node("panel", None),
+                node("row", Some("panel")),
+            ],
+            reading_order: Vec::new(),
+        };
+        assert_eq!(snapshot.lint(), Vec::new());
     }
 }

@@ -91,6 +91,13 @@ pub const HASHED_NODE_FIELDS: [&str; 19] = [
     "modal",
 ];
 
+/// The field names [`HashReadingItem`] carries, in declaration order.
+///
+/// `id` is the key rather than a field, so it is not listed: the same rule
+/// [`HASHED_NODE_FIELDS`] follows.
+pub const HASHED_READING_FIELDS: [&str; 5] =
+    ["parent", "role", "text", "focused", "selected"];
+
 impl HashNode {
     pub(crate) fn of(node: &Node) -> Self {
         Self {
@@ -119,7 +126,7 @@ impl HashNode {
 }
 
 impl HashReadingItem {
-    fn of(item: &SemanticReadingItem) -> Self {
+    pub(crate) fn of(item: &SemanticReadingItem) -> Self {
         Self {
             id: item.id.clone(),
             parent: item.parent.clone(),

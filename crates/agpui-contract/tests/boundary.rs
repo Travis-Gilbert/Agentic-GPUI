@@ -10,17 +10,22 @@ use std::process::Command;
 
 use serde_json::Value;
 
-/// The package names that would mean a renderer entered the contract. Both
-/// spellings of each are listed because Cargo reports the package name, and
-/// the workspace pins some of these under a `package = ` rename.
-const RENDERER_PACKAGES: [&str; 6] = [
-    "gpui",
-    "gpui_platform",
-    "gpui_web",
-    "gpui-component",
-    "gpui-base",
-    "gpui-box",
-];
+/// Whether this package name means a renderer entered the contract.
+///
+/// A roster of names was the first version of this and it was already wrong:
+/// it listed six and the workspace pins ten, so `gpui_macros`,
+/// `gpui-component-assets`, `gpui-component-macros`, `declarative-gpui` and
+/// `declarative-gpui-core` could all have entered without failing anything.
+/// A roster has to be edited every time `scripts/check-gpui-editor-pin.sh`
+/// pins one more, by someone who has no reason to look at this file. The
+/// predicate needs no edit: every renderer package in this workspace is
+/// `gpui`, is prefixed `gpui-` or `gpui_`, or is `declarative-gpui`.
+fn is_renderer(package: &str) -> bool {
+    package == "gpui"
+        || package.starts_with("gpui-")
+        || package.starts_with("gpui_")
+        || package.starts_with("declarative-gpui")
+}
 
 #[test]
 fn no_renderer_package_is_reachable_from_agpui_contract() {
@@ -74,7 +79,7 @@ fn no_renderer_package_is_reachable_from_agpui_contract() {
     let renderers: Vec<&str> = reached
         .iter()
         .filter_map(|id| name_of.get(id).copied())
-        .filter(|name| RENDERER_PACKAGES.contains(name))
+        .filter(|name| is_renderer(name))
         .collect();
     assert!(
         renderers.is_empty(),
@@ -102,5 +107,31 @@ fn the_resolve_walk_actually_sees_the_declared_dependencies() {
         .collect();
     for expected in ["serde", "serde_json", "sha2"] {
         assert!(names.contains(expected), "{expected} is a declared dependency");
+    }
+}
+
+#[test]
+fn the_predicate_catches_every_renderer_the_workspace_pins() {
+    // The names `scripts/check-gpui-editor-pin.sh` asserts a single source
+    // for, plus `gpui-box`, which this crate was ported from and which no
+    // longer has a pin row. If that script grows a name shaped unlike these,
+    // this test is where the mismatch should surface.
+    for pinned in [
+        "gpui",
+        "gpui_macros",
+        "gpui_platform",
+        "gpui_web",
+        "gpui-base",
+        "gpui-component",
+        "gpui-component-assets",
+        "gpui-component-macros",
+        "declarative-gpui",
+        "declarative-gpui-core",
+        "gpui-box",
+    ] {
+        assert!(is_renderer(pinned), "{pinned} must read as a renderer");
+    }
+    for unrelated in ["serde", "sha2", "agpui-contract", "theorem-surface-contracts"] {
+        assert!(!is_renderer(unrelated), "{unrelated} is not a renderer");
     }
 }

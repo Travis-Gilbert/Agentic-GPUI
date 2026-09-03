@@ -21,7 +21,7 @@ pub mod snapshot;
 
 pub use action::{ActionOutcome, ActionRefusal, SemanticAction, SemanticGesture};
 pub use diff::{DiffSummary, FieldChange, NodeChange, SnapshotDiff};
-pub use hash::{canonical_hash, hex, HashNode, HashReadingItem, HashView, HASHED_NODE_FIELDS};
+pub use hash::{canonical_hash, hex, HashNode, HashReadingItem, HashView, HASHED_NODE_FIELDS, HASHED_READING_FIELDS};
 pub use ident::{Ident, IdentError, IdentViolation};
 pub use node::{LiveRegion, Node, Rect, SemanticReadingItem};
 pub use receipt::ActionReceipt;

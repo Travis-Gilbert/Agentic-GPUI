@@ -15,4 +15,5 @@ pub use semantics::{
     DiffSummary, FieldChange, HashNode, HashReadingItem, HashView, Ident, IdentError,
     IdentViolation, LintFinding, LiveRegion, Node, NodeChange, Rect, Role, SemanticAction,
     SemanticGesture, SemanticReadingItem, Snapshot, SnapshotDiff, HASHED_NODE_FIELDS,
+    HASHED_READING_FIELDS,
 };
