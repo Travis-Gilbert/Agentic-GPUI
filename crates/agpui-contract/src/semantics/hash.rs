@@ -163,18 +163,33 @@ impl Snapshot {
 
 /// SHA-256 over the canonical JSON of [`HashView`].
 ///
-/// Canonical means `serde_json`'s object representation, whose keys are
-/// sorted, written compactly with no whitespace.
+/// Canonical means the struct is serialized straight to a compact string, with
+/// no whitespace and with fields in declaration order. It never passes through
+/// [`serde_json::Value`], and that is the whole point: `Value`'s object
+/// representation and its numbers are both decided by `serde_json` *features*,
+/// which Cargo unifies across whatever else is in the build.
+/// `preserve_order` swaps a sorted `BTreeMap` for an insertion-ordered
+/// `IndexMap`, and `arbitrary_precision` changes how a float becomes a
+/// `Number` -- so a `Value` round trip makes the hash a function of the
+/// consumer's dependency graph rather than of the tree.
+///
+/// This is not hypothetical here. `rustyredcore_THG`'s `workspace-hack` turns
+/// both features on, `apps/theoremweb` does not, and the two trees are exactly
+/// the two consumers acceptance 12 requires to agree. Before this went through
+/// the struct directly they hashed the same snapshot to different digests.
+/// `the_hash_is_pinned_across_workspaces` holds the line, and the `agpui`
+/// crate asserts the same constant from the other tree.
+///
+/// [`HashView`] carries no map-typed field, so declaration order is total.
 ///
 /// # Panics
 ///
-/// Unreachable. [`HashView`] has only string keys and finite floats, which
-/// `serde_json` cannot fail to represent.
+/// Unreachable. [`HashView`] has only finite floats, which `serde_json` cannot
+/// fail to represent.
 #[must_use]
 pub fn canonical_hash(snapshot: &Snapshot) -> [u8; 32] {
-    let view = serde_json::to_value(snapshot.hash_view())
-        .expect("HashView has only string keys and finite floats");
-    let canonical = serde_json::to_string(&view).expect("a serde_json::Value always serializes");
+    let canonical = serde_json::to_string(&snapshot.hash_view())
+        .expect("HashView has only finite floats");
     Sha256::digest(canonical.as_bytes()).into()
 }
 
@@ -284,5 +299,40 @@ mod tests {
         sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(sorted.len(), HASHED_NODE_FIELDS.len());
+    }
+
+    /// The digest of one fixed snapshot, written down.
+    ///
+    /// `agpui` asserts this same constant from `apps/theoremweb`, which builds
+    /// this crate with a different `serde_json` feature set. That is the whole
+    /// oracle: two trees, one number. The fixture is spelled out on both sides
+    /// on purpose -- sharing it through a helper would let a change to the
+    /// helper move both sides together and prove nothing.
+    #[test]
+    fn the_hash_is_pinned_across_workspaces() {
+        let node = Node {
+            id: "composer-send".into(),
+            role: Role::Button,
+            parent: Some("composer".into()),
+            text: Some("Send".into()),
+            value_now: Some(0.1),
+            bounds: Rect {
+                x: 1.,
+                y: 2.,
+                width: 3.,
+                height: 4.,
+            },
+            visible: true,
+            ..Node::default()
+        };
+        let snapshot = Snapshot {
+            generation: 7,
+            nodes: vec![node],
+            reading_order: Vec::new(),
+        };
+        assert_eq!(
+            hex(&canonical_hash(&snapshot)),
+            "9e18a5010008a59769a12878ef9c0c788102f96bd64ce84e4b3f0c9eae6cb880"
+        );
     }
 }
