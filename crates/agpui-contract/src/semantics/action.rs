@@ -107,6 +107,13 @@ pub enum ActionRefusal {
     NoScrollHook,
     /// The action named a surface this dispatcher does not own.
     SurfaceUnknown,
+    /// The node exists and belongs to a different published surface than the
+    /// one the action named.
+    ///
+    /// Distinct from [`Self::TargetAbsent`] because the recovery is different:
+    /// the id is real and the retry is the same gesture against
+    /// `surface_id`, not a re-read of the tree.
+    TargetOutsideSurface { surface_id: String },
 }
 
 /// Whether the frame after the action is the frame the action produced.
@@ -174,6 +181,9 @@ mod tests {
             },
             ActionRefusal::NoScrollHook,
             ActionRefusal::SurfaceUnknown,
+            ActionRefusal::TargetOutsideSurface {
+                surface_id: "thread".into(),
+            },
         ] {
             let json = serde_json::to_string(&ActionOutcome::Refused(refusal.clone()))
                 .expect("serializes");
