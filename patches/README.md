@@ -25,4 +25,5 @@ compatibility commits. The first selects the API-equivalent `oo7 0.6.0-alpha`
 release (MSRV 1.86) because stable oo7 0.6.0 requires Rust 1.92. The second
 replaces the newer `slice::as_array` helper with the stable array conversion
 used by Rust 1.90. The third replaces post-1.90 standard-library profiling and
-UTF-8 boundary helpers with equivalent local implementations.
+UTF-8 boundary helpers with equivalent local implementations. The final patch
+uses the stable atomic update primitive for text-selection scope allocation.
