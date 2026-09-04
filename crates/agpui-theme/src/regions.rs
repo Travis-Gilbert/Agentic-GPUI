@@ -176,10 +176,22 @@ mod tests {
     fn the_card_is_inset_by_the_page_margin_on_every_side() {
         let regions = default_regions();
 
-        assert_eq!(regions.card.x - regions.sidebar.right(), METRICS.main_page_margin);
-        assert_eq!(regions.card.y - regions.tab_strip.bottom(), METRICS.main_page_margin);
-        assert_eq!(CONTENT_WIDTH - regions.card.right(), METRICS.main_page_margin);
-        assert_eq!(regions.status_band.y - regions.card.bottom(), METRICS.main_page_margin);
+        assert_eq!(
+            regions.card.x - regions.sidebar.right(),
+            METRICS.main_page_margin
+        );
+        assert_eq!(
+            regions.card.y - regions.tab_strip.bottom(),
+            METRICS.main_page_margin
+        );
+        assert_eq!(
+            CONTENT_WIDTH - regions.card.right(),
+            METRICS.main_page_margin
+        );
+        assert_eq!(
+            regions.status_band.y - regions.card.bottom(),
+            METRICS.main_page_margin
+        );
     }
 
     #[test]
@@ -216,7 +228,8 @@ mod tests {
 
     #[test]
     fn a_window_narrower_than_its_chrome_never_produces_a_negative_region() {
-        let tiny = ShellRegions::for_content(120.0, 40.0, METRICS.sidebar_width_default, Some(400.0));
+        let tiny =
+            ShellRegions::for_content(120.0, 40.0, METRICS.sidebar_width_default, Some(400.0));
 
         assert!(tiny.card.width >= 0.0);
         assert!(tiny.card.height >= 0.0);
