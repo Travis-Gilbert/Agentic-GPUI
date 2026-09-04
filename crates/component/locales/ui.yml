@@ -148,6 +148,18 @@ ComboBox:
     zh-TW: "沒有結果"
     it: "Nessun risultato"
 Dock:
+  PanelMenu:
+    en: "Panel menu"
+    zh-CN: "面板菜单"
+    zh-HK: "面板選單"
+    zh-TW: "面板選單"
+    it: "Menu del pannello"
+  MoreTabs:
+    en: "More tabs"
+    zh-CN: "更多标签页"
+    zh-HK: "更多分頁"
+    zh-TW: "更多分頁"
+    it: "Altre schede"
   Unnamed:
     en: Unnamed
     zh-CN: 未命名
@@ -184,6 +196,19 @@ Dock:
     zh-HK: 展開
     zh-TW: 展開
     it: Espandi
+Sidebar:
+  Expand:
+    en: "Expand sidebar"
+    zh-CN: "展开侧边栏"
+    zh-HK: "展開側邊欄"
+    zh-TW: "展開側邊欄"
+    it: "Espandi barra laterale"
+  Collapse:
+    en: "Collapse sidebar"
+    zh-CN: "折叠侧边栏"
+    zh-HK: "收合側邊欄"
+    zh-TW: "收合側邊欄"
+    it: "Comprimi barra laterale"
 ColorPicker:
   Palette:
     en: Palette

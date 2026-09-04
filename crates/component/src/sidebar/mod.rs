@@ -11,6 +11,7 @@ use gpui::{
     RenderOnce, SharedString, StyleRefinement, Styled, Window, div, list, prelude::FluentBuilder,
     px,
 };
+use rust_i18n::t;
 use std::{rc::Rc, time::Duration};
 
 use crate::animation::{EffectTransition, ease_in_out_cubic};
@@ -365,6 +366,10 @@ impl RenderOnce for SidebarToggleButton {
                 this.on_click(move |ev, window, cx| {
                     on_click(ev, window, cx);
                 })
+            })
+            .accessibility_label(match collapsed {
+                true => t!("Sidebar.Expand"),
+                false => t!("Sidebar.Collapse"),
             })
             .icon(Icon::new(icon).size_4())
     }

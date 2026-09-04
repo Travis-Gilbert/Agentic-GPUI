@@ -329,6 +329,7 @@ impl TabGroupSkin {
                     .icon(IconName::Ellipsis)
                     .xsmall()
                     .ghost()
+                    .accessibility_label(t!("Dock.PanelMenu"))
                     .tab_stop(false)
                     .dropdown_menu(move |menu, window, cx| {
                         menu.when_some(panel.clone(), |menu, panel| {
@@ -496,7 +497,7 @@ impl TabGroupSkin {
                             .ix(ix)
                             .tab_bar_prefix(has_leading)
                             .map(|this| match handle.and_then(|handle| handle.tab_name(cx)) {
-                                Some(tab_name) => this.child(tab_name),
+                                Some(tab_name) => this.aria_label(tab_name.clone()).child(tab_name),
                                 None => this.child(panel_title(panel, window, cx)),
                             })
                             // A collapsed group shows no tab as active: the

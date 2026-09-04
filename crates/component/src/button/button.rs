@@ -350,6 +350,13 @@ impl Button {
         self
     }
 
+    fn accessible_name(&self) -> Option<SharedString> {
+        self.accessibility_label
+            .clone()
+            .or_else(|| self.label.clone())
+            .or_else(|| self.tooltip.as_ref().map(|(tooltip, _)| tooltip.clone()))
+    }
+
     /// Set the icon of the button, if the Button have no label, the button well in Icon Button mode.
     pub fn icon(mut self, icon: impl Into<ButtonIcon>) -> Self {
         self.icon = Some(icon.into());
@@ -530,6 +537,7 @@ impl RenderOnce for Button {
         let hoverable = self.hoverable();
         let disabled = self.disabled;
         let loading = self.loading;
+        let accessibility_label = self.accessible_name();
         let hover_group = self.hover_group;
         let hover_group_held = self.hover_group_held;
         let mut base = self.base;
@@ -649,12 +657,6 @@ impl RenderOnce for Button {
             })
             .refine_style(&instance_style);
 
-        // The explicit name wins: it exists precisely for the cases where the
-        // visible content is not what a listener needs to hear.
-        let accessibility_label = self
-            .accessibility_label
-            .clone()
-            .or_else(|| self.label.clone());
         let content = h_flex()
             .id("label")
             .size_full()
@@ -1285,19 +1287,25 @@ mod tests {
     use crate::IconName;
     use gpui::{linear_color_stop, linear_gradient, px};
 
-    /// A button's announced name is its label, unless it was given one — which
-    /// is the case an icon-only button and a row-shaped button both need.
     #[test]
-    fn an_explicit_accessibility_label_replaces_the_visible_one() {
+    fn accessible_name_uses_explicit_label_then_visible_label_then_tooltip() {
+        let icon_only = Button::new("zoom-in").icon(IconName::Plus);
+        assert_eq!(icon_only.accessible_name(), None);
+
+        let tooltipped = Button::new("zoom-in")
+            .icon(IconName::Plus)
+            .tooltip("Zoom in");
+        assert_eq!(tooltipped.accessible_name().as_deref(), Some("Zoom in"));
+
         let plain = Button::new("save").label("Save");
-        assert_eq!(plain.accessibility_label, None);
-        assert_eq!(plain.label.as_deref(), Some("Save"));
+        assert_eq!(plain.accessible_name().as_deref(), Some("Save"));
 
         let named = Button::new("row")
             .label("Save")
+            .tooltip("Save")
             .accessibility_label("Save the current document");
         assert_eq!(
-            named.accessibility_label.as_deref(),
+            named.accessible_name().as_deref(),
             Some("Save the current document"),
             "an explicit name must win over the visible label"
         );
