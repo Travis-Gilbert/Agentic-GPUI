@@ -32,11 +32,10 @@ It does not depend on `gpui-component`, so it works in any GPUI application.
 gpui-fps = { git = "https://github.com/longbridge/gpui-kit" }
 ```
 
-It must resolve to the same `gpui` as your application. Both depending on the
-same `gpui-pre` version is enough — Cargo unifies them — but a `[patch]`, a
-different `gpui-pre` version, or a checkout of the Zed repository will produce
-two incompatible `gpui` crates, and the error will be about mismatched `Window`
-types rather than about versions.
+It must resolve to the same `gpui` as your application. This fork pins the GPUI
+family to one immutable revision of Theorem's Zed fork. A different Zed
+revision produces two incompatible `gpui` crates, and the error will be about
+mismatched `Window` types rather than about versions.
 
 ### 2. Render it
 

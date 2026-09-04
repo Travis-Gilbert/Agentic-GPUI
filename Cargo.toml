@@ -48,13 +48,13 @@ gpui-wry = { path = "crates/webview", version = "0.6.0" }
 gpui-component-shell = { path = "crates/component-shell", version = "0.6.0" }
 story = { path = "crates/story" }
 
-gpui = { package = "gpui-pre", version = "0.3.1" }
-gpui_platform = { package = "gpui-pre-platform", version = "0.3.1", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
-gpui_web = { package = "gpui-pre-web", version = "0.3.1" }
-gpui_macros = { package = "gpui-pre-macros", version = "0.3.1" }
-reqwest_client = { package = "gpui-pre-reqwest-client", version = "0.3.1" }
-sum-tree = { package = "gpui-pre-sum-tree", version = "0.3.1" }
-reqwest = { package = "gpui-pre-reqwest", version = "0.12.15", default-features = false, features = [
+gpui = { git = "https://github.com/Travis-Gilbert/zed", rev = "d1b4d315a21774ad51cd72cd2c231488bd81da22" }
+gpui_platform = { git = "https://github.com/Travis-Gilbert/zed", rev = "d1b4d315a21774ad51cd72cd2c231488bd81da22", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
+gpui_web = { git = "https://github.com/Travis-Gilbert/zed", rev = "d1b4d315a21774ad51cd72cd2c231488bd81da22" }
+gpui_macros = { git = "https://github.com/Travis-Gilbert/zed", rev = "d1b4d315a21774ad51cd72cd2c231488bd81da22" }
+reqwest_client = { git = "https://github.com/Travis-Gilbert/zed", rev = "d1b4d315a21774ad51cd72cd2c231488bd81da22" }
+sum-tree = { package = "sum_tree", git = "https://github.com/Travis-Gilbert/zed", rev = "d1b4d315a21774ad51cd72cd2c231488bd81da22" }
+reqwest = { package = "zed-reqwest", git = "https://github.com/zed-industries/reqwest.git", rev = "33bc764aa15ff7b200bf7c93bd96e24878d53e14", version = "0.12.15-zed", default-features = false, features = [
     "charset",
     "http2",
     "macos-system-configuration",
@@ -127,14 +127,14 @@ rustybuzz = { opt-level = 3 }
 taffy = { opt-level = 3 }
 ttf-parser = { opt-level = 3 }
 smol = { opt-level = 3 }
-gpui-pre = { opt-level = 3 }
-gpui-pre-platform = { opt-level = 3 }
-gpui-pre-macros = { opt-level = 3 }
+gpui = { opt-level = 3 }
+gpui_platform = { opt-level = 3 }
+gpui_macros = { opt-level = 3 }
 tree-sitter = { opt-level = 3 }
-gpui-pre-sum-tree = { opt-level = 3 }
+sum_tree = { opt-level = 3 }
 ropey = { opt-level = 3 }
 lsp-types = { opt-level = 3 }
-gpui-pre-reqwest-client = { opt-level = 3 }
+reqwest_client = { opt-level = 3 }
 markdown = { opt-level = 3 }
 xml5ever = { opt-level = 3 }
 # `rquickjs` is a facade that re-exports `rquickjs-core`, so naming it alone
@@ -155,3 +155,8 @@ consts = "consts"
 
 [workspace.metadata.cargo-machete]
 ignored = ["log", "anyhow", "serde"]
+
+[workspace.metadata.theorem-fork]
+upstream = "https://github.com/longbridge/gpui-kit"
+upstream_tag = "v0.6.0"
+zed_rev = "d1b4d315a21774ad51cd72cd2c231488bd81da22"
