@@ -1,0 +1,135 @@
+name: GPUI Kit patch series
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/**"
+      - "patches/**"
+      - ".github/workflows/gpui-kit-patch-series.yml"
+  push:
+    branches:
+      - main
+      - "Codex/**"
+  schedule:
+    - cron: "0 14 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  replay:
+    name: Replay Theorem patches
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          path: fork
+
+      - name: Select upstream revision
+        id: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "ref=main" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=v0.6.0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout upstream GPUI Kit
+        uses: actions/checkout@v4
+        with:
+          repository: longbridge/gpui-kit
+          ref: ${{ steps.upstream.outputs.ref }}
+          path: upstream
+
+      - name: Validate and apply ordered series
+        id: series
+        shell: bash
+        run: |
+          set -euo pipefail
+          series="$GITHUB_WORKSPACE/fork/patches/series"
+          if [ ! -f "$series" ]; then
+            echo "::error::missing patches/series"
+            exit 1
+          fi
+
+          patch_count=0
+          while IFS= read -r patch || [ -n "$patch" ]; do
+            case "$patch" in
+              ""|\#*) continue ;;
+              */*|.*)
+                echo "::error::patch entries must be plain filenames: $patch"
+                exit 1
+                ;;
+            esac
+
+            source_patch="$GITHUB_WORKSPACE/fork/patches/$patch"
+            if [ ! -f "$source_patch" ]; then
+              echo "::error::series entry does not exist: $patch"
+              exit 1
+            fi
+            if ! git -C upstream apply --check "$source_patch"; then
+              echo "count=$patch_count" >> "$GITHUB_OUTPUT"
+              echo "status=apply-blocked: $patch" >> "$GITHUB_OUTPUT"
+              echo "::error::patch does not apply cleanly: $patch"
+              exit 1
+            fi
+            git -C upstream apply "$source_patch"
+            patch_count=$((patch_count + 1))
+          done < "$series"
+
+          echo "count=$patch_count" >> "$GITHUB_OUTPUT"
+          echo "status=apply-clean" >> "$GITHUB_OUTPUT"
+
+      - name: Reject gpui-pre sources
+        working-directory: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -R -n "gpui-pre" --include='Cargo.toml' --include='Cargo.lock' .; then
+            echo "::error::gpui-pre must not appear in dependency manifests or the lockfile"
+            exit 1
+          fi
+
+      - name: Set up Rust 1.90
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: "1.90"
+
+      - name: Install system dependencies
+        working-directory: upstream
+        run: script/bootstrap
+
+      - name: Check component and story crates
+        working-directory: upstream
+        run: |
+          cargo check --locked -p gpui-component --lib
+          cargo check --locked -p gpui-component-story
+
+      - name: Write replay report
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          {
+            echo "# GPUI Kit patch replay report"
+            echo
+            echo "- upstream ref: ${{ steps.upstream.outputs.ref }}"
+            echo "- status: ${{ steps.series.outputs.status }}"
+            echo "- patches applied: ${{ steps.series.outputs.count }}"
+          } > artifacts/gpui-kit-patch-replay.md
+
+      - name: Upload replay report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpui-kit-patch-replay
+          path: artifacts/gpui-kit-patch-replay.md
+          if-no-files-found: error
