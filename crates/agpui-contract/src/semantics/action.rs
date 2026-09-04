@@ -44,6 +44,13 @@ pub struct SemanticAction {
     /// [`ActionRefusal::ActionUnidentified`] before the gesture is delivered.
     #[serde(deserialize_with = "nonempty")]
     pub action_id: String,
+    /// Never empty, for the same reason [`Self::action_id`] is not.
+    ///
+    /// A dispatcher that does not own the named surface answers from one
+    /// shared unknown-surface bucket, so an empty one is not refused as
+    /// malformed -- it is quietly treated as some other host's surface, and
+    /// the caller gets a plausible receipt for a frame nobody rendered.
+    #[serde(deserialize_with = "nonempty")]
     pub surface_id: String,
     /// An [`Ident`](super::ident::Ident).
     pub target: String,
@@ -61,7 +68,7 @@ where
 {
     let value = String::deserialize(deserializer)?;
     if value.is_empty() {
-        return Err(serde::de::Error::custom("an action_id is never empty"));
+        return Err(serde::de::Error::custom("an identifier is never empty"));
     }
     Ok(value)
 }
@@ -281,21 +288,25 @@ mod tests {
         assert_eq!(action.expecting_generation(7).expect_generation, Some(7));
     }
 
-    /// An action with no id does not come off the wire.
+    /// Neither identifier on the wire may be empty.
     ///
-    /// The defect: a frame carrying `"action_id": ""` deserialized, dispatched,
-    /// and produced a receipt echoing the empty id -- valid-looking, and
-    /// impossible to match to the request that caused it or to tell apart from
-    /// every other such receipt.
+    /// The defect for `action_id`: a frame carrying `""` deserialized,
+    /// dispatched, and produced a receipt echoing the empty id --
+    /// valid-looking, and impossible to match to the request that caused it or
+    /// to tell apart from every other such receipt. For `surface_id` it is
+    /// quieter: a dispatcher that does not own the named surface answers from
+    /// one shared unknown bucket, so an empty one reads as somebody else's
+    /// surface rather than as a malformed frame.
     #[test]
     fn an_action_without_an_id_is_not_a_wire_action() {
-        let json = "{\"action_id\":\"\",\"surface_id\":\"composer\",\"target\":\"composer-send\",\"gesture\":\"activate\"}";
-        let error = serde_json::from_str::<SemanticAction>(json)
-            .expect_err("an empty action_id is refused");
-        assert!(
-            error.to_string().contains("never empty"),
-            "{error}"
-        );
+        for json in [
+            "{\"action_id\":\"\",\"surface_id\":\"composer\",\"target\":\"composer-send\",\"gesture\":\"activate\"}",
+            "{\"action_id\":\"a1\",\"surface_id\":\"\",\"target\":\"composer-send\",\"gesture\":\"activate\"}",
+        ] {
+            let error = serde_json::from_str::<SemanticAction>(json)
+                .expect_err("an empty identifier is refused");
+            assert!(error.to_string().contains("never empty"), "{error}");
+        }
         assert!(!SemanticAction::activate("", "composer", "composer-send").is_identified());
         assert!(SemanticAction::activate("a1", "composer", "composer-send").is_identified());
     }
