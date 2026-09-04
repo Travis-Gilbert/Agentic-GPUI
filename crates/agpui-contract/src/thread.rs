@@ -550,6 +550,7 @@ mod tests {
     }
 
     #[test]
+
     fn validate_refuses_a_foreign_schema() {
         let document = ThreadDocument {
             schema: "theorem-thread-projection/2".to_owned(),
@@ -560,6 +561,7 @@ mod tests {
     }
 
     #[test]
+
     fn only_the_last_message_streams() {
         let document = ThreadDocument {
             schema: THREAD_PROJECTION_SCHEMA.to_owned(),
@@ -585,6 +587,7 @@ mod tests {
     }
 
     #[test]
+
     fn a_running_final_message_streams() {
         let document = ThreadDocument {
             schema: THREAD_PROJECTION_SCHEMA.to_owned(),
@@ -599,6 +602,7 @@ mod tests {
     }
 
     #[test]
+
     fn withheld_and_absent_do_not_collapse() {
         let withheld = ReasoningState::Withheld {
             reason: "This connection does not hand over reasoning.".to_owned(),
@@ -611,6 +615,7 @@ mod tests {
     }
 
     #[test]
+
     fn code_line_text_rejoins_its_spans() {
         let line = CodeLine {
             number: 41,
@@ -630,6 +635,7 @@ mod tests {
     }
 
     #[test]
+
     fn a_document_round_trips_through_json() {
         let document = ThreadDocument {
             schema: THREAD_PROJECTION_SCHEMA.to_owned(),
@@ -674,6 +680,7 @@ mod tests {
     }
 
     #[test]
+
     fn an_open_request_is_awaiting_whatever_approved_says() {
         // A host that leaves a stale `approved` on a re-opened request must not
         // make the prompt render as already settled.
@@ -687,6 +694,7 @@ mod tests {
     }
 
     #[test]
+
     fn a_settled_request_reads_its_answer() {
         assert_eq!(
             approval(PartStatus::Complete, Some(true)).outcome(),
@@ -699,6 +707,7 @@ mod tests {
     }
 
     #[test]
+
     fn expired_and_replaced_both_land_on_unanswered() {
         // The wire cannot tell them apart, so neither can this projection. The
         // difference survives in `reason`, which the renderer prints verbatim.
@@ -714,6 +723,7 @@ mod tests {
     }
 
     #[test]
+
     fn a_broken_approval_is_not_a_declined_one() {
         assert_eq!(
             approval(PartStatus::Failed, None).outcome(),
@@ -722,6 +732,7 @@ mod tests {
     }
 
     #[test]
+
     fn every_part_field_speaks_one_casing() {
         // A struct variant and a newtype variant in the same document. Serde
         // renames variant *fields* only when told to, so this pins the thing
@@ -759,6 +770,7 @@ mod tests {
     }
 
     #[test]
+
     fn a_tool_call_keeps_its_multiword_fields_camel() {
         let wire = serde_json::to_string(&ThreadPart::ToolCall {
             part_id: "p".to_owned(),
@@ -774,6 +786,7 @@ mod tests {
     }
 
     #[test]
+
     fn managed_usage_has_no_transcript_attribution() {
         assert_eq!(
             ModelDisclosure::TheoremManaged.transcript_attribution("dashscope", "qwen3.7-max"),
@@ -782,6 +795,7 @@ mod tests {
     }
 
     #[test]
+
     fn user_provided_usage_names_provider_and_model_without_tokens() {
         assert_eq!(
             ModelDisclosure::UserProvided.transcript_attribution("anthropic", "claude-opus-5"),
@@ -790,6 +804,7 @@ mod tests {
     }
 
     #[test]
+
     fn user_provided_attribution_degrades_without_inventing_a_provider() {
         assert_eq!(
             ModelDisclosure::UserProvided.transcript_attribution("", "private-model"),
@@ -799,5 +814,74 @@ mod tests {
             ModelDisclosure::UserProvided.transcript_attribution("", ""),
             None
         );
+    }
+
+    fn neutral_message_behavior_is_sparse_but_active_behavior_round_trips() {
+        let neutral = ThreadMessage {
+            message_id: "neutral".to_owned(),
+            actor: ThreadActor::Theorem,
+            parts: vec![text_part("neutral-text", PartStatus::Complete)],
+            ..ThreadMessage::default()
+        };
+        let neutral_wire = serde_json::to_value(&neutral).expect("neutral message serializes");
+        for absent in ["status", "editIndex", "editing", "actions", "branch"] {
+            assert!(
+                neutral_wire.get(absent).is_none(),
+                "{absent} leaked into {neutral_wire}"
+            );
+        }
+
+        let active = ThreadMessage {
+            message_id: "active".to_owned(),
+            actor: ThreadActor::Theorem,
+            status: ThreadMessageStatus {
+                state: ThreadMessageState::Incomplete,
+                reason: Some(ThreadMessageReason::Error),
+            },
+            edit_index: Some(4),
+            editing: true,
+            actions: MessageActions {
+                copy_text: "copy me".to_owned(),
+                can_copy: true,
+                can_edit: true,
+                can_reload: true,
+                can_feedback: true,
+                can_export: true,
+                submitted_feedback: Some(MessageFeedback::Positive),
+            },
+            branch: MessageBranch {
+                branch_id: "chatbranch_selected".to_owned(),
+                number: 2,
+                count: 3,
+                previous_branch_id: Some("chatbranch_previous".to_owned()),
+                next_branch_id: Some("chatbranch_next".to_owned()),
+                can_switch: true,
+                switch_during_run: true,
+            },
+            parts: vec![text_part("active-text", PartStatus::Incomplete)],
+        };
+        let active_wire = serde_json::to_value(&active).expect("active message serializes");
+        for present in ["status", "editIndex", "editing", "actions", "branch"] {
+            assert!(
+                active_wire.get(present).is_some(),
+                "{present} missing from {active_wire}"
+            );
+        }
+        assert_eq!(
+            serde_json::from_value::<ThreadMessage>(active_wire).expect("active message parses"),
+            active
+        );
+        assert!(active.status.shows_error());
+        for reason in [
+            ThreadMessageReason::Cancelled,
+            ThreadMessageReason::Length,
+            ThreadMessageReason::Other,
+        ] {
+            assert!(!ThreadMessageStatus {
+                state: ThreadMessageState::Incomplete,
+                reason: Some(reason),
+            }
+            .shows_error());
+        }
     }
 }

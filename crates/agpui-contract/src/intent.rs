@@ -14,6 +14,9 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::composer::{ComposerQueueLane, ComposerQuote, ComposerTriggerKind};
+use crate::thread::{MessageFeedback, ThreadSuggestionAction};
+
 /// What the composer asks the host to do. The leaf never sends a run itself.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "intent", rename_all = "snake_case")]
@@ -22,20 +25,55 @@ pub enum ComposerIntent {
     /// refuses, it restores the draft by bumping `draft_revision`.
     Submit {
         text: String,
+        /// Optional quote metadata captured at the same instant as the text.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        quote: Option<ComposerQuote>,
+        /// Queue into the interrupting lane rather than the ordinary FIFO lane.
+        #[serde(default, skip_serializing_if = "is_false")]
+        steer: bool,
     },
     /// Abort the live run.
     Cancel,
+    /// Leave an edit composer without cancelling the thread's active run.
+    EndEdit,
     /// The draft moved. The host persists it per scope; it is not a command.
     DraftChanged {
         text: String,
     },
     /// Open the host's file picker. The leaf has no file system.
     PickAttachment,
-    /// Open Settings through the host's renderer-neutral application reducer.
-    OpenSettings,
+    /// Admit a large text paste through the host's ordinary attachment path.
+    /// The renderer classifies and names the paste; the host still validates,
+    /// uploads, scans, resolves, and receipts it like any browser file.
+    AddPastedFile {
+        /// Client identity shared by the optimistic span and host upload.
+        attachment_id: String,
+        name: String,
+        media_type: String,
+        text: String,
+    },
     RemoveAttachment {
         attachment_id: String,
     },
+    /// Clear the quote without mutating the text draft.
+    DismissQuote,
+    MoveQueueItem {
+        queue_item_id: String,
+        lane: ComposerQueueLane,
+    },
+    RemoveQueueItem {
+        queue_item_id: String,
+    },
+    /// A host-supplied slash command or mention was chosen. GPUI has already
+    /// applied the item's editor-local insertion text.
+    SelectTrigger {
+        trigger_item_id: String,
+        kind: ComposerTriggerKind,
+    },
+}
+
+const fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// Something the reader asked for that only the host can do.
@@ -44,6 +82,36 @@ pub enum ComposerIntent {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "intent", rename_all = "snake_case")]
 pub enum ThreadIntent {
+    /// Replace this exact projected message with the shared edit composer.
+    BeginEdit {
+        message_id: String,
+        edit_index: usize,
+    },
+    /// Fork at this assistant turn and run its preceding user message again.
+    Reload {
+        message_id: String,
+        edit_index: usize,
+    },
+    /// Select one opaque branch identity supplied by the host projection.
+    SwitchBranch {
+        branch_id: String,
+        #[serde(default, skip_serializing_if = "is_false")]
+        switch_during_run: bool,
+    },
+    /// Submit feedback through a host adapter. Projection policy decides
+    /// whether this intent can be raised at all.
+    Feedback {
+        message_id: String,
+        feedback: MessageFeedback,
+    },
+    /// Ask the host to materialize the canonical message copy text.
+    ExportMessage { message_id: String, text: String },
+    /// Apply one host-authorized suggestion from inside the viewport.
+    Suggestion {
+        suggestion_id: String,
+        text: String,
+        action: ThreadSuggestionAction,
+    },
     /// Answer an open approval. `approved` is the reader's literal answer; the
     /// leaf never supplies one on their behalf.
     Approval { approval_id: String, approved: bool },
@@ -61,7 +129,13 @@ pub enum ThreadIntent {
         node_refs: Vec<String>,
     },
     /// Open a cited source.
-    OpenCitation { source_id: String },
+    ///
+    /// `part_id` is the clicked citation, `source_id` the source it names. The
+    /// wire does not require a source id to be unique across a thread -- a
+    /// per-response `source-1` is ordinary -- so the source id alone does not
+    /// say which turn was clicked, and resolving by it opened whichever
+    /// message used it first.
+    OpenCitation { part_id: String, source_id: String },
 }
 
 /// A canonical document change the GPUI editor asks its host to commit.
@@ -115,6 +189,8 @@ mod tests {
     fn intents_are_internally_tagged_so_a_host_can_match_on_one_key() {
         let wire = serde_json::to_value(ComposerIntent::Submit {
             text: "hello".into(),
+            quote: None,
+            steer: false,
         })
         .unwrap();
         assert_eq!(wire["intent"], "submit");
@@ -141,8 +217,20 @@ mod tests {
             ComposerIntent::Cancel
         );
 
-        let wire = serde_json::to_value(ComposerIntent::OpenSettings).unwrap();
-        assert_eq!(wire, serde_json::json!({"intent": "open_settings"}));
+        let wire = serde_json::to_value(ComposerIntent::EndEdit).unwrap();
+        assert_eq!(wire, serde_json::json!({"intent": "end_edit"}));
+    }
+
+    #[test]
+    fn trigger_selection_returns_stable_identity_to_the_host() {
+        let wire = serde_json::to_value(ComposerIntent::SelectTrigger {
+            trigger_item_id: "mention-ada".to_owned(),
+            kind: ComposerTriggerKind::Mention,
+        })
+        .unwrap();
+        assert_eq!(wire["intent"], "select_trigger");
+        assert_eq!(wire["trigger_item_id"], "mention-ada");
+        assert_eq!(wire["kind"], "mention");
     }
 
     #[test]
@@ -154,6 +242,46 @@ mod tests {
         assert_eq!(wire["source"], "composer");
         assert_eq!(
             serde_json::from_value::<LeafPayload>(wire).unwrap(),
+            payload
+        );
+    }
+
+    #[test]
+    fn message_behavior_intents_round_trip_opaque_identity_and_payloads() {
+        let payload = LeafPayload::Thread {
+            intents: vec![
+                ThreadIntent::BeginEdit {
+                    message_id: "chatmessage_user".to_owned(),
+                    edit_index: 2,
+                },
+                ThreadIntent::Reload {
+                    message_id: "chatmessage_assistant".to_owned(),
+                    edit_index: 3,
+                },
+                ThreadIntent::SwitchBranch {
+                    branch_id: "chatbranch_opaque".to_owned(),
+                    switch_during_run: true,
+                },
+                ThreadIntent::Feedback {
+                    message_id: "chatmessage_assistant".to_owned(),
+                    feedback: MessageFeedback::Negative,
+                },
+                ThreadIntent::ExportMessage {
+                    message_id: "chatmessage_assistant".to_owned(),
+                    text: "canonical copy text".to_owned(),
+                },
+                ThreadIntent::Suggestion {
+                    suggestion_id: "suggestion_follow_up".to_owned(),
+                    text: "Continue".to_owned(),
+                    action: ThreadSuggestionAction::Insert,
+                },
+            ],
+        };
+        let wire = serde_json::to_value(&payload).expect("message intents serialize");
+        assert_eq!(wire["intents"][2]["branch_id"], "chatbranch_opaque");
+        assert_eq!(wire["intents"][2]["switch_during_run"], true);
+        assert_eq!(
+            serde_json::from_value::<LeafPayload>(wire).expect("message intents parse"),
             payload
         );
     }
