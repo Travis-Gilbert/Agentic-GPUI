@@ -202,6 +202,9 @@ fn ns_image_for_icon(
 
 /// Extract the AppKit `NSView` pointer from the window's raw handle.
 fn ns_view_ptr(window: &Window) -> Option<usize> {
+    if cfg!(feature = "test-support") {
+        return None;
+    }
     let handle = HasWindowHandle::window_handle(window).ok()?;
     let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
         return None;
