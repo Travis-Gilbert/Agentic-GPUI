@@ -42,6 +42,18 @@ pub enum ComposerIntent {
     },
     /// Open the host's file picker. The leaf has no file system.
     PickAttachment,
+    /// Open Settings through the host's renderer-neutral application reducer.
+    OpenSettings,
+    /// Admit a large text paste through the host's ordinary attachment path.
+    /// The renderer classifies and names the paste; the host still validates,
+    /// uploads, scans, resolves, and receipts it like any browser file.
+    AddPastedFile {
+        /// Client identity shared by the optimistic span and host upload.
+        attachment_id: String,
+        name: String,
+        media_type: String,
+        text: String,
+    },
     RemoveAttachment {
         attachment_id: String,
     },
@@ -206,6 +218,9 @@ mod tests {
             serde_json::from_value::<ComposerIntent>(wire).unwrap(),
             ComposerIntent::Cancel
         );
+
+        let wire = serde_json::to_value(ComposerIntent::OpenSettings).unwrap();
+        assert_eq!(wire, serde_json::json!({"intent": "open_settings"}));
 
         let wire = serde_json::to_value(ComposerIntent::EndEdit).unwrap();
         assert_eq!(wire, serde_json::json!({"intent": "end_edit"}));

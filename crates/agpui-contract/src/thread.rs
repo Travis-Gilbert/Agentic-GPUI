@@ -888,13 +888,11 @@ mod tests {
             ThreadMessageReason::Length,
             ThreadMessageReason::Other,
         ] {
-            assert!(
-                !ThreadMessageStatus {
-                    state: ThreadMessageState::Incomplete,
-                    reason: Some(reason),
-                }
-                .shows_error()
-            );
+            assert!(!ThreadMessageStatus {
+                state: ThreadMessageState::Incomplete,
+                reason: Some(reason),
+            }
+            .shows_error());
         }
     }
 
@@ -919,11 +917,9 @@ mod tests {
             approval(PartStatus::RequiresAction, Some(true)).outcome(),
             ApprovalOutcome::Awaiting
         );
-        assert!(
-            approval(PartStatus::RequiresAction, None)
-                .outcome()
-                .is_open()
-        );
+        assert!(approval(PartStatus::RequiresAction, None)
+            .outcome()
+            .is_open());
     }
 
     #[test]
