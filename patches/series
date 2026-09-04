@@ -5,3 +5,4 @@
 0005-theorem-zed-source.patch
 0006-rust-1.90-zed-pin.patch
 0007-rust-1.90-utility-pin.patch
+0008-rust-1.90-stdlib-pin.patch

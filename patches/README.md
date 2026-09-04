@@ -24,4 +24,5 @@ The final pin patches advance the Theorem Zed revision through its Rust 1.90
 compatibility commits. The first selects the API-equivalent `oo7 0.6.0-alpha`
 release (MSRV 1.86) because stable oo7 0.6.0 requires Rust 1.92. The second
 replaces the newer `slice::as_array` helper with the stable array conversion
-used by Rust 1.90.
+used by Rust 1.90. The third replaces post-1.90 standard-library profiling and
+UTF-8 boundary helpers with equivalent local implementations.
