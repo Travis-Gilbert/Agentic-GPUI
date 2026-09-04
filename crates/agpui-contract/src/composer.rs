@@ -25,6 +25,140 @@ use crate::thread::ThreadRunState;
 /// Wire schema identifier carried on every projected composer.
 pub const COMPOSER_PROJECTION_SCHEMA: &str = "theorem-composer-projection/1";
 
+/// Which composer owns the draft.
+///
+/// Thread and edit composers deliberately do not share cancellation or send
+/// policy. Compact is a thread composer with a narrower presentation contract:
+/// one line, no attachments, no quote, and no queue chrome.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ComposerMode {
+    #[default]
+    Thread,
+    Edit,
+    Compact,
+}
+
+/// Keyboard submission policy selected by the host.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ComposerSubmitMode {
+    #[default]
+    Enter,
+    ControlEnter,
+    None,
+}
+
+/// Runtime abilities, projected rather than inferred by the renderer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComposerCapabilities {
+    #[serde(default)]
+    pub cancel: bool,
+    #[serde(default)]
+    pub queue: bool,
+    #[serde(default = "default_true")]
+    pub attachments: bool,
+}
+
+impl Default for ComposerCapabilities {
+    fn default() -> Self {
+        Self {
+            cancel: false,
+            queue: false,
+            // Compatibility with projections produced before capabilities
+            // were explicit: those surfaces already exposed the attach button.
+            attachments: true,
+        }
+    }
+}
+
+const fn default_true() -> bool {
+    true
+}
+
+/// A quote attached to the next user message.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComposerQuote {
+    pub message_id: String,
+    pub text: String,
+}
+
+/// Safe display chip lifted from a message while editing it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComposerEditChip {
+    pub chip_id: String,
+    pub kind: String,
+    pub label: String,
+}
+
+/// Renderer-facing facts for the one active edit session.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComposerEdit {
+    pub source_message_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_message_id: Option<String>,
+    #[serde(default)]
+    pub chips: Vec<ComposerEditChip>,
+}
+
+/// The queue lane is part of composer chrome, never part of transcript data.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ComposerQueueLane {
+    #[default]
+    Queue,
+    Steer,
+}
+
+/// Renderer-facing identity and text for one pending send.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComposerQueueItem {
+    pub queue_item_id: String,
+    #[serde(default)]
+    pub text: String,
+    #[serde(default)]
+    pub lane: ComposerQueueLane,
+}
+
+/// Trigger family recognized by the native composer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ComposerTriggerKind {
+    Slash,
+    Mention,
+}
+
+impl ComposerTriggerKind {
+    #[must_use]
+    pub const fn character(self) -> char {
+        match self {
+            Self::Slash => '/',
+            Self::Mention => '@',
+        }
+    }
+}
+
+/// One host-supplied slash command or mention result.
+///
+/// The renderer may insert `insert_text`, but the stable ID is returned to the
+/// host so execution never depends on reading editor text back out of GPUI.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComposerTriggerItem {
+    pub trigger_item_id: String,
+    pub kind: ComposerTriggerKind,
+    pub label: String,
+    #[serde(default)]
+    pub detail: String,
+    #[serde(default)]
+    pub insert_text: String,
+}
+
 /// The composer band, as the leaf receives it.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,6 +187,40 @@ pub struct ComposerDocument {
     pub placeholder: String,
     #[serde(default)]
     pub run_state: ThreadRunState,
+    #[serde(default)]
+    pub mode: ComposerMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edit: Option<ComposerEdit>,
+    #[serde(default)]
+    pub submit_mode: ComposerSubmitMode,
+    #[serde(default)]
+    pub capabilities: ComposerCapabilities,
+    /// Host-owned send disablement. Edit composers intentionally ignore it.
+    #[serde(default)]
+    pub is_send_disabled: bool,
+    /// True from send admission until every attachment/upload sibling settles.
+    #[serde(default)]
+    pub is_sending: bool,
+    /// Some runtimes settle their top-level run flag before the trailing
+    /// assistant message; cancellation remains available until both settle.
+    #[serde(default)]
+    pub trailing_assistant_running: bool,
+    #[serde(default)]
+    pub quote: Option<ComposerQuote>,
+    #[serde(default)]
+    pub queue: Vec<ComposerQueueItem>,
+    #[serde(default)]
+    pub trigger_items: Vec<ComposerTriggerItem>,
+    /// Bumped for a host-authorized focus event (mount, thread switch,
+    /// run-start, or scroll-to-bottom). Edit composers ignore it.
+    #[serde(default)]
+    pub focus_revision: u64,
+    /// Host modality projection; GPUI has no CSS media query to infer this.
+    #[serde(default)]
+    pub touch_primary: bool,
+    /// Native picker/drop accept expression. Empty means unrestricted.
+    #[serde(default)]
+    pub attachment_accept: String,
     /// Carried from the host's `prefers-reduced-motion` across the mode
     /// bridge. The leaf cannot read the media query itself.
     #[serde(default)]
@@ -89,26 +257,26 @@ impl ComposerDocument {
     /// The order of the guards is the whole content of this function, so it is
     /// spelled out rather than left to reading order:
     ///
-    /// 1. **A live run wins.** While the model is producing, or while it is
-    ///    parked on an approval, the only thing the primary button may do is
-    ///    stop it. Queueing a second message into a live run has no
-    ///    representation on `theorem-chat/1` and would be a message the host
-    ///    could not send.
-    /// 2. **A host refusal outranks anything the draft says.** The user can
+    /// 1. **A host refusal outranks anything the draft says.** The user can
     ///    type into an expired session; they cannot send from one.
-    /// 3. **Failed outranks pending.** They need different actions — remove
+    /// 2. **The in-flight transaction lock outranks a second send.** It stays
+    ///    set until all sibling attachment operations settle.
+    /// 3. **Failed outranks pending.** They need different actions - remove
     ///    versus wait — so reporting the weaker one hides the actionable one.
     ///    Same fold as a failed part dominating a turn's status.
-    /// 4. **Empty is last**, because it is the only block the user clears by
+    /// 4. **Empty precedes runtime policy**, because it is the only block the
+    ///    user clears by
     ///    typing, and reporting it while an upload is still running would be a
     ///    lie about what is holding the send.
+    /// 5. **A live run blocks only without queue capability.** Cancellation is
+    ///    a separate control; with queue capability, the send remains a send.
     #[must_use]
     pub fn affordance(&self, live_draft: &str) -> SendAffordance {
-        if self.run_state.is_live() {
-            return SendAffordance::Stop;
-        }
         if !self.refusal.trim().is_empty() {
             return SendAffordance::Blocked(SendBlock::Refused);
+        }
+        if self.is_sending {
+            return SendAffordance::Blocked(SendBlock::InFlight);
         }
         if self
             .attachments
@@ -124,10 +292,44 @@ impl ComposerDocument {
         {
             return SendAffordance::Blocked(SendBlock::AttachmentPending);
         }
-        if live_draft.trim().is_empty() && self.attachments.is_empty() {
+        let has_edit_chips = self
+            .edit
+            .as_ref()
+            .is_some_and(|edit| !edit.chips.is_empty());
+        if live_draft.trim().is_empty() && self.attachments.is_empty() && !has_edit_chips {
             return SendAffordance::Blocked(SendBlock::Empty);
         }
+        if self.mode != ComposerMode::Edit && self.is_send_disabled {
+            return SendAffordance::Blocked(SendBlock::Disabled);
+        }
+        if self.run_state.is_live() && !self.allows_queue() {
+            return SendAffordance::Blocked(SendBlock::RunActive);
+        }
         SendAffordance::Send
+    }
+
+    /// Whether Escape/the stop control may cancel right now.
+    #[must_use]
+    pub const fn can_cancel(&self) -> bool {
+        if matches!(self.mode, ComposerMode::Edit) {
+            return true;
+        }
+        self.capabilities.cancel && (self.run_state.is_live() || self.trailing_assistant_running)
+    }
+
+    #[must_use]
+    pub const fn allows_queue(&self) -> bool {
+        self.capabilities.queue && matches!(self.mode, ComposerMode::Thread)
+    }
+
+    #[must_use]
+    pub const fn allows_attachments(&self) -> bool {
+        self.capabilities.attachments && !matches!(self.mode, ComposerMode::Compact)
+    }
+
+    #[must_use]
+    pub const fn allows_quote(&self) -> bool {
+        !matches!(self.mode, ComposerMode::Compact)
     }
 }
 
@@ -219,8 +421,6 @@ impl AttachmentState {
 pub enum SendAffordance {
     Send,
     Blocked(SendBlock),
-    /// A run is live; the button aborts it.
-    Stop,
 }
 
 impl SendAffordance {
@@ -234,7 +434,6 @@ impl SendAffordance {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Send => "Send",
-            Self::Stop => "Stop",
             Self::Blocked(_) => "Send unavailable",
         }
     }
@@ -248,6 +447,9 @@ pub enum SendBlock {
     AttachmentFailed,
     AttachmentPending,
     Empty,
+    InFlight,
+    Disabled,
+    RunActive,
 }
 
 impl SendBlock {
@@ -259,6 +461,9 @@ impl SendBlock {
             Self::AttachmentFailed => "Remove the attachment that failed",
             Self::AttachmentPending => "Waiting for an attachment",
             Self::Empty => "Write a message",
+            Self::InFlight => "Sending the current message",
+            Self::Disabled => "Sending is disabled",
+            Self::RunActive => "Wait for the current response",
         }
     }
 }
@@ -312,16 +517,70 @@ mod tests {
     }
 
     #[test]
-    fn a_live_run_turns_the_button_into_stop_whatever_the_draft_says() {
+    fn a_live_run_blocks_send_without_queue_and_cancel_is_separate() {
         for state in [ThreadRunState::Streaming, ThreadRunState::RequiresApproval] {
             let mut subject = document();
             subject.run_state = state;
-            assert_eq!(subject.affordance(""), SendAffordance::Stop);
+            subject.capabilities.cancel = true;
             assert_eq!(
                 subject.affordance("a whole new question"),
-                SendAffordance::Stop
+                SendAffordance::Blocked(SendBlock::RunActive)
             );
+            assert!(subject.can_cancel());
         }
+
+        let mut trailing = document();
+        trailing.capabilities.cancel = true;
+        trailing.trailing_assistant_running = true;
+        assert!(trailing.can_cancel());
+
+        let mut idle = document();
+        idle.capabilities.cancel = true;
+        assert!(!idle.can_cancel());
+    }
+
+    #[test]
+    fn queue_capability_keeps_send_live_during_a_run() {
+        let mut subject = document();
+        subject.run_state = ThreadRunState::Streaming;
+        subject.capabilities.queue = true;
+        assert_eq!(subject.affordance("next"), SendAffordance::Send);
+    }
+
+    #[test]
+    fn in_flight_send_lock_beats_a_second_send() {
+        let mut subject = document();
+        subject.is_sending = true;
+        assert_eq!(
+            subject.affordance("second"),
+            SendAffordance::Blocked(SendBlock::InFlight)
+        );
+    }
+
+    #[test]
+    fn edit_ignores_thread_disable_and_escape_exits_edit() {
+        let mut subject = document();
+        subject.mode = ComposerMode::Edit;
+        subject.is_send_disabled = true;
+        assert_eq!(subject.affordance("replacement"), SendAffordance::Send);
+        assert!(subject.can_cancel());
+    }
+
+    #[test]
+    fn quote_only_is_empty_and_compact_removes_expansive_chrome() {
+        let mut subject = document();
+        subject.quote = Some(ComposerQuote {
+            message_id: "m1".to_owned(),
+            text: "quoted".to_owned(),
+        });
+        assert_eq!(
+            subject.affordance(""),
+            SendAffordance::Blocked(SendBlock::Empty)
+        );
+        subject.mode = ComposerMode::Compact;
+        assert!(!subject.allows_attachments());
+        assert!(!subject.allows_quote());
+        assert!(!subject.allows_queue());
     }
 
     #[test]

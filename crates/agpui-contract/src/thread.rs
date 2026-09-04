@@ -37,6 +37,9 @@ pub struct ThreadDocument {
     pub pinned_to_bottom: bool,
     #[serde(default)]
     pub messages: Vec<ThreadMessage>,
+    /// Empty- and follow-up suggestions rendered inside the thread viewport.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub suggestions: Vec<ThreadSuggestion>,
 }
 
 const fn default_true() -> bool {
@@ -121,6 +124,150 @@ pub enum ThreadActor {
     System,
 }
 
+/// What selecting one viewport suggestion does to the ordinary composer.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThreadSuggestionAction {
+    /// Submit the suggestion as a message. The existing composer draft is not
+    /// cleared because the suggestion does not originate in that editor.
+    #[default]
+    Send,
+    /// Insert at the current caret when the host supports it.
+    Insert,
+    /// Replace the ordinary composer draft.
+    Replace,
+}
+
+/// One host-authorized prompt chip in the viewport.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadSuggestion {
+    pub suggestion_id: String,
+    pub text: String,
+    #[serde(default)]
+    pub action: ThreadSuggestionAction,
+}
+
+/// Message-level lifecycle used by the Error primitive.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThreadMessageState {
+    #[default]
+    Complete,
+    Running,
+    Incomplete,
+}
+
+/// Why an incomplete message stopped.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThreadMessageReason {
+    Error,
+    Cancelled,
+    Length,
+    Other,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadMessageStatus {
+    #[serde(default)]
+    pub state: ThreadMessageState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<ThreadMessageReason>,
+}
+
+impl ThreadMessageStatus {
+    /// Assistant UI mounts its Error primitive only for this exact pair.
+    #[must_use]
+    pub const fn shows_error(self) -> bool {
+        matches!(self.state, ThreadMessageState::Incomplete)
+            && matches!(self.reason, Some(ThreadMessageReason::Error))
+    }
+
+    fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageFeedback {
+    Positive,
+    Negative,
+}
+
+/// Host-decided message action capabilities and canonical copy text.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageActions {
+    #[serde(default)]
+    pub copy_text: String,
+    #[serde(default)]
+    pub can_copy: bool,
+    #[serde(default)]
+    pub can_edit: bool,
+    #[serde(default)]
+    pub can_reload: bool,
+    #[serde(default)]
+    pub can_feedback: bool,
+    #[serde(default)]
+    pub can_export: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub submitted_feedback: Option<MessageFeedback>,
+}
+
+impl MessageActions {
+    fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+}
+
+/// Branch-picker facts for the message that owns the active head choice.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageBranch {
+    /// Opaque host identity. The local runtime uses decimal branch numbers;
+    /// the durable chat service uses `chatbranch_*` records.
+    pub branch_id: String,
+    #[serde(default = "default_one")]
+    pub number: usize,
+    #[serde(default = "default_one")]
+    pub count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_branch_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_branch_id: Option<String>,
+    #[serde(default)]
+    pub can_switch: bool,
+    #[serde(default)]
+    pub switch_during_run: bool,
+}
+
+const fn default_one() -> usize {
+    1
+}
+
+impl Default for MessageBranch {
+    fn default() -> Self {
+        Self {
+            branch_id: String::new(),
+            number: 1,
+            count: 1,
+            previous_branch_id: None,
+            next_branch_id: None,
+            can_switch: false,
+            switch_during_run: false,
+        }
+    }
+}
+
+impl MessageBranch {
+    fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+}
+
 impl ThreadActor {
     /// Semantic actor name exposed to assistive technology.
     ///
@@ -143,6 +290,17 @@ impl ThreadActor {
 pub struct ThreadMessage {
     pub message_id: String,
     pub actor: ThreadActor,
+    #[serde(default, skip_serializing_if = "ThreadMessageStatus::is_default")]
+    pub status: ThreadMessageStatus,
+    /// Index in the active transcript used only as a validated intent key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edit_index: Option<usize>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub editing: bool,
+    #[serde(default, skip_serializing_if = "MessageActions::is_default")]
+    pub actions: MessageActions,
+    #[serde(default, skip_serializing_if = "MessageBranch::is_default")]
+    pub branch: MessageBranch,
     #[serde(default)]
     pub parts: Vec<ThreadPart>,
 }
@@ -261,6 +419,9 @@ pub enum ThreadPart {
         /// Already redacted upstream. The leaf never sees raw arguments.
         #[serde(default)]
         arguments_preview: String,
+        /// Read-only subagent transcript owned by this tool part.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        messages: Vec<ThreadMessage>,
     },
     ToolResult {
         part_id: String,
@@ -550,7 +711,6 @@ mod tests {
     }
 
     #[test]
-
     fn validate_refuses_a_foreign_schema() {
         let document = ThreadDocument {
             schema: "theorem-thread-projection/2".to_owned(),
@@ -561,7 +721,6 @@ mod tests {
     }
 
     #[test]
-
     fn only_the_last_message_streams() {
         let document = ThreadDocument {
             schema: THREAD_PROJECTION_SCHEMA.to_owned(),
@@ -570,11 +729,13 @@ mod tests {
                     message_id: "m1".to_owned(),
                     actor: ThreadActor::Theorem,
                     parts: vec![text_part("p1", PartStatus::Running)],
+                    ..ThreadMessage::default()
                 },
                 ThreadMessage {
                     message_id: "m2".to_owned(),
                     actor: ThreadActor::Theorem,
                     parts: vec![text_part("p2", PartStatus::Complete)],
+                    ..ThreadMessage::default()
                 },
             ],
             ..ThreadDocument::default()
@@ -587,7 +748,6 @@ mod tests {
     }
 
     #[test]
-
     fn a_running_final_message_streams() {
         let document = ThreadDocument {
             schema: THREAD_PROJECTION_SCHEMA.to_owned(),
@@ -595,6 +755,7 @@ mod tests {
                 message_id: "m1".to_owned(),
                 actor: ThreadActor::Theorem,
                 parts: vec![text_part("p1", PartStatus::Running)],
+                ..ThreadMessage::default()
             }],
             ..ThreadDocument::default()
         };
@@ -602,7 +763,6 @@ mod tests {
     }
 
     #[test]
-
     fn withheld_and_absent_do_not_collapse() {
         let withheld = ReasoningState::Withheld {
             reason: "This connection does not hand over reasoning.".to_owned(),
@@ -615,7 +775,6 @@ mod tests {
     }
 
     #[test]
-
     fn code_line_text_rejoins_its_spans() {
         let line = CodeLine {
             number: 41,
@@ -635,7 +794,6 @@ mod tests {
     }
 
     #[test]
-
     fn a_document_round_trips_through_json() {
         let document = ThreadDocument {
             schema: THREAD_PROJECTION_SCHEMA.to_owned(),
@@ -658,7 +816,9 @@ mod tests {
                         expanded: true,
                     }),
                 ],
+                ..ThreadMessage::default()
             }],
+            suggestions: Vec::new(),
         };
         let encoded = serde_json::to_string(&document).expect("document serializes");
         let decoded: ThreadDocument = serde_json::from_str(&encoded).expect("document decodes");
@@ -666,156 +826,7 @@ mod tests {
         decoded.validate().expect("the pinned schema validates");
     }
 
-    fn approval(status: PartStatus, approved: Option<bool>) -> ApprovalPart {
-        ApprovalPart {
-            part_id: "a1".to_owned(),
-            approval_id: "ap1".to_owned(),
-            tool_call_id: "tc1".to_owned(),
-            summary: "Write to /work/report/summary.md".to_owned(),
-            risk: "write".to_owned(),
-            status,
-            approved,
-            reason: None,
-        }
-    }
-
     #[test]
-
-    fn an_open_request_is_awaiting_whatever_approved_says() {
-        // A host that leaves a stale `approved` on a re-opened request must not
-        // make the prompt render as already settled.
-        assert_eq!(
-            approval(PartStatus::RequiresAction, Some(true)).outcome(),
-            ApprovalOutcome::Awaiting
-        );
-        assert!(approval(PartStatus::RequiresAction, None)
-            .outcome()
-            .is_open());
-    }
-
-    #[test]
-
-    fn a_settled_request_reads_its_answer() {
-        assert_eq!(
-            approval(PartStatus::Complete, Some(true)).outcome(),
-            ApprovalOutcome::Approved
-        );
-        assert_eq!(
-            approval(PartStatus::Complete, Some(false)).outcome(),
-            ApprovalOutcome::Declined
-        );
-    }
-
-    #[test]
-
-    fn expired_and_replaced_both_land_on_unanswered() {
-        // The wire cannot tell them apart, so neither can this projection. The
-        // difference survives in `reason`, which the renderer prints verbatim.
-        let mut expired = approval(PartStatus::Incomplete, None);
-        expired.reason = Some("This request expired before it was answered".to_owned());
-        let mut replaced = approval(PartStatus::Incomplete, None);
-        replaced.reason = Some("Replaced by a later request".to_owned());
-
-        assert_eq!(expired.outcome(), ApprovalOutcome::Unanswered);
-        assert_eq!(replaced.outcome(), ApprovalOutcome::Unanswered);
-        assert_ne!(expired.reason, replaced.reason);
-        assert!(!expired.outcome().is_open());
-    }
-
-    #[test]
-
-    fn a_broken_approval_is_not_a_declined_one() {
-        assert_eq!(
-            approval(PartStatus::Failed, None).outcome(),
-            ApprovalOutcome::Failed
-        );
-    }
-
-    #[test]
-
-    fn every_part_field_speaks_one_casing() {
-        // A struct variant and a newtype variant in the same document. Serde
-        // renames variant *fields* only when told to, so this pins the thing
-        // that silently drifts: `part_id` beside `partId` in one payload.
-        let document = ThreadDocument {
-            schema: THREAD_PROJECTION_SCHEMA.to_owned(),
-            thread_id: "t".to_owned(),
-            messages: vec![ThreadMessage {
-                message_id: "m".to_owned(),
-                actor: ThreadActor::Theorem,
-                parts: vec![
-                    text_part("struct-variant", PartStatus::Complete),
-                    ThreadPart::Reasoning(ReasoningPart {
-                        part_id: "newtype-variant".to_owned(),
-                        state: ReasoningState::Present {
-                            text: "why".to_owned(),
-                        },
-                        elapsed_ms: Some(1),
-                        expanded: false,
-                    }),
-                ],
-            }],
-            ..ThreadDocument::default()
-        };
-
-        let wire = serde_json::to_string(&document).expect("the projection serializes");
-        assert!(!wire.contains("part_id"), "snake_case leaked into {wire}");
-        assert_eq!(wire.matches("\"partId\"").count(), 2);
-        assert!(wire.contains("\"threadId\""));
-        assert!(wire.contains("\"messageId\""));
-        assert_eq!(
-            serde_json::from_str::<ThreadDocument>(&wire).expect("it parses back"),
-            document
-        );
-    }
-
-    #[test]
-
-    fn a_tool_call_keeps_its_multiword_fields_camel() {
-        let wire = serde_json::to_string(&ThreadPart::ToolCall {
-            part_id: "p".to_owned(),
-            tool_call_id: "tc".to_owned(),
-            tool_name: "graph.read".to_owned(),
-            status: PartStatus::Running,
-            arguments_preview: "{}".to_owned(),
-        })
-        .expect("the part serializes");
-        for field in ["partId", "toolCallId", "toolName", "argumentsPreview"] {
-            assert!(wire.contains(field), "{field} missing from {wire}");
-        }
-    }
-
-    #[test]
-
-    fn managed_usage_has_no_transcript_attribution() {
-        assert_eq!(
-            ModelDisclosure::TheoremManaged.transcript_attribution("dashscope", "qwen3.7-max"),
-            None
-        );
-    }
-
-    #[test]
-
-    fn user_provided_usage_names_provider_and_model_without_tokens() {
-        assert_eq!(
-            ModelDisclosure::UserProvided.transcript_attribution("anthropic", "claude-opus-5"),
-            Some("anthropic/claude-opus-5".to_owned())
-        );
-    }
-
-    #[test]
-
-    fn user_provided_attribution_degrades_without_inventing_a_provider() {
-        assert_eq!(
-            ModelDisclosure::UserProvided.transcript_attribution("", "private-model"),
-            Some("private-model".to_owned())
-        );
-        assert_eq!(
-            ModelDisclosure::UserProvided.transcript_attribution("", ""),
-            None
-        );
-    }
-
     fn neutral_message_behavior_is_sparse_but_active_behavior_round_trips() {
         let neutral = ThreadMessage {
             message_id: "neutral".to_owned(),
@@ -883,5 +894,148 @@ mod tests {
             }
             .shows_error());
         }
+    }
+
+    fn approval(status: PartStatus, approved: Option<bool>) -> ApprovalPart {
+        ApprovalPart {
+            part_id: "a1".to_owned(),
+            approval_id: "ap1".to_owned(),
+            tool_call_id: "tc1".to_owned(),
+            summary: "Write to /work/report/summary.md".to_owned(),
+            risk: "write".to_owned(),
+            status,
+            approved,
+            reason: None,
+        }
+    }
+
+    #[test]
+    fn an_open_request_is_awaiting_whatever_approved_says() {
+        // A host that leaves a stale `approved` on a re-opened request must not
+        // make the prompt render as already settled.
+        assert_eq!(
+            approval(PartStatus::RequiresAction, Some(true)).outcome(),
+            ApprovalOutcome::Awaiting
+        );
+        assert!(approval(PartStatus::RequiresAction, None)
+            .outcome()
+            .is_open());
+    }
+
+    #[test]
+    fn a_settled_request_reads_its_answer() {
+        assert_eq!(
+            approval(PartStatus::Complete, Some(true)).outcome(),
+            ApprovalOutcome::Approved
+        );
+        assert_eq!(
+            approval(PartStatus::Complete, Some(false)).outcome(),
+            ApprovalOutcome::Declined
+        );
+    }
+
+    #[test]
+    fn expired_and_replaced_both_land_on_unanswered() {
+        // The wire cannot tell them apart, so neither can this projection. The
+        // difference survives in `reason`, which the renderer prints verbatim.
+        let mut expired = approval(PartStatus::Incomplete, None);
+        expired.reason = Some("This request expired before it was answered".to_owned());
+        let mut replaced = approval(PartStatus::Incomplete, None);
+        replaced.reason = Some("Replaced by a later request".to_owned());
+
+        assert_eq!(expired.outcome(), ApprovalOutcome::Unanswered);
+        assert_eq!(replaced.outcome(), ApprovalOutcome::Unanswered);
+        assert_ne!(expired.reason, replaced.reason);
+        assert!(!expired.outcome().is_open());
+    }
+
+    #[test]
+    fn a_broken_approval_is_not_a_declined_one() {
+        assert_eq!(
+            approval(PartStatus::Failed, None).outcome(),
+            ApprovalOutcome::Failed
+        );
+    }
+
+    #[test]
+    fn every_part_field_speaks_one_casing() {
+        // A struct variant and a newtype variant in the same document. Serde
+        // renames variant *fields* only when told to, so this pins the thing
+        // that silently drifts: `part_id` beside `partId` in one payload.
+        let document = ThreadDocument {
+            schema: THREAD_PROJECTION_SCHEMA.to_owned(),
+            thread_id: "t".to_owned(),
+            messages: vec![ThreadMessage {
+                message_id: "m".to_owned(),
+                actor: ThreadActor::Theorem,
+                parts: vec![
+                    text_part("struct-variant", PartStatus::Complete),
+                    ThreadPart::Reasoning(ReasoningPart {
+                        part_id: "newtype-variant".to_owned(),
+                        state: ReasoningState::Present {
+                            text: "why".to_owned(),
+                        },
+                        elapsed_ms: Some(1),
+                        expanded: false,
+                    }),
+                ],
+                ..ThreadMessage::default()
+            }],
+            ..ThreadDocument::default()
+        };
+
+        let wire = serde_json::to_string(&document).expect("the projection serializes");
+        assert!(!wire.contains("part_id"), "snake_case leaked into {wire}");
+        assert_eq!(wire.matches("\"partId\"").count(), 2);
+        assert!(wire.contains("\"threadId\""));
+        assert!(wire.contains("\"messageId\""));
+        assert_eq!(
+            serde_json::from_str::<ThreadDocument>(&wire).expect("it parses back"),
+            document
+        );
+    }
+
+    #[test]
+    fn a_tool_call_keeps_its_multiword_fields_camel() {
+        let wire = serde_json::to_string(&ThreadPart::ToolCall {
+            part_id: "p".to_owned(),
+            tool_call_id: "tc".to_owned(),
+            tool_name: "graph.read".to_owned(),
+            status: PartStatus::Running,
+            arguments_preview: "{}".to_owned(),
+            messages: Vec::new(),
+        })
+        .expect("the part serializes");
+        for field in ["partId", "toolCallId", "toolName", "argumentsPreview"] {
+            assert!(wire.contains(field), "{field} missing from {wire}");
+        }
+    }
+
+    #[test]
+    fn managed_usage_has_no_transcript_attribution() {
+        assert_eq!(
+            ModelDisclosure::TheoremManaged.transcript_attribution("dashscope", "qwen3.7-max"),
+            None
+        );
+    }
+
+    #[test]
+    fn user_provided_usage_names_provider_and_model_without_tokens() {
+        assert_eq!(
+            ModelDisclosure::UserProvided.transcript_attribution("anthropic", "claude-opus-5"),
+            Some("anthropic/claude-opus-5".to_owned())
+        );
+    }
+
+    #[test]
+    fn user_provided_attribution_degrades_without_inventing_a_provider() {
+        assert_eq!(
+            ModelDisclosure::UserProvided.transcript_attribution("", "private-model"),
+            Some("private-model".to_owned())
+        );
+        assert_eq!(
+            ModelDisclosure::UserProvided.transcript_attribution("", ""),
+            None
+        );
     }
 }
