@@ -19,3 +19,8 @@ The v0.6.0 rebase deliberately drops three historical patches:
 
 The replayable text-change-delta commit from the old fork was not consumed by
 the named Theorem PR stack and is not part of this series.
+
+The final pin patch advances the Theorem Zed revision to its Rust 1.90 keyring
+compatibility commit. That Zed patch selects the API-equivalent
+`oo7 0.6.0-alpha` release (MSRV 1.86) because stable oo7 0.6.0 requires Rust
+1.92.
