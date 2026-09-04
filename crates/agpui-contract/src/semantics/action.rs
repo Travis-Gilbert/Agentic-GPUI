@@ -7,7 +7,7 @@
 //! and the AG-UI frames an external head sends. `theorem-surface-contracts`
 //! re-exports them so both carry one struct.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use super::role::Role;
 
@@ -36,6 +36,13 @@ pub enum SemanticGesture {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SemanticAction {
     /// Minted by the caller and echoed on the receipt.
+    ///
+    /// Never empty. The echo is the only thing tying a receipt to the request
+    /// that produced it, and an empty id ties it to every other empty one, so
+    /// a wire caller that sends one is refused here and an in-process caller
+    /// that constructs one is refused by the dispatcher with
+    /// [`ActionRefusal::ActionUnidentified`] before the gesture is delivered.
+    #[serde(deserialize_with = "nonempty")]
     pub action_id: String,
     pub surface_id: String,
     /// An [`Ident`](super::ident::Ident).
@@ -47,7 +54,29 @@ pub struct SemanticAction {
     pub expect_generation: Option<u64>,
 }
 
+/// Rejects an empty string where an identifier is required.
+fn nonempty<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    if value.is_empty() {
+        return Err(serde::de::Error::custom("an action_id is never empty"));
+    }
+    Ok(value)
+}
+
 impl SemanticAction {
+    /// Whether this action carries the identifier its receipt will echo.
+    ///
+    /// Deserialization refuses an empty one, so this is the in-process half:
+    /// a caller that builds the struct by hand reaches the dispatcher without
+    /// passing through serde.
+    #[must_use]
+    pub fn is_identified(&self) -> bool {
+        !self.action_id.is_empty()
+    }
+
     /// The common case: activate a control by id.
     #[must_use]
     pub fn activate(
@@ -128,6 +157,15 @@ pub enum ActionRefusal {
     /// on the target, not a different action: this is a surface that has not
     /// declared its chain.
     TargetUnscoped,
+    /// The action carried no `action_id`.
+    ///
+    /// A receipt echoes the id it was asked under, and that echo is the only
+    /// thing tying it to the request. An empty id ties a receipt to every
+    /// other empty one, so the gesture is refused before delivery rather than
+    /// applied under a name that names nothing. The wire half is on
+    /// [`SemanticAction::action_id`], which will not deserialize empty; this
+    /// is the refusal an in-process caller gets.
+    ActionUnidentified,
     /// The dispatcher was built for one window and handed another.
     ///
     /// Every lookup a dispatcher performs -- the snapshot, the target, the
@@ -210,6 +248,7 @@ mod tests {
                 surface_id: "thread".into(),
             },
             ActionRefusal::TargetUnscoped,
+            ActionRefusal::ActionUnidentified,
             ActionRefusal::WindowMismatch,
         ] {
             let json = serde_json::to_string(&ActionOutcome::Refused(refusal.clone()))
@@ -240,5 +279,24 @@ mod tests {
             "{\"action_id\":\"a1\",\"surface_id\":\"composer\",\"target\":\"composer-send\",\"gesture\":\"activate\"}"
         );
         assert_eq!(action.expecting_generation(7).expect_generation, Some(7));
+    }
+
+    /// An action with no id does not come off the wire.
+    ///
+    /// The defect: a frame carrying `"action_id": ""` deserialized, dispatched,
+    /// and produced a receipt echoing the empty id -- valid-looking, and
+    /// impossible to match to the request that caused it or to tell apart from
+    /// every other such receipt.
+    #[test]
+    fn an_action_without_an_id_is_not_a_wire_action() {
+        let json = "{\"action_id\":\"\",\"surface_id\":\"composer\",\"target\":\"composer-send\",\"gesture\":\"activate\"}";
+        let error = serde_json::from_str::<SemanticAction>(json)
+            .expect_err("an empty action_id is refused");
+        assert!(
+            error.to_string().contains("never empty"),
+            "{error}"
+        );
+        assert!(!SemanticAction::activate("", "composer", "composer-send").is_identified());
+        assert!(SemanticAction::activate("a1", "composer", "composer-send").is_identified());
     }
 }
