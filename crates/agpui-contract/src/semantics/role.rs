@@ -82,12 +82,27 @@ impl Role {
     /// of it, opened whatever that was, and reported success under the
     /// container's name.
     ///
-    /// The line is the one the vocabulary already draws. A role that names a
-    /// control, a row, a cell or a field is something a person clicks; a role
-    /// that names a container, a heading, or an output region is not, and the
-    /// thing they meant to click is a descendant with a name of its own. The
-    /// refusal carries the role, so an agent that aimed at the parent can see
-    /// what it actually named.
+    /// The line is the one the vocabulary already draws, and it is drawn around
+    /// controls: a role that names something a person presses -- a button, a
+    /// link, a tab, a menu item, a checkbox, a field -- is an activation
+    /// target. A role that names a container, a heading, an output region, or
+    /// the *structure* of a table or a tree is not, and the thing they meant to
+    /// press is a descendant with a name of its own. The refusal carries the
+    /// role, so an agent that aimed at the parent can see what it actually
+    /// named.
+    ///
+    /// `Row`, `Cell`, `GridCell` and `TreeItem` sit on the structural side even
+    /// though ARIA counts some of them as widgets, because a press is aimed at
+    /// the node's centre and a row's centre is whatever the row holds. Every
+    /// row this repository publishes is a label rather than a control -- a
+    /// marked code line in `agent_kit/code_view.rs` and an activity lane in
+    /// `thread.rs`, neither with a click handler or a tab stop -- so admitting
+    /// the role bought nothing and cost the guarantee: the hitbox preflight
+    /// passed, the click went out, and `Activate` reported `Applied` under the
+    /// row's name for a press that did nothing. A surface with a genuinely
+    /// pressable row should publish the control it holds; the day one cannot,
+    /// this gate wants an explicit capability on the node rather than a wider
+    /// guess from the role.
     #[must_use]
     pub const fn accepts_activation(self) -> bool {
         matches!(
@@ -102,10 +117,6 @@ impl Role {
                 | Self::Slider
                 | Self::Combobox
                 | Self::Option
-                | Self::Row
-                | Self::Cell
-                | Self::GridCell
-                | Self::TreeItem
                 | Self::Field
                 | Self::Splitter
                 | Self::Scrollbar
@@ -113,5 +124,48 @@ impl Role {
                 | Self::MultilineInput
                 | Self::PasswordInput
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Role;
+
+    /// The activation gate admits controls and refuses structure.
+    ///
+    /// `Row` is the one that has already been wrong once: it reads like a
+    /// widget, and every row this repository publishes is a label. Pinning the
+    /// four structural roles here keeps the next reader from restoring them
+    /// from the ARIA taxonomy alone.
+    #[test]
+    fn only_the_roles_that_name_a_control_accept_activation() {
+        for role in [
+            Role::Button,
+            Role::Link,
+            Role::Tab,
+            Role::MenuItem,
+            Role::Checkbox,
+            Role::Switch,
+            Role::Combobox,
+            Role::Input,
+        ] {
+            assert!(role.accepts_activation(), "{role:?} names a control");
+        }
+        for role in [
+            Role::Row,
+            Role::Cell,
+            Role::GridCell,
+            Role::TreeItem,
+            Role::Window,
+            Role::Region,
+            Role::Group,
+            Role::Text,
+            Role::Heading,
+        ] {
+            assert!(
+                !role.accepts_activation(),
+                "{role:?} names structure, and a press aimed at it lands on a child"
+            );
+        }
     }
 }
