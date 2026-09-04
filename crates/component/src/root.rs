@@ -96,7 +96,7 @@ impl Root {
 
     /// Create a new Root view.
     pub fn new(view: impl Into<AnyView>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        #[cfg(all(target_os = "macos", not(test)))]
+        #[cfg(all(target_os = "macos", not(test), not(feature = "test-support")))]
         gpui_base::install_window_hit_test_forwarder(window);
 
         Self {

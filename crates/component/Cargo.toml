@@ -17,6 +17,10 @@ doctest = false
 [features]
 decimal = ["dep:rust_decimal"]
 inspector = ["gpui_macros/inspector", "gpui/inspector", "gpui-base/inspector"]
+# A build whose windows are GPUI test windows rather than platform windows.
+# Enable it from `[dev-dependencies]`, beside the `gpui/test-support` a
+# `#[gpui::test]` already needs; a shipping build never turns it on.
+test-support = ["gpui/test-support"]
 tree-sitter = ["dep:tree-sitter", "dep:tree-sitter-json"]
 
 # For syntax highlighting in Markdown and CodeEditor.
