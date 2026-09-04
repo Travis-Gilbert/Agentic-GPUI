@@ -163,13 +163,14 @@ impl Node {
     }
 }
 
-/// A row a virtualized surface knows about but has not materialized.
+/// A row a surface knows about but has not materialized.
 ///
-/// The thread leaf publishes one of these per message every frame while only
-/// the visible window of rows becomes a [`Node`]. An action aimed at a reading
-/// item is refused with
+/// A surface publishes one per row it can name and did not build: the rows
+/// outside a virtual list's window, and the rows behind a closed disclosure.
+/// An action aimed at a reading item is refused with
 /// [`ActionRefusal::TargetNotMaterialized`](super::action::ActionRefusal::TargetNotMaterialized)
-/// rather than reported absent, because the surface does know the row exists.
+/// rather than reported absent, because the surface does know the row exists,
+/// and the refusal carries the gesture that would materialize it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SemanticReadingItem {
