@@ -74,14 +74,23 @@ where
 }
 
 impl SemanticAction {
-    /// Whether this action carries the identifier its receipt will echo.
+    /// Whether this action carries the two identifiers it is never without.
     ///
-    /// Deserialization refuses an empty one, so this is the in-process half:
-    /// a caller that builds the struct by hand reaches the dispatcher without
-    /// passing through serde.
+    /// Deserialization refuses an empty one of either, so this is the
+    /// in-process half: a caller that builds the struct by hand reaches the
+    /// dispatcher without passing through serde.
+    ///
+    /// `surface_id` is checked here and not left to the dispatcher's own
+    /// surface lookup, because that lookup cannot tell the two cases apart.
+    /// An empty surface names no surface, so it falls into the same
+    /// unknown-surface bucket as a well-formed id belonging to another host,
+    /// and the caller is handed a plausible
+    /// [`ActionRefusal::SurfaceUnknown`] receipt for a malformed request. The
+    /// field's own documentation already states the invariant; this is where
+    /// the in-process path keeps it.
     #[must_use]
     pub fn is_identified(&self) -> bool {
-        !self.action_id.is_empty()
+        !self.action_id.is_empty() && !self.surface_id.is_empty()
     }
 
     /// The common case: activate a control by id.
@@ -164,14 +173,19 @@ pub enum ActionRefusal {
     /// on the target, not a different action: this is a surface that has not
     /// declared its chain.
     TargetUnscoped,
-    /// The action carried no `action_id`.
+    /// The action carried no `action_id`, or no `surface_id`.
     ///
     /// A receipt echoes the id it was asked under, and that echo is the only
     /// thing tying it to the request. An empty id ties a receipt to every
     /// other empty one, so the gesture is refused before delivery rather than
-    /// applied under a name that names nothing. The wire half is on
-    /// [`SemanticAction::action_id`], which will not deserialize empty; this
-    /// is the refusal an in-process caller gets.
+    /// applied under a name that names nothing. An empty `surface_id` is the
+    /// same fault answered by a different receipt if it is let through: it
+    /// names no surface, so it lands in the unknown-surface bucket and comes
+    /// back as [`Self::SurfaceUnknown`], which says a real surface was named
+    /// and is not here. The wire half is on
+    /// [`SemanticAction::action_id`] and [`SemanticAction::surface_id`],
+    /// neither of which will deserialize empty; this is the refusal an
+    /// in-process caller gets.
     ActionUnidentified,
     /// The dispatcher was built for one window and handed another.
     ///
@@ -308,6 +322,11 @@ mod tests {
             assert!(error.to_string().contains("never empty"), "{error}");
         }
         assert!(!SemanticAction::activate("", "composer", "composer-send").is_identified());
+        // The in-process half of the surface invariant. Without it the
+        // constructor's empty surface reaches the dispatcher's own lookup,
+        // which cannot tell "named nothing" from "named a surface this host
+        // does not own" and answers both with `SurfaceUnknown`.
+        assert!(!SemanticAction::activate("a1", "", "composer-send").is_identified());
         assert!(SemanticAction::activate("a1", "composer", "composer-send").is_identified());
     }
 }
