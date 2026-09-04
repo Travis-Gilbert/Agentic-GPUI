@@ -8,3 +8,4 @@
 0008-rust-1.90-stdlib-pin.patch
 0009-rust-1.90-atomics.patch
 0010-rust-1.90-final-zed-pin.patch
+0011-feat-settings-add-controlled-navigation-state.patch
