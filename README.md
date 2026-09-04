@@ -1,242 +1,78 @@
-<p align="center">
-  <img src="https://raw.githubusercontent.com/longbridge/gpui-kit/main/website/public/logo.svg" width="112" alt="GPUI Kit logo" />
-  <br>
-  <strong>GPUI Kit</strong>
-</p>
+# AGPUI
 
-[English](./README.md) | [简体中文](./README.zh-CN.md)
+AGPUI is the framework half of Theorem's interface: a GPUI application kit whose
+elements are legible to an agent as well as to a person. Every element publishes
+a semantic node — role, identity, state, and the gestures it accepts — so a head
+driving the application over the wire sees the same structure a reader sees on
+screen, and a gesture it sends is receipted against the node it named. The
+repository is a fork of Longbridge `gpui-kit`, extended with AGPUI-owned crates
+for the contract, the semantic coordinator, the agent and canvas elements, the
+renderer-neutral runtime kernel, the browser mitigations, the theme law, and a
+story that hosts every element beside its snapshot. Theorem and RustyRed consume
+it as one pinned git dependency, and the dependency runs one way: AGPUI never
+names a Theorem record, tool, or route.
 
-[![Build Status](https://github.com/longbridge/gpui-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/longbridge/gpui-kit/actions/workflows/ci.yml) [![Docs](https://docs.rs/gpui-kit/badge.svg)](https://docs.rs/gpui-kit/) [![Crates.io](https://img.shields.io/crates/v/gpui-kit.svg)](https://crates.io/crates/gpui-kit)
+- [`docs/AGPUI.md`](docs/AGPUI.md) — the crate map and the three laws.
+- [`docs/UPSTREAM-SYNC.md`](docs/UPSTREAM-SYNC.md) — the upstream merge runbook and the replay list.
 
-Build fantastic, high-performance desktop apps with Rust and GPUI.
+## Three things are called kit
 
-GPUI Kit is a comprehensive Rust desktop application framework. It combines a
-production-ready UI system with application-grade data, layout, and editing
-capabilities, all built on a reusable foundation of behavior, state, and
-infrastructure, and opens the finished application to JavaScript extensions.
+The word is overloaded across three unrelated projects. AGPUI always spells the
+qualifier, and CI refuses a bare token.
 
-Documentation: <https://gpui-kit.com>
+| Kit | What it is | GPUI it builds against | Relationship to AGPUI |
+|---|---|---|---|
+| Longbridge `gpui-kit` | Components and paint: `gpui-component`, `gpui-base`, the dock, the table, the editor | Longbridge's Zed fork, redirected here to `Travis-Gilbert/zed@0a3e29a` | **Fork lane.** This repository's base. |
+| GPUI Box `gpui-kit`, `gpui-kit-semantics` (`fran0220/gpui-box`) | Semantic tree vocabulary, agent kit, canvas; vendors its own GPUI | `gpui-box` by path | **Port lane.** Source read and rewritten against our GPUI. |
+| Butler `gpuikit` (`iamnbutler/gpuikit`) | Single-crate toolkit, web showcase, `stitch`, editor | `gpui-unofficial` 1.18 from crates.io | **Borrow lane.** Read for ideas at [`Travis-Gilbert/gpuikit-reference`](https://github.com/Travis-Gilbert/gpuikit-reference); nothing is forked from it. |
 
-```text
-gpui-kit             The one crate applications depend on
-├── gpui-base        Unstyled behavior, state, and infrastructure
-├── gpui-shell       JavaScript extensions for a Rust host
-└── gpui-component   GPUI Component: the complete styled UI system
-```
+## Crates by lane
 
-`gpui-kit` pins the matching GPUI release and re-exports every layer, so an
-application lists a single dependency and never GPUI itself.
+Upstream crate names and paths are untouched, so an upstream merge stays
+mechanical. AGPUI-owned crates sit beside them under `crates/agpui*`.
 
-## Features
+**Fork** — vendored from Longbridge, patched, never contributed back:
 
-- **60+ UI Components**: Forms, navigation, overlays, feedback, layout, and more, with polished interactions and productive defaults.
-- **Production Ready**: Used to build Longbridge Pro from day one and continuously refined in a publicly shipped commercial desktop application.
-- **Native Feel**: Modern controls inspired by macOS and Windows, backed by semantic themes and multiple sizes.
-- **120 FPS**: GPU-accelerated interfaces that remain smooth under load.
-- **Data Tables**: Virtual scrolling, fixed and resizable columns, sorting, and cell selection across hundreds of thousands of rows.
-- **Virtual Lists**: Render only the visible range, including lists whose items have different sizes.
-- **Code Editor**: Stable performance at 200K lines with Tree-sitter highlighting and LSP diagnostics, completion, and hover.
-- **Dock Layout**: Resizable panels, draggable tabs, nested splits, edge docks, and serializable freeform Tiles.
-- **Rich Content**: Native Markdown and HTML rendering, syntax highlighting, and built-in charts.
-- **Design Freedom**: Use the complete visual system or build your own on the behavior and infrastructure in `gpui-base`.
-- **JavaScript Extensions**: `gpui-shell` lets a shipped Rust host load panels and business logic as scripts, with every capability granted explicitly.
-- **Cross Platform**: Ship one Rust codebase to macOS, Windows, and Linux.
+`crates/kit`, `crates/base`, `crates/component`, `crates/component-macros`,
+`crates/assets`, `crates/shell`, `crates/component-shell`, `crates/webview`,
+`crates/fps`, `crates/story`, `crates/story-web`.
 
-## Framework Architecture
+**Own and port** — AGPUI's own crates. Each lands with the deliverable named:
 
-### Three layers. One ecosystem.
+| Crate | Lane | Lands in |
+|---|---|---|
+| `agpui-contract` | own + port | H2 |
+| `agpui` | own + port | H3 |
+| `agpui-agent` | port | H4 |
+| `agpui-canvas` | port | H4 |
+| `agpui-runtime` | own + port | H5 |
+| `agpui-web` | own | H6 |
+| `agpui-theme` | own | H6 |
+| `agpui-story` | own | H8 |
 
-Use `gpui-component` to keep the application coherent with one complete visual
-and interaction system. Use `gpui-base` when your product needs to create and
-own that system itself. Use `gpui-shell` when the application should be
-extensible in JavaScript after it ships.
+`crates/agpui-scene` is a reserved name, not a crate. It is created the day a
+`SceneView` composes; an empty crate calling nothing is a refusal.
 
-| **`gpui-component`**             | **`gpui-base`**                               | **`gpui-shell`**                           |
-| -------------------------------- | --------------------------------------------- | ------------------------------------------ |
-| Complete, styled components      | Unstyled behavior and infrastructure          | JavaScript runtime hosted by Rust          |
-| Productive defaults with theming | Full control over structure and visual design | Capabilities granted one at a time         |
-| Best for building applications   | Best for building design systems              | Best for plugins and scripted applications |
+## Pins
 
-```text
-                             APPLICATION
-                                  │
-              ┌───────────────────┼───────────────────┐
-              │                   │                   │
-              ▼                   ▼                   ▼
-    ┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐
-    │  gpui-component  │ │ Your Design      │ │    gpui-shell    │
-    │    Styled UI     │ │ System           │ │  JS extensions   │
-    └────────┬─────────┘ └────────┬─────────┘ └────────┬─────────┘
-             │                    │                    │
-             └────────────────────┼────────────────────┘
-                                  ▼
-                        ┌──────────────────┐
-                        │    gpui-base     │
-                        │ Behavior · State │
-                        │ Infrastructure   │
-                        └────────┬─────────┘
-                                 ▼
-                               GPUI
-```
-
-> **Behavior belongs to the foundation. Presentation belongs to the application.**
-
-Use **`gpui-component`** when you want polished controls ready to ship. Build on
-**`gpui-base`** when your application should own its component source, layout,
-styling, and motion while reusing difficult interaction behavior. Add
-**`gpui-shell`** when contributors should extend the product without a fork or
-a release.
-
-The layering follows the same separation that makes the
-[shadcn](https://ui.shadcn.com) ecosystem flexible:
-
-| GPUI Kit ecosystem                   | Web ecosystem                   |
-| ------------------------------------ | ------------------------------- |
-| GPUI                                 | HTML + Tailwind CSS             |
-| [`gpui-base`](crates/base/README.md) | [Base UI](https://base-ui.com)  |
-| `gpui-component`                     | shadcn's styled component layer |
-
-[Explore the architecture →](docs/ARCHITECTURE.md)
-
-## Showcase
-
-GPUI Kit has powered [Longbridge Pro](https://longbridge.com/desktop)
-from day one. The framework is extracted from the demands of a publicly shipped
-commercial desktop application rather than designed in isolation.
-
-> **GPUI provides the rendering foundation. Longbridge provides the production foundation.**
-
-<img width="1763" alt="Image" src="https://github.com/user-attachments/assets/e1ecb9c3-2dd3-431e-bd97-5a819c30e551" />
-
-## Usage
+One GPUI. The whole family resolves to a single revision of
+`Travis-Gilbert/zed`, declared here and read by every consumer:
 
 ```toml
-[dependencies]
-gpui-kit = "0.6"
+[workspace.metadata.agpui]
+upstream = "https://github.com/longbridge/gpui-kit"   # Longbridge
+upstream_tag = "v0.6.0"
+zed_rev = "0a3e29a42a1646cb9f50df076e2aa6c9fda85868"
 ```
 
-`gpui-kit` always brings in GPUI and `gpui-base`; `gpui-component` and the
-default icon set are on by default. Turn default
-features off to keep only the layers you use. The `gpui-component` features (`inspector`, `decimal`,
-`tree-sitter`, and each `tree-sitter-<language>`) are available under the same
-names.
+AGPUI is the authority for `zed_rev`. Theorem's pin guard reads it and refuses
+on mismatch rather than declaring the same fact twice.
 
-### Basic Example
+## Licence
 
-```rs
-use gpui_kit::component::button::*;
-use gpui_kit::component::*;
-use gpui_kit::*;
+AGPUI-owned crates are `MIT OR Apache-2.0`. Crates forked from Longbridge keep
+Apache-2.0. `LICENSE_LEDGER.md` records every ported file with its upstream
+revision and licence; `PROVENANCE.toml` beside a ported module carries the
+digest of the upstream file it was rewritten from.
 
-pub struct HelloWorld;
-impl Render for HelloWorld {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .v_flex()
-            .gap_2()
-            .size_full()
-            .items_center()
-            .justify_center()
-            .child("Hello, World!")
-            .child(
-                Button::new("ok")
-                    .primary()
-                    .label("Let's Go!")
-                    .on_click(|_, _, _| println!("Clicked!")),
-            )
-    }
-}
-
-fn main() {
-    gpui_kit::application().run(move |cx| {
-        // This must be called before using any GPUI Component features.
-        gpui_kit::init(cx);
-
-        cx.spawn(async move |cx| {
-            cx.open_window(WindowOptions::default(), |window, cx| {
-                let view = cx.new(|_| HelloWorld);
-                // This first level on the window, should be a Root.
-                cx.new(|cx| Root::new(view, window, cx))
-            })
-            .expect("Failed to open window");
-        })
-        .detach();
-    });
-}
-```
-
-### Icons
-
-The default `assets` feature bundles the [Lucide](https://lucide.dev) icon set
-as `gpui-kit-assets`; pass it to the application with
-`gpui_kit::application().with_assets(gpui_kit::assets::Assets)`. To ship your
-own icons instead, leave that feature out and name the SVG files as defined in
-[IconName](https://github.com/longbridge/gpui-kit/blob/main/crates/component/src/icon.rs#L86).
-
-## Skills for AI Coding Agents
-
-Install the GPUI Kit skills for your AI coding agent (Cursor, Claude Code, Gemini CLI, Codex, etc.):
-
-```bash
-npx skills add longbridge/gpui-kit
-```
-
-| Skill                    | Description                                                                                                                         |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `gpui-kit`               | Setup, component catalog, usage patterns, GPUI mechanics (elements, entities, async, focus, actions, tests), and the Coding Guides. |
-| `gpui-kit-design-guides` | The Design Guides: layout, spacing, hierarchy, interaction states, overlays, and interface copy.                                    |
-
-## Development
-
-### Desktop Gallery (Story)
-
-The `story` crate is a gallery application that showcases all available components. Run it with:
-
-```bash
-cargo run
-```
-
-### Examples
-
-Some important examples are built into the `story` crate and can be run directly:
-
-```bash
-# Code editor with LSP support and syntax highlighting
-cargo run --example editor
-
-# Dock layout system (panels, split views, tabs)
-cargo run --example dock
-
-# Markdown rendering
-cargo run --example markdown
-
-# HTML rendering
-cargo run --example html
-```
-
-The `examples` directory also contains standalone examples, each focused on a single feature. Each example is a separate crate, run them with `cargo run -p <name>`:
-
-```bash
-# Basic hello world
-cargo run -p hello_world
-
-# System monitor (real-time charts with CPU/memory data)
-cargo run -p system_monitor
-
-# Window title customization
-cargo run -p window_title
-```
-
-Check out [CONTRIBUTING.md](CONTRIBUTING.md) for more details.
-
-## Compare to others
-
-See the [comparison with Iced, egui and Qt 6](https://gpui-kit.com/docs/comparison) on the site.
-
-## License
-
-Apache-2.0
-
-- Built on [GPUI](https://github.com/zed-industries/zed), the UI framework behind Zed, also Apache-2.0.
-- UI design based on [shadcn/ui](https://ui.shadcn.com), some from [Reui](https://reui.io).
-- Icons from [Lucide](https://lucide.dev).
+Upstream documentation for the fork lane: <https://gpui-kit.com> (Longbridge).

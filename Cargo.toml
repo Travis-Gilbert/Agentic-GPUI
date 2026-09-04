@@ -156,7 +156,7 @@ consts = "consts"
 [workspace.metadata.cargo-machete]
 ignored = ["log", "anyhow", "serde"]
 
-[workspace.metadata.theorem-fork]
+[workspace.metadata.agpui]
 upstream = "https://github.com/longbridge/gpui-kit"
 upstream_tag = "v0.6.0"
 zed_rev = "0a3e29a42a1646cb9f50df076e2aa6c9fda85868"
