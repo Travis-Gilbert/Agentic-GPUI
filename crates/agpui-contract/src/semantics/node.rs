@@ -146,10 +146,16 @@ pub struct Node {
 }
 
 impl Node {
-    /// Re-applies redaction to the three free-text fields.
+    /// Re-applies redaction to every free-text field.
     ///
     /// The probe already redacts what it records; this covers nodes a host
     /// constructed directly, and is idempotent.
+    ///
+    /// `placeholder` belongs here with the other three. It is host-supplied
+    /// prose on the same node, it reaches the same three destinations -- the
+    /// snapshot, the canonical hash, and a screen reader -- and being the one
+    /// free-text field left out is what would make export-time redaction
+    /// unable to repair a leak the probe let through.
     pub fn redact(&mut self) {
         if let Some(text) = &mut self.text {
             *text = redact_sensitive_text(text);
@@ -159,6 +165,9 @@ impl Node {
         }
         if let Some(value) = &mut self.value {
             *value = redact_sensitive_text(value);
+        }
+        if let Some(placeholder) = &mut self.placeholder {
+            *placeholder = redact_sensitive_text(placeholder);
         }
     }
 }
