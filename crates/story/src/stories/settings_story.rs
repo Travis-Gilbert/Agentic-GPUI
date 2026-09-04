@@ -11,7 +11,7 @@ use gpui_kit::component::{
     label::Label,
     setting::{
         NumberFieldOptions, RenderOptions, SettingField, SettingFieldElement, SettingGroup,
-        SettingItem, SettingPage, Settings,
+        SettingItem, SettingPage, Settings, SettingsSection,
     },
     text::markdown,
     v_flex,
@@ -65,6 +65,10 @@ pub struct SettingsStory {
     focus_handle: FocusHandle,
     group_variant: GroupBoxVariant,
     size: Size,
+}
+
+pub struct SectionedSettingsStory {
+    focus_handle: FocusHandle,
 }
 
 struct OpenURLSettingField {
@@ -522,5 +526,72 @@ impl Render for SettingsStory {
             .with_size(self.size)
             .with_group_variant(self.group_variant)
             .pages(self.setting_pages(window, cx))
+    }
+}
+
+impl super::Story for SectionedSettingsStory {
+    fn title() -> &'static str {
+        "Settings Sections"
+    }
+
+    fn description() -> &'static str {
+        "Settings navigation grouped into labelled bands."
+    }
+
+    fn new_view(_: &mut Window, cx: &mut App) -> Entity<impl Render> {
+        cx.new(|cx| Self {
+            focus_handle: cx.focus_handle(),
+        })
+    }
+
+    fn paddings() -> gpui_kit::Pixels {
+        px(0.)
+    }
+}
+
+impl Focusable for SectionedSettingsStory {
+    fn focus_handle(&self, _: &gpui_kit::App) -> gpui_kit::FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl SectionedSettingsStory {
+    fn page(title: &'static str, icon: IconName, keyword: &'static str) -> SettingPage {
+        SettingPage::new(title).icon(Icon::new(icon)).group(
+            SettingGroup::new().item(
+                SettingItem::render(|_, _, _| {
+                    v_flex()
+                        .gap_1()
+                        .child("Sectioned settings page")
+                        .child("Search keeps each result under its original section.")
+                })
+                .keywords([keyword]),
+            ),
+        )
+    }
+}
+
+impl Render for SectionedSettingsStory {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        Settings::new("sectioned-settings")
+            .section(
+                SettingsSection::new("User")
+                    .page(Self::page("Profile", IconName::User, "identity"))
+                    .page(Self::page("Experience", IconName::Palette, "appearance")),
+            )
+            .section(
+                SettingsSection::new("Workspace")
+                    .page(Self::page("General", IconName::Settings2, "workspace"))
+                    .page(Self::page("Models", IconName::Bot, "keychain")),
+            )
+            .section(
+                SettingsSection::new("Other")
+                    .page(Self::page("Data", IconName::Folder, "keychain"))
+                    .page(Self::page(
+                        "Developer",
+                        IconName::SquareTerminal,
+                        "receipts",
+                    )),
+            )
     }
 }
