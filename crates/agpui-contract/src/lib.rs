@@ -11,9 +11,9 @@
 pub mod semantics;
 
 pub use semantics::{
-    canonical_hash, hex, redact_sensitive_text, ActionOutcome, ActionReceipt, ActionRefusal,
-    DiffSummary, FieldChange, HashNode, HashReadingItem, HashView, Ident, IdentError,
-    IdentViolation, LintFinding, LiveRegion, Node, NodeChange, Rect, Role, SemanticAction,
-    SemanticGesture, SemanticReadingItem, Snapshot, SnapshotDiff, HASHED_NODE_FIELDS,
-    HASHED_READING_FIELDS,
+    canonical_hash, hex, redact_sensitive_text, segment, ActionOutcome, ActionReceipt,
+    ActionRefusal, DiffSummary, FieldChange, HashNode, HashReadingItem, HashView, Ident,
+    IdentError, IdentViolation, LintFinding, LiveRegion, Node, NodeChange, Rect, Role,
+    SemanticAction, SemanticGesture, SemanticReadingItem, Snapshot, SnapshotDiff,
+    HASHED_NODE_FIELDS, HASHED_READING_FIELDS,
 };

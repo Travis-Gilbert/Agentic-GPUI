@@ -42,7 +42,7 @@ pub struct HashNode {
     pub focused: bool,
     pub disabled: bool,
     pub read_only: bool,
-    pub selected: bool,
+    pub selected: Option<bool>,
     pub checked: Option<bool>,
     pub expanded: Option<bool>,
     pub value_now: Option<f32>,
@@ -378,7 +378,7 @@ mod tests {
         };
         assert_eq!(
             hex(&canonical_hash(&snapshot)),
-            "9e18a5010008a59769a12878ef9c0c788102f96bd64ce84e4b3f0c9eae6cb880"
+            "88ecd6acc565570650efabe9ac0634d511f42e1a184bd61b1aba2b785d6d40b1"
         );
     }
 }

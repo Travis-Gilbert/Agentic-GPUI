@@ -103,7 +103,16 @@ pub struct Node {
     pub disabled: bool,
     #[serde(skip_serializing_if = "is_false")]
     pub read_only: bool,
-    pub selected: bool,
+    /// `None` on a node that is not selectable at all, which is most of them.
+    ///
+    /// Optional for the same reason [`Self::checked`] and [`Self::expanded`]
+    /// are: a dispatcher preflights a gesture by asking whether the node
+    /// carries the state it moves, and a plain `bool` answers "yes, false" for
+    /// every node in the tree. `Select` aimed at an ordinary button therefore
+    /// clicked it -- navigating, sending, whatever the button does -- and only
+    /// then reported the postcondition unmet.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected: Option<bool>,
     pub hovered: bool,
     pub pressed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
