@@ -31,6 +31,8 @@ pub enum ComposerIntent {
     },
     /// Open the host's file picker. The leaf has no file system.
     PickAttachment,
+    /// Open Settings through the host's renderer-neutral application reducer.
+    OpenSettings,
     RemoveAttachment {
         attachment_id: String,
     },
@@ -138,6 +140,9 @@ mod tests {
             serde_json::from_value::<ComposerIntent>(wire).unwrap(),
             ComposerIntent::Cancel
         );
+
+        let wire = serde_json::to_value(ComposerIntent::OpenSettings).unwrap();
+        assert_eq!(wire, serde_json::json!({"intent": "open_settings"}));
     }
 
     #[test]
