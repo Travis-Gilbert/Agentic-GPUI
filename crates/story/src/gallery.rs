@@ -116,6 +116,7 @@ impl Gallery {
                 StoryContainer::panel::<SelectStory>(window, cx),
                 StoryContainer::panel::<SeparatorStory>(window, cx),
                 StoryContainer::panel::<SettingsStory>(window, cx),
+                StoryContainer::panel::<SectionedSettingsStory>(window, cx),
                 #[cfg(not(target_family = "wasm"))]
                 StoryContainer::panel::<ShellStory>(window, cx),
                 StoryContainer::panel::<SheetStory>(window, cx),

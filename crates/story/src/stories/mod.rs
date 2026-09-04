@@ -124,7 +124,7 @@ pub use resizable_story::ResizableStory;
 pub use scrollbar_story::ScrollbarStory;
 pub use select_story::SelectStory;
 pub use separator_story::SeparatorStory;
-pub use settings_story::SettingsStory;
+pub use settings_story::{SectionedSettingsStory, SettingsStory};
 pub use sheet_story::SheetStory;
 #[cfg(not(target_family = "wasm"))]
 pub use shell_story::ShellStory;

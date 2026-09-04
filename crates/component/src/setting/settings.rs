@@ -7,16 +7,48 @@ use crate::{
     input::{Input, InputState},
     resizable_panel,
     setting::{SettingGroup, SettingPage},
-    sidebar::{Sidebar, SidebarMenu, SidebarMenuItem},
+    sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem},
 };
 use gpui::{
     App, AppContext as _, Axis, ElementId, Entity, IntoElement, ParentElement as _, Pixels,
-    RenderOnce, StyleRefinement, Styled, Window, container_query, div, prelude::FluentBuilder as _,
-    px, relative,
+    RenderOnce, SharedString, StyleRefinement, Styled, Window, container_query, div,
+    prelude::FluentBuilder as _, px, relative,
 };
 use rust_i18n::t;
 
 const STACKED_LAYOUT_MAX_WIDTH: Pixels = px(480.);
+
+/// A labelled group of pages in the settings sidebar.
+#[derive(Clone)]
+pub struct SettingsSection {
+    title: SharedString,
+    pages: Vec<SettingPage>,
+}
+
+impl SettingsSection {
+    /// Create a settings section with the given title.
+    pub fn new(title: impl Into<SharedString>) -> Self {
+        Self {
+            title: title.into(),
+            pages: Vec::new(),
+        }
+    }
+
+    /// Add a page to this section.
+    pub fn page(mut self, page: SettingPage) -> Self {
+        self.pages.push(page);
+        self
+    }
+
+    /// Add pages to this section.
+    pub fn pages(mut self, pages: impl IntoIterator<Item = SettingPage>) -> Self {
+        self.pages.extend(pages);
+        self
+    }
+}
+
+type IndexedSettingPage = (usize, SettingPage);
+type FilteredSettingsSection = (SharedString, Vec<IndexedSettingPage>);
 
 /// The settings structure containing multiple pages for app settings.
 ///
@@ -34,6 +66,7 @@ const STACKED_LAYOUT_MAX_WIDTH: Pixels = px(480.);
 pub struct Settings {
     id: ElementId,
     pages: Vec<SettingPage>,
+    sections: Vec<SettingsSection>,
     group_variant: GroupBoxVariant,
     size: Size,
     sidebar_width: Pixels,
@@ -49,6 +82,7 @@ impl Settings {
         Self {
             id: id.into(),
             pages: vec![],
+            sections: vec![],
             group_variant: GroupBoxVariant::default(),
             size: Size::default(),
             sidebar_width: px(250.0),
@@ -83,6 +117,22 @@ impl Settings {
         self
     }
 
+    /// Add a labelled section of pages to the settings sidebar.
+    ///
+    /// When at least one section is present, the sidebar renders sectioned
+    /// navigation instead of the flat pages added with [`Self::page`] or
+    /// [`Self::pages`].
+    pub fn section(mut self, section: SettingsSection) -> Self {
+        self.sections.push(section);
+        self
+    }
+
+    /// Add labelled sections of pages to the settings sidebar.
+    pub fn sections(mut self, sections: impl IntoIterator<Item = SettingsSection>) -> Self {
+        self.sections.extend(sections);
+        self
+    }
+
     /// Set the default variant for all setting groups.
     ///
     /// All setting groups will use this variant unless overridden individually.
@@ -109,35 +159,57 @@ impl Settings {
         self
     }
 
+    fn filtered_page(page: &SettingPage, query: &str, cx: &App) -> Option<SettingPage> {
+        let filtered_groups: Vec<SettingGroup> = page
+            .groups
+            .iter()
+            .filter_map(|group| {
+                let mut group = group.clone();
+                group.items = group
+                    .items
+                    .iter()
+                    .filter(|item| item.is_match(query, cx))
+                    .cloned()
+                    .collect();
+                if group.items.is_empty() {
+                    None
+                } else {
+                    Some(group)
+                }
+            })
+            .collect();
+        let mut page = page.clone();
+        page.groups = filtered_groups;
+        if page.groups.is_empty() {
+            None
+        } else {
+            Some(page)
+        }
+    }
+
     fn filtered_pages(&self, query: &str, cx: &App) -> Vec<SettingPage> {
         self.pages
             .iter()
-            .filter_map(|page| {
-                let filtered_groups: Vec<SettingGroup> = page
-                    .groups
+            .filter_map(|page| Self::filtered_page(page, query, cx))
+            .collect()
+    }
+
+    fn filtered_sections(&self, query: &str, cx: &App) -> Vec<FilteredSettingsSection> {
+        let mut page_ix = 0;
+        self.sections
+            .iter()
+            .filter_map(|section| {
+                let pages = section
+                    .pages
                     .iter()
-                    .filter_map(|group| {
-                        let mut group = group.clone();
-                        group.items = group
-                            .items
-                            .iter()
-                            .filter(|item| item.is_match(&query, cx))
-                            .cloned()
-                            .collect();
-                        if group.items.is_empty() {
-                            None
-                        } else {
-                            Some(group)
-                        }
+                    .filter_map(|page| {
+                        let current_page_ix = page_ix;
+                        page_ix += 1;
+                        Self::filtered_page(page, query, cx).map(|page| (current_page_ix, page))
                     })
-                    .collect();
-                let mut page = page.clone();
-                page.groups = filtered_groups;
-                if page.groups.is_empty() {
-                    None
-                } else {
-                    Some(page)
-                }
+                    .collect::<Vec<_>>();
+
+                (!pages.is_empty()).then(|| (section.title.clone(), pages))
             })
             .collect()
     }
@@ -145,96 +217,125 @@ impl Settings {
     fn render_active_page(
         &self,
         state: &Entity<SettingsState>,
-        pages: &Vec<SettingPage>,
+        pages: &[IndexedSettingPage],
         options: &RenderOptions,
         window: &mut Window,
         cx: &mut App,
     ) -> gpui::AnyElement {
         let selected_index = state.read(cx).selected_index;
 
-        for (ix, page) in pages.into_iter().enumerate() {
-            if selected_index.page_ix == ix {
+        for (page_ix, page) in pages {
+            if selected_index.page_ix == *page_ix {
                 return page
-                    .render(ix, state, &options, window, cx)
+                    .render(*page_ix, state, options, window, cx)
                     .into_any_element();
             }
         }
 
-        return div().into_any_element();
+        div().into_any_element()
+    }
+
+    fn sidebar_menu_item(
+        state: &Entity<SettingsState>,
+        selected_index: SelectIndex,
+        page_ix: usize,
+        page: &SettingPage,
+    ) -> SidebarMenuItem {
+        let is_page_active = selected_index.page_ix == page_ix && selected_index.group_ix.is_none();
+        SidebarMenuItem::new(page.title.clone())
+            .click_to_open(true)
+            .when_some(page.icon.clone(), |this, icon| this.icon(icon))
+            .default_open(page.default_open)
+            .active(is_page_active)
+            .on_click({
+                let state = state.clone();
+                move |_, _, cx| {
+                    state.update(cx, |state, cx| {
+                        state.selected_index = SelectIndex {
+                            page_ix,
+                            ..Default::default()
+                        };
+                        cx.notify();
+                    })
+                }
+            })
+            .when(page.groups.len() > 1, |this| {
+                this.children(
+                    page.groups
+                        .iter()
+                        .filter(|group| group.title.is_some())
+                        .enumerate()
+                        .map(|(group_ix, group)| {
+                            let is_active = selected_index.page_ix == page_ix
+                                && selected_index.group_ix == Some(group_ix);
+                            let title = group.title.clone().unwrap_or_default();
+
+                            SidebarMenuItem::new(title).active(is_active).on_click({
+                                let state = state.clone();
+                                move |_, _, cx| {
+                                    state.update(cx, |state, cx| {
+                                        state.selected_index = SelectIndex {
+                                            page_ix,
+                                            group_ix: Some(group_ix),
+                                        };
+                                        state.deferred_scroll_group_ix = Some(group_ix);
+                                        cx.notify();
+                                    })
+                                }
+                            })
+                        }),
+                )
+            })
     }
 
     fn render_sidebar(
         &self,
         state: &Entity<SettingsState>,
-        pages: &Vec<SettingPage>,
+        pages: &[IndexedSettingPage],
+        sections: &[FilteredSettingsSection],
         _: &mut Window,
         cx: &mut App,
-    ) -> impl IntoElement {
+    ) -> gpui::AnyElement {
         let selected_index = state.read(cx).selected_index;
         let search_input = state.read(cx).search_input.clone();
+        let header = || {
+            div()
+                .w_full()
+                .refine_style(&self.header_style)
+                .child(Input::new(&search_input).prefix(IconName::Search))
+        };
 
-        Sidebar::new("settings-sidebar")
-            .w(relative(1.))
-            .border_0()
-            .refine_style(&self.sidebar_style)
-            .collapsible(false)
-            .collapsed(false)
-            .header(
-                div()
-                    .w_full()
-                    .refine_style(&self.header_style)
-                    .child(Input::new(&search_input).prefix(IconName::Search)),
-            )
-            .child(
-                SidebarMenu::new().children(pages.iter().enumerate().map(|(page_ix, page)| {
-                    let is_page_active =
-                        selected_index.page_ix == page_ix && selected_index.group_ix.is_none();
-                    SidebarMenuItem::new(page.title.clone())
-                        .click_to_open(true)
-                        .when_some(page.icon.clone(), |this, icon| this.icon(icon))
-                        .default_open(page.default_open)
-                        .active(is_page_active)
-                        .on_click({
-                            let state = state.clone();
-                            move |_, _, cx| {
-                                state.update(cx, |state, cx| {
-                                    state.selected_index = SelectIndex {
-                                        page_ix,
-                                        ..Default::default()
-                                    };
-                                    cx.notify();
-                                })
-                            }
-                        })
-                        .when(page.groups.len() > 1, |this| {
-                            this.children(
-                                page.groups
-                                    .iter()
-                                    .filter(|g| g.title.is_some())
-                                    .enumerate()
-                                    .map(|(group_ix, group)| {
-                                        let is_active = selected_index.page_ix == page_ix
-                                            && selected_index.group_ix == Some(group_ix);
-                                        let title = group.title.clone().unwrap_or_default();
-
-                                        SidebarMenuItem::new(title).active(is_active).on_click({
-                                            let state = state.clone();
-                                            move |_, _, cx| {
-                                                state.update(cx, |state, cx| {
-                                                    state.selected_index = SelectIndex {
-                                                        page_ix,
-                                                        group_ix: Some(group_ix),
-                                                    };
-                                                    state.deferred_scroll_group_ix = Some(group_ix);
-                                                    cx.notify();
-                                                })
-                                            }
-                                        })
-                                    }),
-                            )
-                        })
-                })),
-            )
+        if sections.is_empty() {
+            Sidebar::new("settings-sidebar")
+                .w(relative(1.))
+                .border_0()
+                .refine_style(&self.sidebar_style)
+                .collapsible(false)
+                .collapsed(false)
+                .header(header())
+                .child(
+                    SidebarMenu::new().children(pages.iter().map(|(page_ix, page)| {
+                        Self::sidebar_menu_item(state, selected_index, *page_ix, page)
+                    })),
+                )
+                .into_any_element()
+        } else {
+            Sidebar::new("settings-sidebar")
+                .w(relative(1.))
+                .border_0()
+                .refine_style(&self.sidebar_style)
+                .collapsible(false)
+                .collapsed(false)
+                .header(header())
+                .children(sections.iter().map(|(title, pages)| {
+                    SidebarGroup::new(title.clone()).child(SidebarMenu::new().children(
+                        pages.iter().map(|(page_ix, page)| {
+                            Self::sidebar_menu_item(state, selected_index, *page_ix, page)
+                        }),
+                    ))
+                }))
+                .into_any_element()
+        }
     }
 }
 
@@ -378,14 +479,23 @@ impl RenderOnce for Settings {
         });
 
         let query = state.read(cx).search_input.read(cx).value();
-        let filtered_pages = self.filtered_pages(&query, cx);
+        let filtered_sections = self.filtered_sections(&query, cx);
+        let filtered_pages = if self.sections.is_empty() {
+            self.filtered_pages(&query, cx)
+                .into_iter()
+                .enumerate()
+                .collect::<Vec<_>>()
+        } else {
+            filtered_sections
+                .iter()
+                .flat_map(|(_, pages)| pages.iter().cloned())
+                .collect::<Vec<_>>()
+        };
         let options = RenderOptions::new()
             .with_size(self.size)
             .with_group_variant(self.group_variant);
         let sidebar_size_range = self.sidebar_size_range.clone();
-        let sidebar = self
-            .render_sidebar(&state, &filtered_pages, window, cx)
-            .into_any_element();
+        let sidebar = self.render_sidebar(&state, &filtered_pages, &filtered_sections, window, cx);
 
         h_resizable(self.id.clone())
             .child(
@@ -404,5 +514,55 @@ impl RenderOnce for Settings {
                     self.render_active_page(&state, &filtered_pages, &options, window, cx)
                 })),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::setting::SettingItem;
+    use gpui::TestAppContext;
+
+    fn page(title: &'static str, keyword: &'static str) -> SettingPage {
+        SettingPage::new(title).group(
+            SettingGroup::new().item(SettingItem::render(|_, _, _| div()).keywords([keyword])),
+        )
+    }
+
+    #[gpui::test]
+    fn section_search_preserves_global_page_indices(cx: &mut TestAppContext) {
+        let settings = Settings::new("settings")
+            .section(
+                SettingsSection::new("User")
+                    .page(page("Profile", "identity"))
+                    .page(page("Experience", "appearance")),
+            )
+            .section(
+                SettingsSection::new("Workspace")
+                    .page(page("General", "workspace"))
+                    .page(page("Models", "keychain")),
+            )
+            .section(SettingsSection::new("Other").page(page("Data", "keychain")));
+
+        let sections = cx.update(|cx| settings.filtered_sections("keychain", cx));
+
+        assert_eq!(sections.len(), 2);
+        assert_eq!(sections[0].0, "Workspace");
+        assert_eq!(sections[1].0, "Other");
+        assert_eq!(sections[0].1[0].0, 3);
+        assert_eq!(sections[1].1[0].0, 4);
+    }
+
+    #[test]
+    fn section_builder_keeps_pages_in_insertion_order() {
+        let section = SettingsSection::new("Workspace")
+            .page(page("General", "workspace"))
+            .pages([page("Models", "keychain"), page("API keys", "credentials")]);
+
+        assert_eq!(section.title, "Workspace");
+        assert_eq!(section.pages.len(), 3);
+        assert_eq!(section.pages[0].title, "General");
+        assert_eq!(section.pages[1].title, "Models");
+        assert_eq!(section.pages[2].title, "API keys");
     }
 }
