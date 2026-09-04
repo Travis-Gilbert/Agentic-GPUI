@@ -4,3 +4,4 @@
 0004-settings-sections.patch
 0005-theorem-zed-source.patch
 0006-rust-1.90-zed-pin.patch
+0007-rust-1.90-utility-pin.patch
