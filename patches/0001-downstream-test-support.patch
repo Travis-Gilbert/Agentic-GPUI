@@ -1,0 +1,77 @@
+From cd900db6706c06efb83d073d2770288156c5fa69 Mon Sep 17 00:00:00 2001
+From: Travis Gilbert <1travisgilbert@gmail.com>
+Date: Thu, 3 Sep 2026 21:36:45 -0400
+Subject: [PATCH] fix(test): preserve downstream GPUI fixture support
+
+---
+ crates/component/Cargo.toml                | 4 ++++
+ crates/component/src/input/content_type.rs | 6 ++++--
+ crates/component/src/native_menu/macos.rs  | 3 +++
+ crates/component/src/root.rs               | 2 +-
+ 4 files changed, 12 insertions(+), 3 deletions(-)
+
+diff --git a/crates/component/Cargo.toml b/crates/component/Cargo.toml
+index b1afc8c1..709ea9a3 100644
+--- a/crates/component/Cargo.toml
++++ b/crates/component/Cargo.toml
+@@ -17,6 +17,10 @@ doctest = false
+ [features]
+ decimal = ["dep:rust_decimal"]
+ inspector = ["gpui_macros/inspector", "gpui/inspector", "gpui-base/inspector"]
++# A build whose windows are GPUI test windows rather than platform windows.
++# Enable it from `[dev-dependencies]`, beside the `gpui/test-support` a
++# `#[gpui::test]` already needs; a shipping build never turns it on.
++test-support = ["gpui/test-support"]
+ tree-sitter = ["dep:tree-sitter", "dep:tree-sitter-json"]
+ 
+ # For syntax highlighting in Markdown and CodeEditor.
+diff --git a/crates/component/src/input/content_type.rs b/crates/component/src/input/content_type.rs
+index 5dcf011e..1a1abce7 100644
+--- a/crates/component/src/input/content_type.rs
++++ b/crates/component/src/input/content_type.rs
+@@ -163,13 +163,15 @@ pub(super) fn sync_native_content_type(
+         return;
+     }
+ 
+-    #[cfg(all(target_os = "macos", not(test)))]
++    // `test-support` is a build whose windows are GPUI test windows; asking
++    // one for its `NSView` panics. See `Root::new`.
++    #[cfg(all(target_os = "macos", not(test), not(feature = "test-support")))]
+     gpui_base::input::set_text_content_type(
+         window,
+         content_type.and_then(InputContentType::ns_text_content_type),
+     );
+ 
+-    #[cfg(any(not(target_os = "macos"), test))]
++    #[cfg(any(not(target_os = "macos"), test, feature = "test-support"))]
+     let _ = (window, content_type);
+ }
+ 
+diff --git a/crates/component/src/native_menu/macos.rs b/crates/component/src/native_menu/macos.rs
+index 8723aea3..9284fd3e 100644
+--- a/crates/component/src/native_menu/macos.rs
++++ b/crates/component/src/native_menu/macos.rs
+@@ -202,6 +202,9 @@ fn ns_image_for_icon(
+ 
+ /// Extract the AppKit `NSView` pointer from the window's raw handle.
+ fn ns_view_ptr(window: &Window) -> Option<usize> {
++    if cfg!(feature = "test-support") {
++        return None;
++    }
+     let handle = HasWindowHandle::window_handle(window).ok()?;
+     let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+         return None;
+diff --git a/crates/component/src/root.rs b/crates/component/src/root.rs
+index a6c9021c..e0600cd1 100644
+--- a/crates/component/src/root.rs
++++ b/crates/component/src/root.rs
+@@ -96,7 +96,7 @@ impl Root {
+ 
+     /// Create a new Root view.
+     pub fn new(view: impl Into<AnyView>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+-        #[cfg(all(target_os = "macos", not(test)))]
++        #[cfg(all(target_os = "macos", not(test), not(feature = "test-support")))]
+         gpui_base::install_window_hit_test_forwarder(window);
+ 
+         Self {
+
