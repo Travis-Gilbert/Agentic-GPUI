@@ -82,12 +82,19 @@ impl Ident {
     /// already fits alone -- so `thread.turn.m2` is still `thread.turn.m2` in
     /// a receipt -- and encodes the rest. The separators survive, so a path
     /// stays a path and the whole mapping stays injective.
+    ///
+    /// Every piece goes through [`segment`], including the ones the grammar
+    /// would have admitted whole. There used to be a fast path here that
+    /// returned an already-valid id untouched, and it broke the injectivity
+    /// this method advertises: the grammar admits `_`, [`segment`] spends it
+    /// as the escape tag, and so `A` -- escaped to `hex_41` -- and a raw
+    /// `hex_41` arrived at one identity. Two nodes under one name is the
+    /// defect this encoder exists to prevent. The cost of dropping the fast
+    /// path is that a segment carrying `_` is now escaped rather than carried
+    /// through, which is the price of the tag being a byte the readable
+    /// branch may not spend.
     pub fn encoded(id: impl AsRef<str>) -> Self {
-        let raw = id.as_ref();
-        if Self::is_valid(raw) {
-            return Self(Arc::from(raw));
-        }
-        let encoded = raw.split('.').map(|piece| segment(piece)).collect::<Vec<_>>();
+        let encoded = id.as_ref().split('.').map(segment).collect::<Vec<_>>();
         Self(Arc::from(encoded.join(".").as_str()))
     }
 
@@ -334,6 +341,24 @@ mod tests {
             ("part:1", "hex_706172743a31"),
         ] {
             assert_eq!(Ident::encoded(raw).as_str(), encoded, "{raw}");
+        }
+    }
+
+    /// The whole-id encoder is injective too, not just [`segment`].
+    ///
+    /// The defect this holds shut: `encoded` returned an already-valid id
+    /// untouched, and the grammar admits the `_` that [`segment`] spends as
+    /// its escape tag. `A` escapes to `hex_41`, a raw `hex_41` was carried
+    /// through, and the two arrived at one identity -- a duplicate node and an
+    /// ambiguous action lookup for every caller of the public wire-id encoder.
+    #[test]
+    fn an_id_shaped_like_an_escape_is_not_the_id_it_would_decode_to() {
+        for (left, right) in [("A", "hex_41"), ("a.A", "a.hex_41"), ("x_y", "x-y")] {
+            assert_ne!(
+                Ident::encoded(left),
+                Ident::encoded(right),
+                "{left:?} and {right:?} are two ids"
+            );
         }
     }
 
