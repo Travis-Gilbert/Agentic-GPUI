@@ -28,7 +28,7 @@ impl TextSelectionScopeId {
     pub fn new() -> Self {
         static NEXT_SCOPE_ID: AtomicU64 = AtomicU64::new(1);
         let value = NEXT_SCOPE_ID
-            .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
                 value.checked_add(1)
             })
             .expect("text selection scope identifiers exhausted");
