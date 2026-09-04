@@ -169,6 +169,8 @@ impl RenderOnce for Breadcrumb {
         }
 
         h_flex()
+            .id("breadcrumb")
+            .role(Role::List)
             .gap_1p5()
             .text_sm()
             .text_color(cx.theme().muted_foreground)

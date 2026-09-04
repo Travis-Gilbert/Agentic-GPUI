@@ -2,8 +2,9 @@ use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
     Anchor, AnyElement, App, Background, Bounds, Edges, ElementId, InteractiveElement, IntoElement,
-    ParentElement, Pixels, RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement as _,
-    StyleRefinement, Styled, Window, div, prelude::FluentBuilder as _, px,
+    ParentElement, Pixels, RenderOnce, Role, ScrollHandle, SharedString,
+    StatefulInteractiveElement as _, StyleRefinement, Styled, Window, div,
+    prelude::FluentBuilder as _, px,
 };
 use gpui_base::spring;
 use rust_i18n::t;
@@ -535,6 +536,7 @@ impl RenderOnce for TabBar {
                     .child(
                         h_flex()
                             .id("tabs-inner")
+                            .role(Role::TabList)
                             // Fill the bar so tabs can grow into the free space;
                             // as a scroll container it still shrinks below its content.
                             .flex_1()
@@ -556,6 +558,7 @@ impl RenderOnce for TabBar {
                     Button::new("more")
                         .xsmall()
                         .ghost()
+                        .accessibility_label(t!("Dock.MoreTabs"))
                         .dropdown_caret(true)
                         .dropdown_menu(move |mut this, _, _| {
                             this = this.scrollable(true);
