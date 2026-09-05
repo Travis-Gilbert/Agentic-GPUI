@@ -53,8 +53,9 @@ Theorem DATA conversion does not add a private input fork.
 
 Validation of this addition: locked Wasm `gpui-base --lib` check passes. The
 native `platform_input_configuration_preserves_default_and_forwards_changes`
-regression covers default, Search builder, and changed Send/assistance settings;
-its execution is pending the coordinated native validation slot. This branch
+regression covers default, Search builder, and changed Send/assistance settings.
+It passed in the Linux workspace test job at source head `1636a905`; the
+subsequent spelling configuration leaves that source unchanged. This branch
 remains a draft requiring review before merge.
 
 The spelling follow-up recognizes only complete Git `index` hash lines and
