@@ -79,3 +79,7 @@ Two existing runnable component doctests now import their actual owning crates
 (`gpui_component` and `gpui`) instead of the undeclared facade `gpui_kit`.
 The original examples and assertions remain executable. This draft still
 requires review before merge.
+
+The textarea regression uses the real Kit initializer before mounting the input.
+Its test-only unused trait import, rejected by CI's warnings-as-errors gate, is
+removed. No runtime behavior or assertions change in this follow-up.
