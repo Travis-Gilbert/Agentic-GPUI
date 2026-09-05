@@ -88,3 +88,9 @@ The native textarea test reached all text/selection/IME assertions and exposed
 stale styles after `set_value`. The replacement hook clears only the new
 textarea presentation ranges; its default is a no-op, preserving existing
 editor behavior. The same regression and all its assertions are retained.
+
+The selected-replacement pin follows Zed's actual browser IME repair. It changes
+only the seven GPUI manifest revisions and 25 lock source revisions; registry
+packages remain unchanged. The replacement diff retains matching text inside
+the selected range and fresh editor anchors, with UTF-16 boundary coverage.
+The Wikia browser oracle remains the consumer's actual DOM/document gate.
