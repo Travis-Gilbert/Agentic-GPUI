@@ -1,0 +1,205 @@
+diff --git a/crates/base/src/input/base/kind.rs b/crates/base/src/input/base/kind.rs
+index 26c28d53..393b49bd 100644
+--- a/crates/base/src/input/base/kind.rs
++++ b/crates/base/src/input/base/kind.rs
+@@ -313,12 +313,6 @@ impl InputModeKind for InputMode {
+     /// them would cost more in dispatch than it saves.
+     type Extras = ();
+ }
+-impl InputModeKind for TextareaMode {
+-    const MULTI_LINE: bool = true;
+-
+-    /// Ordinary multi-line text needs nothing beyond the shared engine.
+-    type Extras = ();
+-}
+ // `EditorMode`'s implementation lives with the editor code, next to the
+ // language features it dispatches to.
+ 
+diff --git a/crates/base/src/input/editor/decorations.rs b/crates/base/src/input/editor/decorations.rs
+index dc4b393c..231546fc 100644
+--- a/crates/base/src/input/editor/decorations.rs
++++ b/crates/base/src/input/editor/decorations.rs
+@@ -158,7 +158,7 @@ impl DecorationCollections {
+     }
+ }
+ 
+-fn adjust_range_for_edit(
++pub(crate) fn adjust_range_for_edit(
+     range: &Range<usize>,
+     edited_range: &Range<usize>,
+     inserted_len: usize,
+@@ -204,7 +204,7 @@ fn adjust_range_for_edit(
+     start..end
+ }
+ 
+-fn normalize(text: &Rope, decorations: Vec<TextDecoration>) -> Vec<TextDecoration> {
++pub(crate) fn normalize(text: &Rope, decorations: Vec<TextDecoration>) -> Vec<TextDecoration> {
+     decorations
+         .into_iter()
+         .filter_map(|decoration| {
+diff --git a/crates/base/src/input/editor/mod.rs b/crates/base/src/input/editor/mod.rs
+index d4e16e3d..ce32baae 100644
+--- a/crates/base/src/input/editor/mod.rs
++++ b/crates/base/src/input/editor/mod.rs
+@@ -5,7 +5,7 @@ use super::{EditorMode, InputBaseState, InputModeKind};
+ /// State for source-code editing.
+ ///
+ /// This is the shared editing engine in its code-editor kind. Languages, line
+-/// numbers, folding, indent guides, diagnostics, decorations, and the LSP
++/// numbers, folding, indent guides, diagnostics, and the LSP
+ /// providers exist on this kind only, so an ordinary input or textarea never
+ /// exposes them.
+ pub type EditorState = InputBaseState<EditorMode>;
+diff --git a/crates/base/src/input/mod.rs b/crates/base/src/input/mod.rs
+index e8d9c2b2..0a4ddeb2 100644
+--- a/crates/base/src/input/mod.rs
++++ b/crates/base/src/input/mod.rs
+@@ -96,4 +96,4 @@ pub use rope_ext::{InputEdit, Point, RopeExt, RopeLines};
+ pub use ropey::Rope;
+ pub use search::{SearchMatcher, SearchSession};
+ pub use state::*;
+-pub use textarea::{Textarea, TextareaState};
++pub use textarea::{Textarea, TextareaExtras, TextareaState};
+diff --git a/crates/base/src/input/textarea/mod.rs b/crates/base/src/input/textarea/mod.rs
+index 341d108e..57e32e58 100644
+--- a/crates/base/src/input/textarea/mod.rs
++++ b/crates/base/src/input/textarea/mod.rs
+@@ -1,6 +1,6 @@
+-use gpui::{App, Entity, IntoElement, RenderOnce, Window};
++use gpui::{App, Context, Entity, IntoElement, RenderOnce, Window};
+ 
+-use super::{InputBaseState, TextareaMode};
++use super::{InputBaseState, InputExtras, InputModeKind, TextDecoration, TextareaMode};
+ 
+ /// State for editing ordinary multi-line text.
+ ///
+@@ -28,3 +28,101 @@ impl RenderOnce for Textarea {
+         self.state
+     }
+ }
++
++/// Presentation-only ranges for ordinary multiline prose. Empty by default;
++/// this does not add syntax parsing, diagnostics, folding, or an LSP.
++#[derive(Default)]
++pub struct TextareaExtras {
++    decorations: Vec<TextDecoration>,
++}
++
++impl InputExtras for TextareaExtras {
++    fn decoration_layers(&self) -> Vec<&[TextDecoration]> {
++        vec![&self.decorations]
++    }
++}
++
++impl InputModeKind for TextareaMode {
++    const MULTI_LINE: bool = true;
++    type Extras = TextareaExtras;
++
++    fn reset_annotations(state: &mut InputBaseState<Self>) {
++        state.extras.decorations.clear();
++    }
++
++    fn adjust_annotations(
++        state: &mut InputBaseState<Self>,
++        range: &std::ops::Range<usize>,
++        new_len: usize,
++    ) {
++        state.extras.decorations.retain_mut(|decoration| {
++            decoration.range =
++                super::decorations::adjust_range_for_edit(&decoration.range, range, new_len);
++            !decoration.range.is_empty()
++        });
++    }
++}
++
++impl TextareaState {
++    /// Replace presentation styles without replacing text, selection, or IME
++    /// marked text. UTF-8 ranges use the same clipping and edit adjustment as
++    /// editor decorations. Applications retain authority over the styles.
++    pub fn set_text_decorations(
++        &mut self,
++        decorations: Vec<TextDecoration>,
++        cx: &mut Context<Self>,
++    ) {
++        let decorations = super::decorations::normalize(&self.text, decorations);
++        if self.extras.decorations != decorations {
++            self.extras.decorations = decorations;
++            cx.notify();
++        }
++    }
++
++    /// The normalized presentation styles currently painted by this textarea.
++    pub fn text_decorations(&self) -> &[TextDecoration] {
++        &self.extras.decorations
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use gpui::{AppContext as _, EntityInputHandler as _, HighlightStyle, TestAppContext};
++
++    #[gpui::test]
++    fn textarea_decorations_preserve_text_selection_and_composition(cx: &mut TestAppContext) {
++        let window = cx.add_window(|window, cx| TextareaState::new(window, cx));
++        window
++            .update(cx, |state, window, cx| {
++                assert!(state.text_decorations().is_empty());
++                assert!(!state.is_code_editor());
++                state.set_value("héllo world", window, cx);
++                state.set_selected_range(1..4, cx);
++                let value = state.value();
++                let selection = state.selected_range();
++                let bold = HighlightStyle {
++                    font_weight: Some(gpui::FontWeight::BOLD),
++                    ..Default::default()
++                };
++                state.set_text_decorations(vec![TextDecoration::new(2..4, bold)], cx);
++                assert_eq!(state.value(), value);
++                assert_eq!(state.selected_range(), selection);
++                assert_eq!(state.text_decorations(), &[TextDecoration::new(1..4, bold)]);
++                state.set_selected_range(0..0, cx);
++                state.replace_and_mark_text_in_range(None, "界", Some(1..1), window, cx);
++                let marked = state.marked_text_range(window, cx);
++                let value = state.value();
++                let selection = state.selected_range();
++                assert!(marked.is_some());
++                assert_eq!(state.text_decorations()[0].range, 4..7);
++                state.set_text_decorations(vec![TextDecoration::new(4..7, bold)], cx);
++                assert_eq!(state.value(), value);
++                assert_eq!(state.selected_range(), selection);
++                assert_eq!(state.marked_text_range(window, cx), marked);
++                state.set_value("replacement", window, cx);
++                assert!(state.text_decorations().is_empty());
++            })
++            .expect("textarea remains mounted");
++    }
++}
+diff --git a/crates/component/src/status_bar.rs b/crates/component/src/status_bar.rs
+index 44dff594..1cfe3306 100644
+--- a/crates/component/src/status_bar.rs
++++ b/crates/component/src/status_bar.rs
+@@ -23,7 +23,7 @@ use crate::{ActiveTheme, StyledExt, h_flex};
+ /// otherwise (only `right`, or neither — like a plain container).
+ ///
+ /// ```
+-/// use gpui_kit::component::status_bar::StatusBar;
++/// use gpui_component::status_bar::StatusBar;
+ ///
+ /// let _ = StatusBar::new().left("Ln 1, Col 1").right("UTF-8");
+ /// ```
+diff --git a/crates/component/src/title_bar.rs b/crates/component/src/title_bar.rs
+index 45b091bb..32254a47 100644
+--- a/crates/component/src/title_bar.rs
++++ b/crates/component/src/title_bar.rs
+@@ -70,8 +70,8 @@ impl TitleBar {
+     /// [`crate::TitleBar`], so the title bar owns dragging and double clicking itself:
+     ///
+     /// ```no_run
+-    /// # use gpui_kit::WindowOptions;
+-    /// # use gpui_kit::component::TitleBar;
++    /// # use gpui::WindowOptions;
++    /// # use gpui_component::TitleBar;
+     /// let options = WindowOptions {
+     ///     window_min_size: None,
+     ///     ..TitleBar::window_options()

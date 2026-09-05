@@ -66,3 +66,16 @@ The final spelling follow-up recognizes the exact capture package name even
 inside its escaped regex spelling in patch 0016. The exact CI typos-cli 1.50.1
 reproduces that failure before this change and scans the entire final checkout
 without errors afterward. Runtime and dependency source remain unchanged.
+
+The textarea presentation patch adds `set_text_decorations` and
+`text_decorations` to the ordinary multiline input. It reuses the existing
+normalized UTF-8 range and edit adjustment rules, paints through the existing
+decoration renderer, and leaves syntax parsing/LSP confined to the code editor.
+Its default presentation remains empty. A native regression retains text,
+selection, and active IME composition while styles change; native execution
+is pending CI for this source. The locked Wasm library check passes.
+
+Two existing runnable component doctests now import their actual owning crates
+(`gpui_component` and `gpui`) instead of the undeclared facade `gpui_kit`.
+The original examples and assertions remain executable. This draft still
+requires review before merge.
