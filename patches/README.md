@@ -122,3 +122,13 @@ semantic activation, both keyboard keys, and disabled/read-only inertness.
 The original activation, naming and Store source assertions also pass without
 new exemptions. Locked consumer verification follows adoption of this exact
 source revision; staged-source proof is not a browser deployment result.
+
+The text-link decoration patch exposes each real parsed and measured line
+fragment through `TextView::link_with`, preserving the original click handler
+and source parser. `link_underline` selects solid, dotted, or absent underline
+without reparsing text in the consumer. The default remains solid. Fragment
+focus survives the selection layer's deferred mouse-down callback without
+overriding focus chosen by navigation. The actual AGPUI consumer tests cover
+wrapped pointer targets, semantic activation, Enter and Space, and drag
+selection with the real TextSelectionLayer. Native interaction passed; browser
+link and deployed application verification remain consumer gates.

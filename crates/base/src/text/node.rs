@@ -19,8 +19,8 @@ use crate::{
     GlobalState, ScrollableMask, Scrollbar, StyledExt, h_flex,
     scrollable_mask::horizontal_scroll_area,
     text::{
-        CodeBlockActionsFn, CodeBlockHighlighterFn, LinkClickHandlerFn, MarkdownExtensions,
-        MarkdownNode, TableActionsFn,
+        CodeBlockActionsFn, CodeBlockHighlighterFn, LinkClickHandlerFn, LinkFragmentDecoratorFn,
+        LinkUnderlineFn, MarkdownExtensions, MarkdownNode, TableActionsFn,
         document::{NodeRenderOptions, PrevBlock, flow_position},
         inline::{
             Inline, InlineHighlight, InlineState, combine_highlights, fade_highlights,
@@ -2329,6 +2329,8 @@ pub(crate) struct NodeContext {
     pub(crate) code_block_highlighter: Option<Arc<CodeBlockHighlighterFn>>,
     pub(crate) table_actions: Option<Arc<TableActionsFn>>,
     pub(crate) image_source: Option<Arc<super::text_view::ImageSourceFn>>,
+    pub(crate) link_underline: Option<Arc<LinkUnderlineFn>>,
+    pub(crate) link_fragment_decorator: Option<Arc<LinkFragmentDecoratorFn>>,
     pub(crate) link_click_handler: Option<Arc<LinkClickHandlerFn>>,
     pub(crate) markdown_extensions: Arc<MarkdownExtensions>,
     /// This frame's streamed fade-in, when any text is still fading.
@@ -2471,6 +2473,11 @@ impl Paragraph {
                 self.inline_flow_items(fade_key, fades, backgrounds, node_cx, cx),
                 node_cx.link_click_handler.clone(),
             )
+            .link_with(
+                node_cx.link_fragment_decorator.clone(),
+                node_cx.offset + span.unwrap_or_default().start,
+            )
+            .link_underline(node_cx.link_underline.clone())
             .into_any_element();
         }
 
@@ -2541,6 +2548,11 @@ impl Paragraph {
                             consumed + text.len(),
                         ))
                         .reveal(node_cx.reveal_at(fade_key, consumed, consumed + text.len()))
+                        .link_with(
+                            node_cx.link_fragment_decorator.clone(),
+                            node_cx.offset + span.unwrap_or_default().start,
+                        )
+                        .link_underline(node_cx.link_underline.clone())
                         .into_any_element(),
                     );
                 }
@@ -2631,6 +2643,11 @@ impl Paragraph {
                 )
                 .range_backgrounds(slice_backgrounds(backgrounds, consumed, text_end))
                 .reveal(node_cx.reveal_at(fade_key, consumed, text_end))
+                .link_with(
+                    node_cx.link_fragment_decorator.clone(),
+                    node_cx.offset + span.unwrap_or_default().start,
+                )
+                .link_underline(node_cx.link_underline.clone())
                 .into_any_element(),
             );
         }
