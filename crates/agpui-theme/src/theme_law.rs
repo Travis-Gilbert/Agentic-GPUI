@@ -1069,7 +1069,6 @@ fn lab_to_xyz(lab: [f64; 3]) -> [f64; 3] {
 fn xyz_to_lab(xyz: [f64; 3]) -> [f64; 3] {
     const WHITE: [f64; 3] = [0.3457 / 0.3585, 1.0, 0.2958 / 0.3585];
     let f = |value: f64| {
-        let value = value;
         if value > 0.008_856_451_679_035_631 {
             value.cbrt()
         } else {
