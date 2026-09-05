@@ -1,73 +1,76 @@
 use std::collections::BTreeMap;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::{Rgba, TokenSet};
 
-pub const SEMANTIC_MAPPING: [(&str, &str); 17] = [
-    ("background", "surface.page"),
-    ("foreground", "color.ink.primary"),
-    ("surface", "surface.raised"),
-    ("surface_foreground", "color.ink.primary"),
-    ("primary", "color.human.500"),
-    ("primary_foreground", "color.ink.inverse"),
-    ("secondary", "color.cream.100"),
-    ("secondary_foreground", "color.ink.primary"),
-    ("muted", "color.cream.200"),
-    ("muted_foreground", "color.ink.faint"),
-    ("accent", "color.cream.100"),
-    ("accent_foreground", "color.ink.primary"),
-    ("destructive", "color.status.error"),
-    ("destructive_foreground", "color.ink.inverse"),
-    ("border", "surface.border"),
-    ("input", "color.cream.300"),
-    ("ring", "surface.focus"),
+pub(crate) const SEMANTIC_MAPPING: [(&str, &str); 17] = [
+    ("background", "theme.bgBase"),
+    ("foreground", "theme.labelTitle"),
+    ("surface", "theme.bgBase"),
+    ("surface_foreground", "theme.labelBase"),
+    ("primary", "theme.controlPrimary"),
+    ("primary_foreground", "theme.controlPrimaryLabel"),
+    ("secondary", "theme.controlSecondary"),
+    ("secondary_foreground", "theme.controlSecondaryLabel"),
+    ("muted", "theme.bgShade"),
+    ("muted_foreground", "theme.labelFaint"),
+    ("accent", "theme.bgSelected"),
+    ("accent_foreground", "theme.labelTitle"),
+    ("destructive", "theme.errorBase"),
+    ("destructive_foreground", "theme.errorForeground"),
+    ("border", "theme.bgBorder"),
+    ("input", "theme.bgBorder"),
+    ("ring", "theme.focus"),
 ];
 
 const LEGACY_MAPPING: [(&str, &str); 43] = [
-    ("background", "surface.page"),
-    ("foreground", "color.ink.primary"),
-    ("border", "surface.border"),
-    ("input.border", "surface.border"),
-    ("ring", "surface.focus"),
-    ("primary.background", "color.human.500"),
-    ("primary.foreground", "color.ink.inverse"),
-    ("primary.hover.background", "color.human.600"),
-    ("primary.active.background", "color.human.700"),
-    ("secondary.background", "color.cream.100"),
-    ("secondary.foreground", "color.ink.primary"),
-    ("secondary.hover.background", "color.cream.200"),
-    ("secondary.active.background", "color.cream.300"),
-    ("muted.background", "color.cream.200"),
-    ("muted.foreground", "color.ink.faint"),
-    ("accent.background", "color.cream.100"),
-    ("accent.foreground", "color.ink.primary"),
-    ("danger.background", "color.status.error"),
-    ("danger.foreground", "color.ink.inverse"),
-    ("success.background", "color.status.success"),
-    ("warning.background", "color.status.warning"),
-    ("sidebar.background", "color.cream.100"),
-    ("sidebar.foreground", "color.ink.primary"),
-    ("sidebar.border", "color.cream.300"),
-    ("sidebar.accent.background", "color.cream.200"),
-    ("sidebar.primary.background", "color.human.500"),
-    ("title_bar.background", "color.cream.50"),
-    ("title_bar.border", "color.cream.300"),
-    ("status_bar.background", "color.cream.50"),
-    ("status_bar.border", "color.cream.300"),
-    ("tab_bar.background", "color.cream.100"),
-    ("tab.foreground", "color.ink.muted"),
-    ("tab.active.background", "color.cream.25"),
-    ("tab.active.foreground", "color.ink.primary"),
-    ("list.background", "color.cream.25"),
-    ("list.hover.background", "color.cream.100"),
-    ("table.background", "surface.raised"),
-    ("popover.background", "surface.raised"),
-    ("popover.foreground", "color.ink.primary"),
-    ("caret", "color.human.500"),
-    ("selection.background", "color.human.200"),
-    ("link", "color.agent.600"),
-    ("window.border", "color.cream.400"),
+    ("background", "theme.bgBase"),
+    ("foreground", "theme.labelTitle"),
+    ("border", "theme.bgBorder"),
+    ("input.border", "theme.bgBorder"),
+    ("ring", "theme.focus"),
+    ("primary.background", "theme.controlPrimary"),
+    ("primary.foreground", "theme.controlPrimaryLabel"),
+    ("primary.hover.background", "theme.controlPrimaryHover"),
+    ("primary.active.background", "theme.controlPrimaryHover"),
+    ("secondary.background", "theme.controlSecondary"),
+    ("secondary.foreground", "theme.controlSecondaryLabel"),
+    ("secondary.hover.background", "theme.controlSecondaryHover"),
+    (
+        "secondary.active.background",
+        "theme.controlSecondarySelected",
+    ),
+    ("muted.background", "theme.bgShade"),
+    ("muted.foreground", "theme.labelFaint"),
+    ("accent.background", "theme.bgSelected"),
+    ("accent.foreground", "theme.labelTitle"),
+    ("danger.background", "theme.errorBase"),
+    ("danger.foreground", "theme.errorForeground"),
+    ("success.background", "theme.successBase"),
+    ("warning.background", "theme.warningBase"),
+    ("sidebar.background", "theme.bgSub"),
+    ("sidebar.foreground", "theme.labelBase"),
+    ("sidebar.border", "theme.bgBorderFaint"),
+    ("sidebar.accent.background", "theme.bgSelected"),
+    ("sidebar.primary.background", "theme.controlPrimary"),
+    ("title_bar.background", "theme.bgBase"),
+    ("title_bar.border", "theme.bgBorderFaint"),
+    ("status_bar.background", "theme.bgSub"),
+    ("status_bar.border", "theme.bgBorderFaint"),
+    ("tab_bar.background", "theme.bgSub"),
+    ("tab.foreground", "theme.labelMuted"),
+    ("tab.active.background", "theme.chromeTabBgActive"),
+    ("tab.active.foreground", "theme.labelTitle"),
+    ("list.background", "theme.bgBase"),
+    ("list.hover.background", "theme.bgBaseHover"),
+    ("table.background", "theme.bgBase"),
+    ("popover.background", "theme.bgBase"),
+    ("popover.foreground", "theme.labelTitle"),
+    ("caret", "theme.controlPrimary"),
+    ("selection.background", "theme.bgSelected"),
+    ("link", "theme.labelLink"),
+    ("window.border", "theme.bgBorderStrong"),
 ];
 
 impl TokenSet {
@@ -88,6 +91,11 @@ impl TokenSet {
 
     #[must_use]
     pub fn emit_gpui_semantic_config(&self) -> String {
+        let shadow_channel = if self.derived_theme().is_light {
+            0.0
+        } else {
+            1.0
+        };
         let colors: BTreeMap<_, _> = self
             .semantic_colors()
             .into_iter()
@@ -108,7 +116,17 @@ impl TokenSet {
                     "xl": { "size": 22, "line_height": 28 },
                     "mono_md": { "size": 13, "line_height": 18 }
                 },
-                "shadow": {}
+                "shadow": {
+                    "sm": [shadow(0.0, 1.0, 1.0, 0.0, shadow_channel, 0.06)],
+                    "md": [
+                        shadow(0.0, 3.0, 4.0, -1.0, shadow_channel, 0.08),
+                        shadow(0.0, 1.0, 1.0, 0.0, shadow_channel, 0.06)
+                    ],
+                    "lg": [
+                        shadow(0.0, 9.0, 24.0, -3.0, shadow_channel, 0.10),
+                        shadow(0.0, 3.0, 4.0, -2.0, shadow_channel, 0.08)
+                    ]
+                }
             }
         });
         pretty_json(&config)
@@ -127,10 +145,15 @@ impl TokenSet {
                 )
             })
             .collect();
+        let mode = if self.derived_theme().is_light {
+            "light"
+        } else {
+            "dark"
+        };
         let theme = json!({
             "is_default": true,
             "name": "Theorem",
-            "mode": "light",
+            "mode": mode,
             "colors": colors,
             "font.family": first_font_family(self, "typography.font.human"),
             "font.size": 13,
@@ -142,6 +165,18 @@ impl TokenSet {
         });
         pretty_json(&json!({ "name": "Theorem", "themes": [theme] }))
     }
+}
+
+fn shadow(x: f32, y: f32, blur: f32, spread: f32, channel: f32, alpha: f32) -> Value {
+    let channel = if channel > 0.5 { 255 } else { 0 };
+    let alpha = (alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
+    json!({
+        "color": format!("#{channel:02X}{channel:02X}{channel:02X}{alpha:02X}"),
+        "offset": { "x": x, "y": y },
+        "blur_radius": blur,
+        "spread_radius": spread,
+        "inset": false
+    })
 }
 
 fn pretty_json(value: &Value) -> String {

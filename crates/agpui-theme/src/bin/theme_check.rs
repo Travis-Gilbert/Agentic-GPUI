@@ -1,84 +1,144 @@
-//! Check a DTCG token document against the theme law.
-//!
-//!   theme_check <tokens.json>
-//!
-//! The document is an argument rather than an embedded asset, because the law
-//! lives in AGPUI and the documents live in the products that own them. This
-//! is what SPEC-AGPUI-HOME-1.0 H7 means by the check still running on
-//! generated roles from the Theorem tree: same binary, product's file.
+//! Build gate for generated theme invariants and shell metric authority.
 
-use std::path::PathBuf;
-use std::process::ExitCode;
+use std::{fs, path::PathBuf, process::ExitCode};
 
-use agpui_theme::{TokenSet, PROSE_CAPTURES};
+use theorem_design_core::{apca_contrast, CieLch, ThemeInput};
+
+const MIN_TEXT_APCA: f32 = 38.0;
 
 fn main() -> ExitCode {
-    let Some(path) = std::env::args_os().nth(1).map(PathBuf::from) else {
-        eprintln!("usage: theme_check <tokens.json>");
-        return ExitCode::FAILURE;
-    };
-
-    let source = match std::fs::read_to_string(&path) {
-        Ok(source) => source,
-        Err(error) => {
-            eprintln!("cannot read {}: {error}", path.display());
-            return ExitCode::FAILURE;
-        }
-    };
-
-    // Parsing is most of the check. `from_dtcg_str` refuses an authored
-    // neutral hex, a dangling alias and a missing law decision, so a document
-    // that parses has already cleared those three.
-    let tokens = match TokenSet::from_dtcg_str(&source) {
-        Ok(tokens) => tokens,
-        Err(error) => {
-            eprintln!("{}: {error}", path.display());
-            return ExitCode::FAILURE;
-        }
-    };
-
     let mut failures = Vec::new();
-    let law = tokens.neutral_law();
+    check_apca(&mut failures);
+    check_neutral_chroma(&mut failures);
+    check_contrast_sensitivity(&mut failures);
+    check_hue_bands(&mut failures);
+    check_shell_metrics(&mut failures);
 
-    for path in [
-        "color.cream.25",
-        "color.cream.50",
-        "color.cream.100",
-        "color.cream.200",
-        "color.cream.300",
-        "color.cream.400",
-        "color.cream.700",
-        "color.cream.900",
-        "color.ink.primary",
-        "color.ink.muted",
-        "color.ink.faint",
+    if failures.is_empty() {
+        println!("theme-check: generated roles and shell metrics passed");
+        ExitCode::SUCCESS
+    } else {
+        for failure in failures {
+            eprintln!("theme-check: {failure}");
+        }
+        ExitCode::FAILURE
+    }
+}
+
+fn check_apca(failures: &mut Vec<String>) {
+    let theme = ThemeInput::theorem_default().derive();
+    for (foreground, background) in [
+        ("labelTitle", "bgBase"),
+        ("labelBase", "bgBase"),
+        ("errorForeground", "errorBase"),
     ] {
-        let Some(sample) = tokens.neutral_sample(path) else {
-            failures.push(format!("{path}: not generated"));
-            continue;
-        };
-        let relative = sample.chroma / sample.lightness;
-        if relative > law.max_relative_chroma + 1e-7 {
+        let contrast = apca_contrast(
+            theme.lch(foreground).expect("registered foreground role"),
+            theme.lch(background).expect("registered background role"),
+        )
+        .abs();
+        if contrast < MIN_TEXT_APCA {
             failures.push(format!(
-                "{path}: relative chroma {relative} exceeds {}",
-                law.max_relative_chroma
+                "APCA {foreground}/{background} was {contrast:.2}, below {MIN_TEXT_APCA}"
             ));
         }
     }
+}
 
-    for capture in PROSE_CAPTURES {
-        if tokens.prose_highlight_style(capture).is_none() {
-            failures.push(format!("prose capture {capture}: unresolved"));
+fn check_neutral_chroma(failures: &mut Vec<String>) {
+    let theme = ThemeInput::theorem_default().derive();
+    for role in [
+        "bgBase",
+        "bgBaseHover",
+        "bgSub",
+        "bgSubHover",
+        "bgShade",
+        "bgShadeHover",
+        "bgBorderFaint",
+    ] {
+        let color = theme.lch(role).expect("registered neutral role");
+        if color.l > 80.0 && color.c > 0.8 {
+            failures.push(format!(
+                "high-lightness neutral {role} carries CIE chroma {:.3}",
+                color.c
+            ));
         }
     }
+}
 
-    if failures.is_empty() {
-        println!("ok {} ({} generated roles)", path.display(), 11);
-        ExitCode::SUCCESS
-    } else {
-        for failure in &failures {
-            eprintln!("FAIL {failure}");
+fn check_contrast_sensitivity(failures: &mut Vec<String>) {
+    let low = ThemeInput::theorem_default().derive();
+    let high = ThemeInput {
+        contrast: 70.0,
+        ..ThemeInput::theorem_default()
+    }
+    .derive();
+    for role in [
+        "bgBaseHover",
+        "bgSub",
+        "bgShade",
+        "bgBorder",
+        "labelTitle",
+        "labelBase",
+        "labelMuted",
+        "controlSecondaryHover",
+        "controlTertiaryHover",
+    ] {
+        if low.color(role) == high.color(role) {
+            failures.push(format!("contrast 30 -> 70 did not move {role}"));
         }
-        ExitCode::FAILURE
+    }
+}
+
+fn check_hue_bands(failures: &mut Vec<String>) {
+    let theme = ThemeInput::theorem_default().derive();
+    let bands = [
+        ("accent", ThemeInput::theorem_default().accent),
+        ("error", theme.lch("errorBase").expect("error role")),
+        ("success", theme.lch("successBase").expect("success role")),
+        ("agent", theme.lch("agentBase").expect("agent role")),
+    ];
+    for (index, (left_name, left)) in bands.iter().enumerate() {
+        for (right_name, right) in bands.iter().skip(index + 1) {
+            let distance = hue_distance(*left, *right);
+            if distance < 24.0 {
+                failures.push(format!(
+                    "hue bands {left_name}/{right_name} are only {distance:.1} degrees apart"
+                ));
+            }
+        }
+    }
+}
+
+fn hue_distance(left: CieLch, right: CieLch) -> f64 {
+    let direct = (left.h - right.h).abs();
+    direct.min(360.0 - direct)
+}
+
+fn check_shell_metrics(failures: &mut Vec<String>) {
+    let shell = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../gpui/chat/src/shell.rs");
+    let source = match fs::read_to_string(&shell) {
+        Ok(source) => source,
+        Err(error) => {
+            failures.push(format!("cannot read {}: {error}", shell.display()));
+            return;
+        }
+    };
+    for (line_index, line) in source.lines().enumerate() {
+        if let Some(offset) = line.find("px(") {
+            let argument = line[offset + 3..].trim_start();
+            if argument
+                .starts_with(|character: char| character.is_ascii_digit() || character == '-')
+            {
+                failures.push(format!(
+                    "{}:{} contains a numeric px literal",
+                    shell.display(),
+                    line_index + 1
+                ));
+            }
+        }
+    }
+    if !source.contains("theorem_design_core::METRICS") {
+        failures.push("GPUI workspace shell does not consume shared METRICS".to_owned());
     }
 }
