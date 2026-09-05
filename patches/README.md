@@ -61,3 +61,8 @@ remains a draft requiring review before merge.
 The spelling follow-up recognizes only complete Git `index` hash lines and
 the exact `zed-scap` package identifier inside the ordered patches. It retains
 source and prose spelling checks; no application or runtime code changes.
+
+The final spelling follow-up recognizes the exact capture package name even
+inside its escaped regex spelling in patch 0016. The exact CI typos-cli 1.50.1
+reproduces that failure before this change and scans the entire final checkout
+without errors afterward. Runtime and dependency source remain unchanged.
