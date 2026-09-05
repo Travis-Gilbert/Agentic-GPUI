@@ -36,3 +36,9 @@ to resolve from the same immutable Theorem Zed revision.
 The Linux portal follow-up advances the Zed source to its compatible ASHPD
 patch. This consumer retains its existing ASHPD 0.13.10 lock entry, which
 already declares a Rust 1.87 minimum; no consumer registry dependency changes.
+
+The desktop keyboard-focus follow-up moves only the seven GPUI manifest pins
+and 25 lock source revisions to Zed `2f7f1da474f6a8ab0f1f61ce35a1a2278ee31db4`.
+It retains the registry dependency graph, including ASHPD 0.13.10. The pinned
+web window keeps desktop shortcuts on its read-only IME event target after
+an editor closes while preserving coarse-pointer keyboard dismissal.
