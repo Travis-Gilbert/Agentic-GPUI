@@ -56,3 +56,7 @@ native `platform_input_configuration_preserves_default_and_forwards_changes`
 regression covers default, Search builder, and changed Send/assistance settings;
 its execution is pending the coordinated native validation slot. This branch
 remains a draft requiring review before merge.
+
+The spelling follow-up recognizes only complete Git `index` hash lines and
+the exact `zed-scap` package identifier inside the ordered patches. It retains
+source and prose spelling checks; no application or runtime code changes.
