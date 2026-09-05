@@ -28,3 +28,7 @@ used by Rust 1.90. The third replaces post-1.90 standard-library profiling and
 UTF-8 boundary helpers with equivalent local implementations. The final patch
 uses the stable atomic update primitive for text-selection scope allocation,
 then advances the Zed pin to include action-profiler compatibility as well.
+
+The web integration pin selects the published textarea IME/accessibility repair
+and its corrected workspace lock edge. Every GPUI family dependency continues
+to resolve from the same immutable Theorem Zed revision.
