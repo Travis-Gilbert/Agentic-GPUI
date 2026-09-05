@@ -427,7 +427,7 @@ impl<T: TrackedDecoration> DecorationCollections<T> {
     }
 }
 
-fn adjust_range_for_edit(
+pub(crate) fn adjust_range_for_edit(
     range: &Range<usize>,
     edited_range: &Range<usize>,
     inserted_len: usize,
@@ -473,7 +473,7 @@ fn adjust_range_for_edit(
     start..end
 }
 
-fn normalize<T: TrackedDecoration>(text: &Rope, decorations: Vec<T>) -> Vec<T> {
+pub(crate) fn normalize<T: TrackedDecoration>(text: &Rope, decorations: Vec<T>) -> Vec<T> {
     decorations
         .into_iter()
         .filter_map(|mut decoration| {
