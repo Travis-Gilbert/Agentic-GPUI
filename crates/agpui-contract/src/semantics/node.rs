@@ -103,7 +103,16 @@ pub struct Node {
     pub disabled: bool,
     #[serde(skip_serializing_if = "is_false")]
     pub read_only: bool,
-    pub selected: bool,
+    /// `None` on a node that is not selectable at all, which is most of them.
+    ///
+    /// Optional for the same reason [`Self::checked`] and [`Self::expanded`]
+    /// are: a dispatcher preflights a gesture by asking whether the node
+    /// carries the state it moves, and a plain `bool` answers "yes, false" for
+    /// every node in the tree. `Select` aimed at an ordinary button therefore
+    /// clicked it -- navigating, sending, whatever the button does -- and only
+    /// then reported the postcondition unmet.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected: Option<bool>,
     pub hovered: bool,
     pub pressed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -137,10 +146,16 @@ pub struct Node {
 }
 
 impl Node {
-    /// Re-applies redaction to the three free-text fields.
+    /// Re-applies redaction to every free-text field.
     ///
     /// The probe already redacts what it records; this covers nodes a host
     /// constructed directly, and is idempotent.
+    ///
+    /// `placeholder` belongs here with the other three. It is host-supplied
+    /// prose on the same node, it reaches the same three destinations -- the
+    /// snapshot, the canonical hash, and a screen reader -- and being the one
+    /// free-text field left out is what would make export-time redaction
+    /// unable to repair a leak the probe let through.
     pub fn redact(&mut self) {
         if let Some(text) = &mut self.text {
             *text = redact_sensitive_text(text);
@@ -151,16 +166,20 @@ impl Node {
         if let Some(value) = &mut self.value {
             *value = redact_sensitive_text(value);
         }
+        if let Some(placeholder) = &mut self.placeholder {
+            *placeholder = redact_sensitive_text(placeholder);
+        }
     }
 }
 
-/// A row a virtualized surface knows about but has not materialized.
+/// A row a surface knows about but has not materialized.
 ///
-/// The thread leaf publishes one of these per message every frame while only
-/// the visible window of rows becomes a [`Node`]. An action aimed at a reading
-/// item is refused with
+/// A surface publishes one per row it can name and did not build: the rows
+/// outside a virtual list's window, and the rows behind a closed disclosure.
+/// An action aimed at a reading item is refused with
 /// [`ActionRefusal::TargetNotMaterialized`](super::action::ActionRefusal::TargetNotMaterialized)
-/// rather than reported absent, because the surface does know the row exists.
+/// rather than reported absent, because the surface does know the row exists,
+/// and the refusal carries the gesture that would materialize it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SemanticReadingItem {

@@ -58,10 +58,11 @@ fn is_renderer(package: &str) -> bool {
         || package.starts_with("declarative-gpui")
 }
 
-#[test]
-fn no_renderer_package_is_reachable_from_agpui_contract() {
-    let metadata = metadata();
-
+/// Every package name reachable from `agpui-contract` in the resolved graph.
+///
+/// One traversal, so the boundary assertion and the guard that the traversal
+/// is not vacuous cannot disagree about what was walked.
+fn reachable_from_agpui_contract(metadata: &Value) -> HashSet<&str> {
     let mut name_of: HashMap<&str, &str> = HashMap::new();
     let mut root = None;
     for package in metadata["packages"].as_array().expect("packages") {
@@ -95,10 +96,17 @@ fn no_renderer_package_is_reachable_from_agpui_contract() {
             }
         }
     }
-
-    let renderers: Vec<&str> = reached
+    reached
         .iter()
         .filter_map(|id| name_of.get(id).copied())
+        .collect()
+}
+
+#[test]
+fn no_renderer_package_is_reachable_from_agpui_contract() {
+    let metadata = metadata();
+    let renderers: Vec<&str> = reachable_from_agpui_contract(&metadata)
+        .into_iter()
         .filter(|name| is_renderer(name))
         .collect();
     assert!(
@@ -112,15 +120,18 @@ fn the_resolve_walk_actually_sees_the_declared_dependencies() {
     // Guards the test above against silently passing on an empty walk: if the
     // metadata shape changes and nothing is reached, `renderers` is trivially
     // empty and the boundary stops being checked.
+    //
+    // Read from the walk, not from `metadata["packages"]`. That array is every
+    // package in the workspace, and `serde`, `serde_json` and `sha2` are in it
+    // whether or not the traversal reached a single edge -- so the guard
+    // passed on exactly the vacuous walk it exists to catch.
     let metadata = metadata();
-    let names: HashSet<&str> = metadata["packages"]
-        .as_array()
-        .expect("packages")
-        .iter()
-        .filter_map(|package| package["name"].as_str())
-        .collect();
+    let reached = reachable_from_agpui_contract(&metadata);
     for expected in ["serde", "serde_json", "sha2"] {
-        assert!(names.contains(expected), "{expected} is a declared dependency");
+        assert!(
+            reached.contains(expected),
+            "{expected} is a declared dependency, and the walk reached: {reached:?}"
+        );
     }
 }
 
