@@ -9,7 +9,7 @@ mod search;
 
 pub(crate) use clear_button::*;
 pub use content_type::*;
-#[cfg(not(feature = "tree-sitter"))]
+#[cfg(not(all(feature = "tree-sitter", not(target_family = "wasm"))))]
 pub struct Tree;
 /// The shared editing engine. Internal to the framework: components reach it
 /// through the concrete state of their control, never across the public API.

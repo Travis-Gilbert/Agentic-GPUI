@@ -12,16 +12,16 @@ pub use gpui_base::text::{
 };
 pub use style::TextViewStyle;
 
-#[cfg(feature = "tree-sitter")]
+#[cfg(all(feature = "tree-sitter", not(target_family = "wasm")))]
 use std::{cell::RefCell, collections::HashMap};
 
 use gpui::Styled as _;
-#[cfg(feature = "tree-sitter")]
+#[cfg(all(feature = "tree-sitter", not(target_family = "wasm")))]
 use gpui_base::input::{InputEdit, Point, RopeExt as _};
-#[cfg(feature = "tree-sitter")]
+#[cfg(all(feature = "tree-sitter", not(target_family = "wasm")))]
 use ropey::Rope;
 
-#[cfg(feature = "tree-sitter")]
+#[cfg(all(feature = "tree-sitter", not(target_family = "wasm")))]
 use crate::highlighter::{LanguageRegistry, SyntaxHighlighter};
 
 #[cfg(test)]
@@ -61,7 +61,7 @@ pub(crate) fn base_text_view_style(theme: &crate::Theme) -> gpui_base::TextViewS
 pub(crate) fn install_text_view_defaults(theme: &crate::Theme, cx: &mut gpui::App) {
     let defaults = gpui_base::TextViewDefaults::new().with_style(base_text_view_style(theme));
 
-    #[cfg(feature = "tree-sitter")]
+    #[cfg(all(feature = "tree-sitter", not(target_family = "wasm")))]
     let defaults = defaults.with_code_block_highlighter(component_code_block_highlighter(
         theme.highlight_theme.clone(),
     ));
@@ -69,7 +69,7 @@ pub(crate) fn install_text_view_defaults(theme: &crate::Theme, cx: &mut gpui::Ap
     defaults.install(cx);
 }
 
-#[cfg(feature = "tree-sitter")]
+#[cfg(all(feature = "tree-sitter", not(target_family = "wasm")))]
 pub(crate) fn component_code_block_highlighter(
     highlight_theme: std::sync::Arc<crate::highlighter::HighlightTheme>,
 ) -> impl Fn(&gpui_base::text::CodeBlock) -> Vec<(std::ops::Range<usize>, gpui::HighlightStyle)>
@@ -121,7 +121,7 @@ mod tests {
     /// The component highlighter is the only place that still knows about
     /// `LanguageRegistry` and `HighlightTheme`, so these two cases follow it
     /// here from the code block it used to live in.
-    #[cfg(feature = "tree-sitter")]
+    #[cfg(all(feature = "tree-sitter", not(target_family = "wasm")))]
     mod code_block_highlighter {
         use std::ops::Range;
 
@@ -235,7 +235,7 @@ mod tests {
         assert_eq!(style.table().corner_radii.bottom_right, square);
     }
 
-    #[cfg(feature = "tree-sitter")]
+    #[cfg(all(feature = "tree-sitter", not(target_family = "wasm")))]
     #[gpui::test]
     fn component_initialization_installs_default_code_highlighting(cx: &mut gpui::TestAppContext) {
         cx.update(crate::init);

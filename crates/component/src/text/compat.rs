@@ -191,7 +191,7 @@ impl Element for TextView {
             // caller ever replaced the theme -- a pointer comparison against
             // the shared default -- rather than comparing two whole themes
             // field by field.
-            #[cfg(feature = "tree-sitter")]
+            #[cfg(all(feature = "tree-sitter", not(target_family = "wasm")))]
             if !std::sync::Arc::ptr_eq(
                 &style.highlight_theme,
                 &crate::highlighter::HighlightTheme::default_light(),
