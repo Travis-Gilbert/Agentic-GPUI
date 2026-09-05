@@ -14,7 +14,9 @@ use gpui::{
     TextStyle, WhiteSpace, Window, img, point, prelude::FluentBuilder as _, px, relative, size,
 };
 
-use crate::text::text_view::{LinkClickHandlerFn, handle_link_click};
+use crate::text::text_view::{
+    LinkClickHandlerFn, LinkFragmentDecoratorFn, LinkUnderlineFn, handle_link_click,
+};
 
 use super::{
     inline::{Inline, InlineHighlight, InlineState, text_runs, text_size_ranges},
@@ -30,6 +32,9 @@ pub(super) struct InlineFlow {
     id: ElementId,
     items: Vec<InlineFlowItem>,
     link_click_handler: Option<Arc<LinkClickHandlerFn>>,
+    link_fragment_decorator: Option<Arc<LinkFragmentDecoratorFn>>,
+    link_source_offset: usize,
+    link_underline: Option<Arc<LinkUnderlineFn>>,
 }
 
 pub(super) type InlineRenderer = dyn Fn(&super::InlineRenderContext, &mut Window, &mut App) -> Option<super::InlineElement>
@@ -251,7 +256,25 @@ impl InlineFlow {
             id: id.into(),
             items,
             link_click_handler,
+            link_fragment_decorator: None,
+            link_source_offset: 0,
+            link_underline: None,
         }
+    }
+
+    pub(super) fn link_with(
+        mut self,
+        decorator: Option<Arc<LinkFragmentDecoratorFn>>,
+        source_offset: usize,
+    ) -> Self {
+        self.link_fragment_decorator = decorator;
+        self.link_source_offset = source_offset;
+        self
+    }
+
+    pub(super) fn link_underline(mut self, style: Option<Arc<LinkUnderlineFn>>) -> Self {
+        self.link_underline = style;
+        self
     }
 
     fn image_element(
@@ -584,6 +607,11 @@ impl Element for InlineFlow {
                         size(bounds.size.width, selection_bounds.size.height),
                     ))
                     .paint_origin(bounds.origin + origin + point(padding, Pixels::ZERO))
+                    .link_with(
+                        self.link_fragment_decorator.clone(),
+                        self.link_source_offset + source_range.start,
+                    )
+                    .link_underline(self.link_underline.clone())
                     .into_any_element();
                     // The `Inline` is its own layout root, with no box around
                     // it: its text measures with the window's text style, so

@@ -1,7 +1,7 @@
 use gpui::Corners;
 use std::{
     cell::RefCell,
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     mem,
     ops::Range,
     rc::Rc,
@@ -9,11 +9,12 @@ use std::{
 };
 
 use gpui::{
-    App, BorderStyle, Bounds, ClickEvent, CursorStyle, Edges, Element, ElementId, GlobalElementId,
-    Half, HighlightStyle, Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId,
-    MouseButton, MouseClickEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    SharedString, StyledText, TextAlign, TextLayout, TextRun, TextStyle, Window, point, px, quad,
-    size,
+    AnyElement, App, AvailableSpace, BorderStyle, Bounds, ClickEvent, CursorStyle, Edges, Element,
+    ElementId, GlobalElementId, Half, HighlightStyle, Hitbox, HitboxBehavior, Hsla,
+    InspectorElementId, InteractiveElement as _, IntoElement, LayoutId, MouseButton,
+    MouseClickEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString,
+    StatefulInteractiveElement as _, Styled as _, StyledText, TextAlign, TextLayout, TextRun,
+    TextStyle, Window, div, point, px, quad, size,
 };
 
 use crate::{
@@ -24,7 +25,10 @@ use crate::{
     text::range_highlight::RevealAt,
     text::selection::word_range_at,
     text::state::LineSpan,
-    text::text_view::{LinkClickHandlerFn, handle_link_click},
+    text::text_view::{
+        LinkClickHandlerFn, LinkFragment, LinkFragmentDecoratorFn, LinkUnderline, LinkUnderlineFn,
+        handle_link_click,
+    },
     text_selection::text_rows_extent,
 };
 
@@ -211,6 +215,12 @@ pub(super) struct Inline {
     /// The start of a pending reveal, when it is in this text.
     reveal: Option<RevealAt>,
     link_click_handler: Option<Arc<LinkClickHandlerFn>>,
+    /// Decorates each measured link fragment; when set, the fragments are
+    /// the link targets and the hit-tested click handler is not installed.
+    link_fragment_decorator: Option<Arc<LinkFragmentDecoratorFn>>,
+    /// The source byte offset of this text, which names its fragments.
+    link_source_offset: usize,
+    link_underline: Option<Arc<LinkUnderlineFn>>,
     /// What this frame's layout was shaped with, to hand the shaped text to
     /// the next frame (see [`RetainedLayout`]).
     retained_key: Option<(Vec<TextRun>, TextStyle)>,
@@ -372,10 +382,138 @@ impl Inline {
             range_backgrounds: Vec::new(),
             reveal: None,
             link_click_handler,
+            link_fragment_decorator: None,
+            link_source_offset: 0,
+            link_underline: None,
             retained_key: None,
             handed_over: false,
             state,
         }
+    }
+
+    pub(super) fn link_with(
+        mut self,
+        decorator: Option<Arc<LinkFragmentDecoratorFn>>,
+        source_offset: usize,
+    ) -> Self {
+        self.link_fragment_decorator = decorator;
+        self.link_source_offset = source_offset;
+        self
+    }
+
+    pub(super) fn link_underline(mut self, style: Option<Arc<LinkUnderlineFn>>) -> Self {
+        self.link_underline = style;
+        self
+    }
+
+    fn link_underline_for(&self, url: &SharedString, cx: &App) -> LinkUnderline {
+        self.link_underline
+            .as_ref()
+            .map(|style| style(url, cx))
+            .unwrap_or_default()
+    }
+
+    /// The measured link targets, one per visual line of each link. Their
+    /// focus handles are kept in this element's state so keyboard focus
+    /// survives a frame.
+    fn link_elements(
+        &self,
+        global_id: Option<&GlobalElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Vec<AnyElement> {
+        let (Some(decorator), Some(global_id)) = (&self.link_fragment_decorator, global_id) else {
+            return Vec::new();
+        };
+        let mut focus_handles = window
+            .with_element_state::<BTreeMap<SharedString, gpui::FocusHandle>, _>(
+                global_id,
+                |retained, _| {
+                    let state = retained.unwrap_or_default();
+                    (state.clone(), state)
+                },
+            );
+        let mut retained_ids = Vec::new();
+        let layout = self.styled_text.layout().clone();
+        let mut elements = Vec::new();
+        for (link_ix, (range, link)) in self.links.iter().enumerate() {
+            for (part_ix, (fragment_range, bounds)) in link_fragment_bounds(&layout, range.clone())
+                .into_iter()
+                .enumerate()
+            {
+                let fragment = LinkFragment {
+                    id: format!("link-{}-{link_ix}-{part_ix}", self.link_source_offset).into(),
+                    url: link.url.clone(),
+                    text: self.text[fragment_range].to_string().into(),
+                };
+                let focus = focus_handles
+                    .entry(fragment.id.clone())
+                    .or_insert_with(|| cx.focus_handle())
+                    .clone();
+                retained_ids.push(fragment.id.clone());
+                let click_focus = focus.clone();
+                let handler = self.link_click_handler.clone();
+                let url = link.url.clone();
+                let text_view_state = GlobalState::global(cx).text_view_state().cloned();
+                let click = move |event: &ClickEvent, window: &mut Window, cx: &mut App| {
+                    if !matches!(event, ClickEvent::Keyboard(_))
+                        && text_view_state
+                            .as_ref()
+                            .is_some_and(|state| state.read(cx).has_selection(cx))
+                    {
+                        return;
+                    }
+                    TextSelection::end(window, cx);
+                    // The selection layer focuses its text participant on
+                    // mouse down. A completed link click focuses the actual
+                    // fragment, while a drag keeps the text selection focus.
+                    click_focus.focus(window, cx);
+                    // Selection queues its focus callback on mouse down. A
+                    // semantic press can deliver down and up in one update,
+                    // so that queued callback would otherwise run after this
+                    // completed click and take focus back from the link.
+                    // Correct only that participant's focus; navigation may
+                    // have intentionally focused a different control.
+                    if let Some(state) = &text_view_state {
+                        let selection_focus = state.read(cx).focus_handle().clone();
+                        let completed_focus = click_focus.clone();
+                        window.defer(cx, move |window, cx| {
+                            if selection_focus.is_focused(window) {
+                                completed_focus.focus(window, cx);
+                            }
+                        });
+                    }
+                    cx.stop_propagation();
+                    handle_link_click(&handler, url.clone(), event.clone(), window, cx);
+                };
+                let target = div()
+                    .id(fragment.id.clone())
+                    .tab_index(0)
+                    .track_focus(&focus)
+                    .w(bounds.size.width)
+                    .h(bounds.size.height)
+                    .cursor_pointer()
+                    .on_click(click.clone())
+                    .on_aux_click(click);
+                let mut target = decorator(&fragment, target, window, cx).into_any_element();
+                target.prepaint_as_root(
+                    bounds.origin,
+                    size(
+                        AvailableSpace::Definite(bounds.size.width),
+                        AvailableSpace::Definite(bounds.size.height),
+                    ),
+                    window,
+                    cx,
+                );
+                elements.push(target);
+            }
+        }
+        focus_handles.retain(|id, _| retained_ids.contains(id));
+        window.with_element_state::<BTreeMap<SharedString, gpui::FocusHandle>, _>(
+            global_id,
+            |_, _| ((), focus_handles),
+        );
+        elements
     }
 
     /// Use the resolved style captured by a deferred parent layout.
@@ -851,10 +989,15 @@ impl IntoElement for Inline {
 
 impl Element for Inline {
     type RequestLayoutState = ();
-    type PrepaintState = Hitbox;
+    type PrepaintState = (Hitbox, Vec<AnyElement>);
 
+    /// Only text with decorated links needs an identity: it keeps the focus
+    /// handles of its link targets. Source offsets are distinct within a
+    /// document, so they name the runs of one text view apart.
     fn id(&self) -> Option<ElementId> {
-        None
+        self.link_fragment_decorator.as_ref().map(|_| {
+            ElementId::NamedInteger("text-link-run".into(), self.link_source_offset as u64)
+        })
     }
 
     fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
@@ -872,7 +1015,32 @@ impl Element for Inline {
             .text_style
             .clone()
             .unwrap_or_else(|| window.text_style());
-        let runs = text_runs(self.text.len(), &text_style, &self.highlights);
+        // A dotted or absent underline replaces the solid one the parser
+        // gave the link; the dots are painted over the measured fragments.
+        let overrides = self
+            .links
+            .iter()
+            .filter(|(_, link)| self.link_underline_for(&link.url, cx) != LinkUnderline::Solid)
+            .map(|(range, _)| {
+                (
+                    range.clone(),
+                    InlineHighlight::from(HighlightStyle {
+                        underline: Some(gpui::UnderlineStyle {
+                            thickness: px(0.),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
+                )
+            })
+            .collect::<Vec<_>>();
+        let runs = if overrides.is_empty() {
+            text_runs(self.text.len(), &text_style, &self.highlights)
+        } else {
+            let highlights =
+                combine_highlights(self.highlights.clone(), overrides).collect::<Vec<_>>();
+            text_runs(self.text.len(), &text_style, &highlights)
+        };
 
         // Reuse the previous frame's shaped text when it was shaped from the
         // same text, runs and style; `StyledText` consumes its runs on every
@@ -925,8 +1093,9 @@ impl Element for Inline {
         self.request_reveal(window);
 
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+        let link_elements = self.link_elements(id, window, cx);
         self.retain_styled_text();
-        hitbox
+        (hitbox, link_elements)
     }
 
     fn paint(
@@ -941,7 +1110,7 @@ impl Element for Inline {
     ) {
         let bounds = Bounds::new(self.paint_origin.unwrap_or(bounds.origin), bounds.size);
         let current_view = window.current_view();
-        let hitbox = prepaint;
+        let (hitbox, link_elements) = prepaint;
         if !self.reclaim_styled_text() {
             // Cannot happen (only this element takes what it handed over,
             // and a live state is never swept); skip the frame rather than
@@ -954,6 +1123,31 @@ impl Element for Inline {
         }
         self.styled_text
             .paint(global_id, None, bounds, &mut (), &mut (), window, cx);
+
+        let text_color = self
+            .text_style
+            .as_ref()
+            .map(|style| style.color)
+            .unwrap_or_else(|| window.text_style().color);
+        for (range, link) in self.links.iter() {
+            if self.link_underline_for(&link.url, cx) != LinkUnderline::Dotted {
+                continue;
+            }
+            let color = self
+                .highlights
+                .iter()
+                .find_map(|(span, highlight)| {
+                    (span.start <= range.start && range.start < span.end)
+                        .then_some(highlight.style.color)
+                        .flatten()
+                })
+                .unwrap_or(text_color);
+            for (_, fragment) in link_fragment_bounds(&text_layout, range.clone()) {
+                for dot in dotted_underline_bounds(fragment) {
+                    window.paint_quad(gpui::fill(dot, color));
+                }
+            }
+        }
 
         // layout selections
         let (is_selectable, is_selection, selection) =
@@ -1122,7 +1316,7 @@ impl Element for Inline {
             });
         }
 
-        if !is_selection {
+        if !is_selection && self.link_fragment_decorator.is_none() {
             // click to open link
             window.on_mouse_event({
                 let links = self.links.clone();
@@ -1164,8 +1358,73 @@ impl Element for Inline {
         }
 
         drop(state);
+        // The decorated link targets, placed by the glyph layout painted
+        // above. They replace the hit-tested click handler.
+        for element in link_elements.iter_mut() {
+            element.paint(window, cx);
+        }
         self.retain_styled_text();
     }
+}
+
+/// Split at actual hard/soft line boundaries. Widths come from shaped glyph
+/// advances, including the final glyph before a wrap, never an estimated font
+/// width or a union spanning multiple lines.
+fn link_fragment_bounds(
+    layout: &TextLayout,
+    range: Range<usize>,
+) -> Vec<(Range<usize>, Bounds<Pixels>)> {
+    let mut fragments = Vec::new();
+    let mut line_start = 0;
+    let mut line_y = layout.bounds().top();
+    for line in layout.line_layouts() {
+        let boundaries = std::iter::once(0)
+            .chain(line.wrap_boundaries.iter().map(|boundary| {
+                line.unwrapped_layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix].index
+            }))
+            .chain(std::iter::once(line.len()))
+            .collect::<Vec<_>>();
+        for (row_ix, row) in boundaries.windows(2).enumerate() {
+            let start = range.start.max(line_start + row[0]);
+            let end = range.end.min(line_start + row[1]);
+            if start >= end {
+                continue;
+            }
+            // position_for_index deliberately gives a wrap boundary the
+            // previous line's caret affinity. A visual fragment starts on the
+            // next row, so use the actual wrap row and shaped x advances.
+            let origin = point(
+                layout.bounds().left() + line.unwrapped_layout.x_for_index(start - line_start)
+                    - line.unwrapped_layout.x_for_index(row[0]),
+                line_y + layout.line_height() * row_ix,
+            );
+            let width = line.unwrapped_layout.x_for_index(end - line_start)
+                - line.unwrapped_layout.x_for_index(start - line_start);
+            if width > px(0.) {
+                fragments.push((
+                    start..end,
+                    Bounds::new(origin, size(width, layout.line_height())),
+                ));
+            }
+        }
+        line_start += line.len() + 1;
+        line_y += line.size(layout.line_height()).height;
+    }
+    fragments
+}
+
+/// One-pixel dots separated by two clear pixels on each measured fragment.
+fn dotted_underline_bounds(fragment: Bounds<Pixels>) -> Vec<Bounds<Pixels>> {
+    let mut dots = Vec::new();
+    let mut x = fragment.left();
+    while x < fragment.right() {
+        dots.push(Bounds::new(
+            point(x, fragment.bottom() - px(2.)),
+            size(px(1.).min(fragment.right() - x), px(1.)),
+        ));
+        x += px(3.);
+    }
+    dots
 }
 
 /// Where one glyph of laid-out text paints: its row, and its horizontal
