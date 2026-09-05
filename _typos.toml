@@ -1,5 +1,11 @@
 [default]
-extend-ignore-re = ['\\u\{[0-9A-Fa-f]+\}']
+extend-ignore-re = [
+    '\\u\{[0-9A-Fa-f]+\}',
+    # Ordered Git patch object IDs are immutable hex, not prose.
+    '(?m)^index [0-9a-f]+\.\.[0-9a-f]+(?: [0-7]+)?$',
+    # The exact screen-capture package identifier in the dependency patches.
+    '\bzed-scap\b',
+]
 
 [default.extend-words]
 # Correct Italian singular of "command".
