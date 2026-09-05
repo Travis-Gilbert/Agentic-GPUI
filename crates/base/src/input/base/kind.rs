@@ -212,6 +212,10 @@ pub trait InputModeKind: sealed::Sealed + Sized + 'static {
         SyntaxContext::Code
     }
 
+    /// Drops presentation ranges after an authoritative whole-text replacement.
+    /// Existing mode behavior is unchanged unless a mode opts into this hook.
+    fn reset_document_presentation(_state: &mut InputBaseState<Self>) {}
+
     /// Slides decoration ranges along with an edit.
     fn adjust_annotations(
         _state: &mut InputBaseState<Self>,

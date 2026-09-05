@@ -83,3 +83,8 @@ requires review before merge.
 The textarea regression uses the real Kit initializer before mounting the input.
 Its test-only unused trait import, rejected by CI's warnings-as-errors gate, is
 removed. No runtime behavior or assertions change in this follow-up.
+
+The native textarea test reached all text/selection/IME assertions and exposed
+stale styles after `set_value`. The replacement hook clears only the new
+textarea presentation ranges; its default is a no-op, preserving existing
+editor behavior. The same regression and all its assertions are retained.

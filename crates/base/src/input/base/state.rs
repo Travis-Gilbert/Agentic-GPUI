@@ -1037,6 +1037,7 @@ impl<M: InputModeKind> InputBaseState<M> {
             this.undo_manager.set_pending_intent(EditIntent::Atomic);
             let range = 0..this.text.chars().map(|c| c.len_utf16()).sum();
             this.replace_text_in_range_silent(Some(range), &text, window, cx);
+            M::reset_document_presentation(this);
             this.reset_highlighter(cx);
         });
     }
