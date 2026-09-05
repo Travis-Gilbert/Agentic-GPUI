@@ -1,11 +1,16 @@
-//! The shell region map, computed once per frame from the shared metric table.
+//! The shell region map, computed once per frame from a shell's metric table.
 //!
-//! Every rectangle the environment draws comes from here, so the geometry
-//! check and the render path read the same numbers. Nothing in this module
-//! touches GPUI: it is arithmetic over `theorem_design_core::METRICS`, which
-//! is what makes the check a unit test rather than a screenshot.
+//! Every rectangle a shell draws comes from here, so the geometry check and
+//! the render path read the same numbers. Nothing in this module touches GPUI:
+//! it is arithmetic over a [`ShellMetrics`], which is what makes the check a
+//! unit test rather than a screenshot.
+//!
+//! The table arrives as an argument rather than a constant, because the shape
+//! of a shell is AGPUI's and its numbers are the product's. The laws proven
+//! below - that the bands tile the height, that the card is inset on every
+//! side, that the dock overlays rather than reflows - hold for any table.
 
-use theorem_design_core::METRICS;
+use crate::metrics::ShellMetrics;
 
 /// One region, in content-area coordinates with the origin top-left.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -62,14 +67,15 @@ impl ShellRegions {
     /// `right_dock` is `None` when the domain pins no instance to it.
     #[must_use]
     pub fn for_content(
+        metrics: &ShellMetrics,
         width: f32,
         height: f32,
         sidebar_width: f32,
         right_dock_width: Option<f32>,
     ) -> Self {
-        let tab_height = METRICS.desktop_tabs_height;
-        let status_height = METRICS.status_bar_height;
-        let margin = METRICS.main_page_margin;
+        let tab_height = metrics.desktop_tabs_height;
+        let status_height = metrics.status_bar_height;
+        let margin = metrics.main_page_margin;
 
         let band_top = tab_height;
         let band_height = (height - tab_height - status_height).max(0.0);
@@ -81,13 +87,8 @@ impl ShellRegions {
             (width - sidebar_width - margin * 2.0).max(0.0),
             (band_height - margin * 2.0).max(0.0),
         );
-        let header = Rect::new(card.x, card.y, card.width, METRICS.main_header_height);
-        let filter_band = Rect::new(
-            card.x,
-            header.bottom(),
-            card.width,
-            METRICS.subheader_height,
-        );
+        let header = Rect::new(card.x, card.y, card.width, metrics.main_header_height);
+        let filter_band = Rect::new(card.x, header.bottom(), card.width, metrics.subheader_height);
         let canvas = Rect::new(
             card.x,
             filter_band.bottom(),
@@ -118,47 +119,31 @@ impl ShellRegions {
 
     /// The width a module's measure may use inside the canvas.
     ///
-    /// Linear caps its reading measure well below the canvas width; the cap is
-    /// the same number whether or not the right dock is open, because the dock
-    /// overlays rather than reflows.
+    /// A shell caps its reading measure well below the canvas width; the cap
+    /// is the same number whether or not the right dock is open, because the
+    /// dock overlays rather than reflows.
     #[must_use]
-    pub fn measure(&self) -> f32 {
-        self.canvas.width.min(METRICS.agent_measure_max)
+    pub fn measure(&self, metrics: &ShellMetrics) -> f32 {
+        self.canvas.width.min(metrics.agent_measure_max)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::metrics::SAMPLE_METRICS;
 
-    /// The default window content area named by the 1.0 region map.
     const CONTENT_WIDTH: f32 = 1274.0;
     const CONTENT_HEIGHT: f32 = 796.0;
 
     fn default_regions() -> ShellRegions {
         ShellRegions::for_content(
+            &SAMPLE_METRICS,
             CONTENT_WIDTH,
             CONTENT_HEIGHT,
-            METRICS.sidebar_width_default,
-            Some(METRICS.agent_panel_width),
+            SAMPLE_METRICS.sidebar_width_default,
+            Some(SAMPLE_METRICS.agent_panel_width),
         )
-    }
-
-    #[test]
-    fn the_region_map_lays_out_at_the_measured_window_size() {
-        let regions = default_regions();
-
-        assert_eq!(regions.tab_strip, Rect::new(0.0, 0.0, 1274.0, 40.0));
-        assert_eq!(regions.sidebar, Rect::new(0.0, 40.0, 240.0, 728.0));
-        assert_eq!(regions.card, Rect::new(248.0, 48.0, 1018.0, 712.0));
-        assert_eq!(regions.header, Rect::new(248.0, 48.0, 1018.0, 44.0));
-        assert_eq!(regions.filter_band, Rect::new(248.0, 92.0, 1018.0, 44.0));
-        assert_eq!(regions.canvas, Rect::new(248.0, 136.0, 1018.0, 624.0));
-        assert_eq!(regions.status_band, Rect::new(0.0, 768.0, 1274.0, 28.0));
-        assert_eq!(
-            regions.right_dock,
-            Some(Rect::new(866.0, 136.0, 400.0, 624.0))
-        );
     }
 
     #[test]
@@ -178,20 +163,33 @@ mod tests {
 
         assert_eq!(
             regions.card.x - regions.sidebar.right(),
-            METRICS.main_page_margin
+            SAMPLE_METRICS.main_page_margin
         );
         assert_eq!(
             regions.card.y - regions.tab_strip.bottom(),
-            METRICS.main_page_margin
+            SAMPLE_METRICS.main_page_margin
         );
         assert_eq!(
             CONTENT_WIDTH - regions.card.right(),
-            METRICS.main_page_margin
+            SAMPLE_METRICS.main_page_margin
         );
         assert_eq!(
             regions.status_band.y - regions.card.bottom(),
-            METRICS.main_page_margin
+            SAMPLE_METRICS.main_page_margin
         );
+    }
+
+    #[test]
+    fn the_header_and_filter_band_stack_on_the_cards_leading_edge() {
+        let regions = default_regions();
+
+        assert_eq!(regions.header.x, regions.card.x);
+        assert_eq!(regions.header.y, regions.card.y);
+        assert_eq!(regions.header.height, SAMPLE_METRICS.main_header_height);
+        assert_eq!(regions.filter_band.y, regions.header.bottom());
+        assert_eq!(regions.filter_band.height, SAMPLE_METRICS.subheader_height);
+        assert_eq!(regions.canvas.y, regions.filter_band.bottom());
+        assert_eq!(regions.canvas.bottom(), regions.card.bottom());
     }
 
     #[test]
@@ -205,9 +203,10 @@ mod tests {
         assert_eq!(
             regions.canvas.width,
             ShellRegions::for_content(
+                &SAMPLE_METRICS,
                 CONTENT_WIDTH,
                 CONTENT_HEIGHT,
-                METRICS.sidebar_width_default,
+                SAMPLE_METRICS.sidebar_width_default,
                 None,
             )
             .canvas
@@ -215,21 +214,48 @@ mod tests {
         );
     }
 
+    /// The measure cap is a property of the table, not of what is drawn over
+    /// the canvas, which is the same statement the overlay law makes from the
+    /// other side.
+    #[test]
+    fn the_measure_caps_at_the_tables_maximum_however_wide_the_canvas_is() {
+        let regions = default_regions();
+        assert_eq!(
+            regions.measure(&SAMPLE_METRICS),
+            SAMPLE_METRICS.agent_measure_max
+        );
+
+        let narrow =
+            ShellRegions::for_content(&SAMPLE_METRICS, 600.0, CONTENT_HEIGHT, 0.0, None);
+        assert_eq!(narrow.measure(&SAMPLE_METRICS), narrow.canvas.width);
+    }
+
     #[test]
     fn a_collapsed_sidebar_gives_its_width_to_the_card() {
-        let collapsed = ShellRegions::for_content(CONTENT_WIDTH, CONTENT_HEIGHT, 0.0, None);
+        let collapsed = ShellRegions::for_content(
+            &SAMPLE_METRICS,
+            CONTENT_WIDTH,
+            CONTENT_HEIGHT,
+            0.0,
+            None,
+        );
 
         assert_eq!(collapsed.sidebar.width, 0.0);
         assert_eq!(
             collapsed.card.width,
-            default_regions().card.width + METRICS.sidebar_width_default
+            default_regions().card.width + SAMPLE_METRICS.sidebar_width_default
         );
     }
 
     #[test]
     fn a_window_narrower_than_its_chrome_never_produces_a_negative_region() {
-        let tiny =
-            ShellRegions::for_content(120.0, 40.0, METRICS.sidebar_width_default, Some(400.0));
+        let tiny = ShellRegions::for_content(
+            &SAMPLE_METRICS,
+            120.0,
+            40.0,
+            SAMPLE_METRICS.sidebar_width_default,
+            Some(400.0),
+        );
 
         assert!(tiny.card.width >= 0.0);
         assert!(tiny.card.height >= 0.0);

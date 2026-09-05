@@ -4,7 +4,13 @@ use serde_json::{Value, json};
 
 use crate::{Rgba, TokenSet};
 
-pub(crate) const SEMANTIC_MAPPING: [(&str, &str); 17] = [
+/// Every semantic role this crate emits, paired with the token path it reads.
+///
+/// Public because the emitter's contract is the table, not the function: a
+/// product that emits from this crate has to be able to assert that every role
+/// it declares came out the other side, and those assertions live with the
+/// product's token file rather than here.
+pub const SEMANTIC_MAPPING: [(&str, &str); 17] = [
     ("background", "theme.bgBase"),
     ("foreground", "theme.labelTitle"),
     ("surface", "theme.bgBase"),

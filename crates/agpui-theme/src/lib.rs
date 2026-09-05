@@ -1,11 +1,12 @@
 //! Renderer-free design-token law and deterministic emitters.
 //!
-//! The law is the mechanism: a DTCG document declares neutral steps by
-//! lightness only, and this crate derives their chroma from one curve. The
-//! product is the document. AGPUI owns the first and never the second, which
-//! is why nothing here embeds a token file. [`TokenSet::from_dtcg_str`] takes
-//! the document as an argument, and [`metrics::ShellMetrics`] is a shape the
-//! product fills in.
+//! The law is the mechanism: a DTCG document authors three theme inputs - a
+//! base, an accent and a contrast - and this crate derives the whole role
+//! registry from them with Linear's adjustment law, then resolves every alias
+//! against it. The product is the document. AGPUI owns the first and never the
+//! second, which is why nothing here embeds a token file.
+//! [`TokenSet::from_dtcg_str`] takes the document as an argument, and
+//! [`metrics::ShellMetrics`] is a shape the product fills in.
 //!
 //! SPEC-AGPUI-HOME-1.0 H7 moved this out of Theorem's `theorem-design-core`.
 //! What stayed behind is what is Theorem's rather than the law's: the token
@@ -17,18 +18,19 @@ mod emit_css;
 mod emit_gpui;
 pub mod metrics;
 mod prose;
+mod regions;
 mod texture;
+mod theme_law;
 mod tokens;
 
 pub use color::Rgba;
-// The semantic role table is part of the emitter's contract, not an
-// implementation detail of it: a product that emits CSS from this crate has
-// to be able to assert that every role it declares came out the other side.
 pub use emit_gpui::SEMANTIC_MAPPING;
 pub use metrics::ShellMetrics;
 pub use prose::{ProseHighlightStyle, PROSE_CAPTURES};
+pub use regions::{Rect, ShellRegions};
 pub use texture::{DotGridParams, GrainParams};
-pub use tokens::{NeutralLaw, NeutralSample, TokenSet};
+pub use theme_law::{apca_contrast, readable_lightness, CieLch, DerivedTheme, Oklch, ThemeInput};
+pub use tokens::TokenSet;
 
 /// Every way a token document can fail to be one.
 ///
@@ -47,12 +49,16 @@ pub enum TokenError {
     InvalidColor(String),
     #[error("token alias cycle at: {0}")]
     AliasCycle(String),
-    #[error("neutral step must declare lightness, not a hex color: {0}")]
-    AuthoredNeutral(String),
+    #[error("invalid theme color: {0}")]
+    InvalidThemeColor(String),
+    #[error("invalid theme file: {0}")]
+    InvalidThemeFile(String),
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
 
     /// A document that is not anybody's palette.
@@ -60,8 +66,9 @@ mod tests {
     /// The law has to be provable without a product. If these tests ran
     /// against Theorem's tokens they would prove that Theorem's file is what
     /// Theorem says it is, which is Theorem's test to run and not this
-    /// crate's. The fixture's hue is blue and its ramp is round, so a value
-    /// that leaks from here into a product assertion is obvious on sight.
+    /// crate's. The fixture authors a blue base and accent and names its
+    /// typefaces after itself, so a value that leaks from here into a product
+    /// assertion is obvious on sight.
     const LAW: &str = include_str!("../fixtures/law.tokens.json");
 
     fn law() -> TokenSet {
@@ -69,93 +76,29 @@ mod tests {
     }
 
     #[test]
-    fn an_alias_resolves_through_to_a_generated_neutral() {
+    fn an_alias_resolves_to_the_generated_role_it_names() {
         let tokens = law();
         assert_eq!(
             tokens.color("surface.page").unwrap(),
-            tokens.color("color.cream.25").unwrap()
+            tokens.color("theme.bgSub").unwrap()
         );
     }
 
+    /// Resolution is transitive, and eager: `texture.grain.colorBack` names
+    /// `surface.page`, which names a role that only exists because the theme
+    /// was derived first.
     #[test]
     fn an_alias_resolves_through_another_alias() {
         let tokens = law();
         assert_eq!(
-            tokens.color("surface.echo").unwrap(),
-            tokens.color("color.cream.50").unwrap()
+            tokens.color("texture.grain.colorBack").unwrap(),
+            tokens.color("theme.bgSub").unwrap()
         );
-    }
-
-    #[test]
-    fn a_literal_hex_survives_beside_the_generated_steps() {
-        assert_eq!(law().color("surface.raised").unwrap().hex(), "#FFFFFF");
-    }
-
-    #[test]
-    fn neutral_steps_are_generated_rather_than_read_back() {
-        let tokens = law();
-        for path in ["color.cream.25", "color.cream.900", "color.ink.primary"] {
-            let sample = tokens.neutral_sample(path).expect(path);
-            assert!(sample.chroma > 0.0, "{path} was generated flat");
-            assert_eq!(sample.color, tokens.color(path).unwrap());
-        }
-    }
-
-    #[test]
-    fn every_generated_step_respects_the_relative_chroma_bound() {
-        let tokens = law();
-        let bound = f64::from(tokens.neutral_law().max_relative_chroma);
-        for path in [
-            "color.cream.25",
-            "color.cream.50",
-            "color.cream.100",
-            "color.cream.200",
-            "color.cream.300",
-            "color.cream.400",
-            "color.cream.700",
-            "color.cream.900",
-            "color.ink.primary",
-            "color.ink.muted",
-            "color.ink.faint",
-        ] {
-            let sample = tokens.neutral_sample(path).expect(path);
-            assert!(
-                f64::from(sample.chroma / sample.lightness) <= bound + 1e-7,
-                "relative chroma bound for {path}"
-            );
-        }
-    }
-
-    /// The curve's own statement about itself, with no document in it.
-    ///
-    /// The surface chroma curve is written to peak at exactly the declared
-    /// relative bound, at six sevenths lightness. Every step in the test above
-    /// is under the bound; this is the one place it is reached, so it is the
-    /// one place a change to the curve's shape shows up as a number.
-    #[test]
-    fn the_surface_curve_peaks_at_the_declared_bound() {
-        let law = law().neutral_law();
-        let peak_lightness = 6.0 / 7.0;
-        let peak = law.surface_chroma(peak_lightness) / peak_lightness;
-        assert!(
-            (peak - law.max_relative_chroma).abs() <= 1e-6,
-            "curve peak was {peak}, bound is {}",
-            law.max_relative_chroma
-        );
-    }
-
-    #[test]
-    fn an_authored_neutral_hex_is_rejected() {
-        let source = LAW.replacen("{ \"lightness\": 0.98 }", "\"#FBFAF7\"", 1);
-        assert!(matches!(
-            TokenSet::from_dtcg_str(&source),
-            Err(TokenError::AuthoredNeutral(path)) if path == "color.cream.25"
-        ));
     }
 
     #[test]
     fn a_dangling_alias_is_rejected_at_parse_rather_than_at_read() {
-        let source = LAW.replacen("{color.cream.25}", "{missing.surface}", 1);
+        let source = LAW.replacen("{theme.bgSub}", "{missing.surface}", 1);
         assert!(matches!(
             TokenSet::from_dtcg_str(&source),
             Err(TokenError::MissingToken(path)) if path == "missing.surface"
@@ -163,17 +106,88 @@ mod tests {
     }
 
     #[test]
-    fn a_document_with_no_neutral_law_is_refused() {
-        let source = LAW.replacen("\"hue\"", "\"hueue\"", 1);
+    fn a_document_missing_a_theme_input_is_refused() {
+        let source = LAW.replacen("\"accent\"", "\"acccent\"", 1);
         assert!(matches!(
             TokenSet::from_dtcg_str(&source),
-            Err(TokenError::MissingToken(path)) if path == "color.neutral.hue"
+            Err(TokenError::MissingToken(path)) if path == "theme.accent"
         ));
+    }
+
+    /// Contrast is a dial with ends, not a free number, and the refusal is at
+    /// parse so no renderer ever sees a palette derived from an impossible one.
+    #[test]
+    fn a_contrast_outside_the_dial_is_refused() {
+        let source = LAW.replacen("\"$value\": 40", "\"$value\": 140", 1);
+        assert!(matches!(
+            TokenSet::from_dtcg_str(&source),
+            Err(TokenError::InvalidThemeFile(_))
+        ));
+    }
+
+    /// The whole point of the law: a document authors three values and every
+    /// colour role in it is derived. If a fourth authored key ever appears,
+    /// something has been hand-set that the law was supposed to compute.
+    #[test]
+    fn a_document_authors_only_the_three_theme_inputs() {
+        let source: serde_json::Value = serde_json::from_str(LAW).unwrap();
+        let authored: BTreeSet<_> = source["theme"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .filter(|key| !key.starts_with('$'))
+            .map(String::as_str)
+            .collect();
+        assert_eq!(authored, BTreeSet::from(["accent", "base", "contrast"]));
+    }
+
+    #[test]
+    fn every_semantic_role_resolves_to_the_path_it_maps() {
+        let tokens = law();
+        let colors = tokens.semantic_colors();
+        assert_eq!(colors.len(), SEMANTIC_MAPPING.len());
+        for (name, path) in SEMANTIC_MAPPING {
+            assert_eq!(colors[name], tokens.color(path).unwrap(), "semantic {name}");
+        }
+    }
+
+    /// Re-deriving is the law applied twice: the generated roles move with the
+    /// new input and everything the document authored outside the theme stays
+    /// exactly as written.
+    #[test]
+    fn re_deriving_moves_the_generated_roles_and_keeps_the_authored_ones() {
+        let tokens = law();
+        let rederived = tokens.with_theme_input(ThemeInput {
+            contrast: 80.0,
+            ..tokens.theme_input()
+        });
+
+        assert_ne!(
+            tokens.color("theme.labelMuted").unwrap(),
+            rederived.color("theme.labelMuted").unwrap()
+        );
+        assert_eq!(
+            tokens.string("typography.font.human").unwrap(),
+            rederived.string("typography.font.human").unwrap()
+        );
     }
 
     #[test]
     fn prose_captures_are_declared_once_and_counted() {
-        let unique: std::collections::BTreeSet<_> = PROSE_CAPTURES.into_iter().collect();
+        let unique: BTreeSet<_> = PROSE_CAPTURES.into_iter().collect();
         assert_eq!(unique.len(), PROSE_CAPTURES.len());
+    }
+
+    /// Every capture the highlighter can emit has somewhere to land, which is
+    /// the same claim the gate makes about a product's own document.
+    #[test]
+    fn every_prose_capture_resolves_to_a_style() {
+        let tokens = law();
+        for capture in PROSE_CAPTURES {
+            assert!(
+                tokens.prose_highlight_style(capture).is_some(),
+                "prose capture {capture} did not resolve"
+            );
+        }
     }
 }
