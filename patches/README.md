@@ -94,3 +94,8 @@ only the seven GPUI manifest revisions and 25 lock source revisions; registry
 packages remain unchanged. The replacement diff retains matching text inside
 the selected range and fresh editor anchors, with UTF-16 boundary coverage.
 The Wikia browser oracle remains the consumer's actual DOM/document gate.
+
+The lock follow-up synchronizes the 25 source URLs with that manifest pin.
+The initial guard counted URL lines rather than both revision occurrences in
+each URL and refused the lock write. Both exact revision occurrences now match;
+no package version, checksum, or dependency edge changes.
