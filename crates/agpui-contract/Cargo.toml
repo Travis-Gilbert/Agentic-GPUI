@@ -1,0 +1,32 @@
+[package]
+name = "agpui-contract"
+version = "0.1.0"
+edition = "2021"
+description = "Renderer-free semantic-tree contract for AGPUI: nodes, snapshots, hashes, diffs, actions, receipts"
+license = "MIT"
+repository = "https://github.com/Travis-Gilbert/Theorem"
+rust-version = "1.85"
+
+# Every dependency, and the lint table below, is written out rather than
+# inherited from `apps/theoremweb/Cargo.toml`. SPEC-AGPUI-SEMANTIC-TREE-1.0
+# Decision 8 puts the action and receipt types on the AG-UI wire, which means
+# `theorem-surface-contracts` -- a crate in the RustyRed workspace, built into
+# service images that carry no part of the TheoremWeb tree -- has to name this
+# package. A crate that inherits from a workspace root can only be built with
+# that root present. `packaging/theorem-body-registry` is standalone for the
+# same reason.
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+
+[dev-dependencies]
+serde_json = "1"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "deny"
+pedantic = "deny"
+nursery = "deny"
