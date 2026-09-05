@@ -99,3 +99,14 @@ The lock follow-up synchronizes the 25 source URLs with that manifest pin.
 The initial guard counted URL lines rather than both revision occurrences in
 each URL and refused the lock write. Both exact revision occurrences now match;
 no package version, checksum, or dependency edge changes.
+
+The sidebar decoration patch exposes the existing clickable menu row through
+`SidebarMenuItem::item_with` and the retained toggle button through
+`SidebarToggleButton::button_with`. The row hook excludes expanded submenus;
+the button hook runs after the component's icon, label and click handler are
+bound. Both default to no decoration, preserving existing mechanics. They
+allow the downstream semantic adapter to publish the actual activation
+geometry without a second role or interactive wrapper. The ordered source
+series replay and locked Wasm component library check pass; native measured
+pointer/semantic parity is a consumer
+gate and remains pending for this candidate. This draft requires review.

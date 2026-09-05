@@ -8,9 +8,9 @@ use crate::{
     v_flex,
 };
 use gpui::{
-    AnyElement, App, ClickEvent, ElementId, InteractiveElement as _, IntoElement,
-    ParentElement as _, SharedString, StatefulInteractiveElement as _, StyleRefinement, Styled,
-    Window, div, percentage, prelude::FluentBuilder,
+    AnyElement, App, ClickEvent, Div, ElementId, InteractiveElement as _, IntoElement,
+    ParentElement as _, SharedString, Stateful, StatefulInteractiveElement as _, StyleRefinement,
+    Styled, Window, div, percentage, prelude::FluentBuilder,
 };
 use std::rc::Rc;
 
@@ -101,6 +101,7 @@ pub struct SidebarMenuItem {
     click_to_toggle: bool,
     children: Vec<Self>,
     suffix: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyElement + 'static>>,
+    item_with: Option<Rc<dyn Fn(Stateful<Div>) -> Stateful<Div>>>,
     disabled: bool,
     context_menu: Option<Rc<dyn Fn(PopupMenu, &mut Window, &mut App) -> PopupMenu + 'static>>,
 }
@@ -119,6 +120,7 @@ impl SidebarMenuItem {
             click_to_toggle: false,
             children: Vec::new(),
             suffix: None,
+            item_with: None,
             disabled: false,
             context_menu: None,
         }
@@ -193,6 +195,19 @@ impl SidebarMenuItem {
         self.suffix = Some(Rc::new(move |window, cx| {
             builder(window, cx).into_any_element()
         }));
+        self
+    }
+
+    /// Decorate the actual clickable row, excluding its expanded submenu.
+    ///
+    /// The existing click, open, hover and tooltip behavior is retained. This
+    /// hook supports accessibility and measured-row adapters without adding a
+    /// second interactive wrapper. It runs before the optional context menu.
+    pub fn item_with(
+        mut self,
+        decorate: impl Fn(Stateful<Div>) -> Stateful<Div> + 'static,
+    ) -> Self {
+        self.item_with = Some(Rc::new(decorate));
         self
     }
 
@@ -368,6 +383,10 @@ impl SidebarItem for SidebarMenuItem {
                         } else {
                             this
                         }
+                    })
+                    .map(|this| match self.item_with {
+                        Some(decorate) => decorate(this),
+                        None => this,
                     })
                     .map(|this| {
                         if let Some(context_menu) = self.context_menu {

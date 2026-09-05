@@ -305,6 +305,7 @@ pub struct SidebarToggleButton {
     collapsed: bool,
     side: Side,
     on_click: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
+    button_with: Option<Box<dyn FnOnce(Button) -> Button>>,
 }
 
 impl SidebarToggleButton {
@@ -315,7 +316,15 @@ impl SidebarToggleButton {
             collapsed: false,
             side: Side::Left,
             on_click: None,
+            button_with: None,
         }
+    }
+
+    /// Decorate the retained button after its icon, label and click handler
+    /// have been bound. The default leaves the existing button unchanged.
+    pub fn button_with(mut self, decorate: impl FnOnce(Button) -> Button + 'static) -> Self {
+        self.button_with = Some(Box::new(decorate));
+        self
     }
 
     /// Set the side of the toggle button.
@@ -372,6 +381,10 @@ impl RenderOnce for SidebarToggleButton {
                 false => t!("Sidebar.Collapse"),
             })
             .icon(Icon::new(icon).size_4())
+            .map(|button| match self.button_with {
+                Some(decorate) => decorate(button),
+                None => button,
+            })
     }
 }
 
