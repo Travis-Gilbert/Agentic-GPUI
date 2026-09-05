@@ -42,3 +42,17 @@ and 25 lock source revisions to Zed `2f7f1da474f6a8ab0f1f61ce35a1a2278ee31db4`.
 It retains the registry dependency graph, including ASHPD 0.13.10. The pinned
 web window keeps desktop shortcuts on its read-only IME event target after
 an editor closes while preserving coarse-pointer keyboard dismissal.
+
+The platform input configuration patch completes the v0.6.0 API migration:
+`InputBaseState::input_configuration` and `set_input_configuration` forward
+GPUI's actual `TextInputConfiguration` through `EntityInputHandler`. Defaults
+remain unchanged. Search fields can request the existing `Search` action key
+without restoring the retired text-input-hints API. Changing configuration
+retains text and selection. This is a preceding input prerequisite; the
+Theorem DATA conversion does not add a private input fork.
+
+Validation of this addition: locked Wasm `gpui-base --lib` check passes. The
+native `platform_input_configuration_preserves_default_and_forwards_changes`
+regression covers default, Search builder, and changed Send/assistance settings;
+its execution is pending the coordinated native validation slot. This branch
+remains a draft requiring review before merge.

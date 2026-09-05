@@ -1,0 +1,145 @@
+From 41d78525001d551124010a5766dd305c55e60e57 Mon Sep 17 00:00:00 2001
+From: Travis Gilbert <1travisgilbert@gmail.com>
+Date: Sat, 5 Sep 2026 04:50:34 -0400
+Subject: [PATCH] feat(input): forward platform input configuration
+
+---
+ crates/base/src/input/base/state.rs | 80 ++++++++++++++++++++++++++++-
+ 1 file changed, 79 insertions(+), 1 deletion(-)
+
+diff --git a/crates/base/src/input/base/state.rs b/crates/base/src/input/base/state.rs
+index ab5397b3..9a1d831b 100644
+--- a/crates/base/src/input/base/state.rs
++++ b/crates/base/src/input/base/state.rs
+@@ -2,7 +2,6 @@
+ //!
+ //! Based on the `Input` example from the `gpui` crate.
+ //! https://github.com/zed-industries/zed/blob/main/crates/gpui/examples/input.rs
+-use gpui::TextAlign;
+ use gpui::{
+     Action, App, AppContext, Bounds, ClipboardItem, Context, Edges, Entity, EntityInputHandler,
+     EventEmitter, FocusHandle, Focusable, InteractiveElement as _, IntoElement, KeyBinding,
+@@ -10,6 +9,7 @@ use gpui::{
+     Pixels, Point, Render, ScrollHandle, ScrollWheelEvent, SharedString, Styled as _, Subscription,
+     UTF16Selection, Window, actions, div, point, prelude::FluentBuilder as _, px,
+ };
++use gpui::{TextAlign, TextInputConfiguration};
+ use ropey::{Rope, RopeSlice};
+ use serde::Deserialize;
+ use std::borrow::Cow;
+@@ -320,6 +320,7 @@ pub struct InputBaseState<M: InputModeKind> {
+     pub(super) masked: bool,
+     pub(super) clean_on_escape: bool,
+     pub(super) submit_on_enter: bool,
++    text_input_configuration: TextInputConfiguration,
+     pub(super) show_whitespaces: bool,
+     /// This flag tells the renderer to prefer the end of the current visual line.
+     pub(crate) cursor_line_end_affinity: bool,
+@@ -637,6 +638,7 @@ impl<M: InputModeKind> InputBaseState<M> {
+             masked: false,
+             clean_on_escape: false,
+             submit_on_enter: false,
++            text_input_configuration: TextInputConfiguration::default(),
+             show_whitespaces: false,
+             loading: false,
+             pattern: None,
+@@ -1036,6 +1038,26 @@ impl<M: InputModeKind> InputBaseState<M> {
+         cx.notify();
+     }
+ 
++    /// Configure the focused platform input session's assistance and action key.
++    /// This only changes platform presentation; Enter keeps its configured
++    /// input/submit behavior. Defaults remain GPUI's disabled assistance.
++    pub fn input_configuration(mut self, configuration: TextInputConfiguration) -> Self {
++        self.text_input_configuration = configuration;
++        self
++    }
++
++    /// Update the active input session without replacing its text or selection.
++    pub fn set_input_configuration(
++        &mut self,
++        configuration: TextInputConfiguration,
++        cx: &mut Context<Self>,
++    ) {
++        if self.text_input_configuration != configuration {
++            self.text_input_configuration = configuration;
++            cx.notify();
++        }
++    }
++
+     /// Set whether to show whitespace characters.
+     #[doc(hidden)]
+     pub fn show_whitespaces(mut self, show: bool) -> Self {
+@@ -2686,6 +2708,14 @@ impl<M: InputModeKind> InputBaseState<M> {
+ }
+ 
+ impl<M: InputModeKind> EntityInputHandler for InputBaseState<M> {
++    fn text_input_configuration(
++        &mut self,
++        _window: &mut Window,
++        _cx: &mut Context<Self>,
++    ) -> TextInputConfiguration {
++        self.text_input_configuration.clone()
++    }
++
+     fn text_for_range(
+         &mut self,
+         range_utf16: Range<usize>,
+@@ -3275,6 +3305,54 @@ mod tests {
+         }
+     }
+ 
++    #[gpui::test]
++    fn platform_input_configuration_preserves_default_and_forwards_changes(
++        cx: &mut TestAppContext,
++    ) {
++        cx.update(crate::init);
++        let plain = InputView::build(cx, |state| state);
++        plain
++            .window_handle
++            .update(cx, |_, window, cx| {
++                plain.input.update(cx, |state, cx| {
++                    assert_eq!(
++                        state.text_input_configuration(window, cx),
++                        TextInputConfiguration::default()
++                    );
++                });
++            })
++            .unwrap();
++        let search = InputView::build(cx, |state| {
++            state.input_configuration(TextInputConfiguration {
++                input_action: gpui::TextInputAction::Search,
++                ..Default::default()
++            })
++        });
++        search
++            .window_handle
++            .update(cx, |_, window, cx| {
++                search.input.update(cx, |state, cx| {
++                    assert_eq!(
++                        state.text_input_configuration(window, cx).input_action,
++                        gpui::TextInputAction::Search
++                    );
++                    state.set_value("retained draft", window, cx);
++                    state.set_selected_range(2..5, cx);
++                    let changed = TextInputConfiguration {
++                        input_action: gpui::TextInputAction::Send,
++                        autocorrect: true,
++                        suggestions: true,
++                        autocapitalize: gpui::Autocapitalize::Sentences,
++                    };
++                    state.set_input_configuration(changed.clone(), cx);
++                    assert_eq!(state.text_input_configuration(window, cx), changed);
++                    assert_eq!(state.text().to_string(), "retained draft");
++                    assert_eq!(state.selected_range(), 2..5);
++                });
++            })
++            .unwrap();
++    }
++
+     #[gpui::test]
+     fn only_a_multi_line_input_paints_scrollbars(cx: &mut TestAppContext) {
+         cx.update(crate::init);
+-- 
+2.53.0
+
