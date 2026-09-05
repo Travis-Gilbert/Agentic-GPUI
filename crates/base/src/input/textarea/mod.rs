@@ -50,6 +50,10 @@ impl InputModeKind for TextareaMode {
         state.extras.decorations.clear();
     }
 
+    fn reset_document_presentation(state: &mut InputBaseState<Self>) {
+        state.extras.decorations.clear();
+    }
+
     fn adjust_annotations(
         state: &mut InputBaseState<Self>,
         range: &std::ops::Range<usize>,

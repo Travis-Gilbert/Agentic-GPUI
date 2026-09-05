@@ -1,0 +1,42 @@
+diff --git a/crates/base/src/input/base/kind.rs b/crates/base/src/input/base/kind.rs
+index 393b49bd..6637e800 100644
+--- a/crates/base/src/input/base/kind.rs
++++ b/crates/base/src/input/base/kind.rs
+@@ -185,6 +185,10 @@ pub trait InputModeKind: sealed::Sealed + Sized + 'static {
+     /// Drops decorations and hover state when the text is replaced wholesale.
+     fn reset_annotations(_state: &mut InputBaseState<Self>) {}
+ 
++    /// Drops presentation ranges after an authoritative whole-text replacement.
++    /// Existing mode behavior is unchanged unless a mode opts into this hook.
++    fn reset_document_presentation(_state: &mut InputBaseState<Self>) {}
++
+     /// Slides decoration ranges along with an edit.
+     fn adjust_annotations(
+         _state: &mut InputBaseState<Self>,
+diff --git a/crates/base/src/input/base/state.rs b/crates/base/src/input/base/state.rs
+index 9a1d831b..2c776da4 100644
+--- a/crates/base/src/input/base/state.rs
++++ b/crates/base/src/input/base/state.rs
+@@ -929,6 +929,7 @@ impl<M: InputModeKind> InputBaseState<M> {
+             this.undo_manager.pending_intent = Some(EditIntent::Atomic);
+             let range = 0..this.text.chars().map(|c| c.len_utf16()).sum();
+             this.replace_text_in_range_silent(Some(range), &text, window, cx);
++            M::reset_document_presentation(this);
+             this.reset_highlighter(cx);
+         });
+     }
+diff --git a/crates/base/src/input/textarea/mod.rs b/crates/base/src/input/textarea/mod.rs
+index 371d33a2..79299b20 100644
+--- a/crates/base/src/input/textarea/mod.rs
++++ b/crates/base/src/input/textarea/mod.rs
+@@ -50,6 +50,10 @@ impl InputModeKind for TextareaMode {
+         state.extras.decorations.clear();
+     }
+ 
++    fn reset_document_presentation(state: &mut InputBaseState<Self>) {
++        state.extras.decorations.clear();
++    }
++
+     fn adjust_annotations(
+         state: &mut InputBaseState<Self>,
+         range: &std::ops::Range<usize>,
