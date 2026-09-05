@@ -73,6 +73,34 @@ impl TextViewDefaults {
 pub(crate) type TableActionsFn =
     dyn Fn(&TableData, &mut Window, &mut App) -> AnyElement + Send + Sync;
 
+/// A measured visual fragment of a parsed text link. Wrapped links publish one
+/// fragment per visual line, never a rectangle covering the intervening prose.
+#[derive(Clone, Debug)]
+pub struct LinkFragment {
+    /// Stable fragment identity within the containing text view.
+    pub id: SharedString,
+    /// The URL resolved by the existing Markdown/HTML parser.
+    pub url: SharedString,
+    /// The visible text of this fragment, without Markdown syntax.
+    pub text: SharedString,
+}
+
+/// Presentation of a parsed text link. The default is the existing solid
+/// underline; dotted suggestions keep the same glyph layout and hit target.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LinkUnderline {
+    #[default]
+    Solid,
+    Dotted,
+    None,
+}
+
+pub(crate) type LinkUnderlineFn = dyn Fn(&SharedString, &App) -> LinkUnderline + Send + Sync;
+
+pub(crate) type LinkFragmentDecoratorFn = dyn Fn(&LinkFragment, gpui::Stateful<gpui::Div>, &mut Window, &mut App) -> gpui::Stateful<gpui::Div>
+    + Send
+    + Sync;
+
 pub(crate) type LinkClickHandlerFn =
     dyn Fn(&SharedString, &ClickEvent, &mut Window, &mut App) + Send + Sync;
 
@@ -128,6 +156,8 @@ pub struct TextView {
     code_block_highlighter: Option<Arc<CodeBlockHighlighterFn>>,
     table_actions: Option<Arc<TableActionsFn>>,
     link_click_handler: Option<Arc<LinkClickHandlerFn>>,
+    link_fragment_decorator: Option<Arc<LinkFragmentDecoratorFn>>,
+    link_underline: Option<Arc<LinkUnderlineFn>>,
     markdown_extensions: Arc<MarkdownExtensions>,
 }
 
@@ -172,6 +202,8 @@ impl TextView {
             code_block_highlighter: None,
             table_actions: None,
             link_click_handler: None,
+            link_fragment_decorator: None,
+            link_underline: None,
             markdown_extensions: Arc::default(),
         }
     }
@@ -193,6 +225,8 @@ impl TextView {
             code_block_highlighter: None,
             table_actions: None,
             link_click_handler: None,
+            link_fragment_decorator: None,
+            link_underline: None,
             markdown_extensions: Arc::default(),
         }
     }
@@ -214,6 +248,8 @@ impl TextView {
             code_block_highlighter: None,
             table_actions: None,
             link_click_handler: None,
+            link_fragment_decorator: None,
+            link_underline: None,
             markdown_extensions: Arc::default(),
         }
     }
@@ -330,6 +366,37 @@ impl TextView {
         F: Fn(&SharedString, &ClickEvent, &mut Window, &mut App) + Send + Sync + 'static,
     {
         self.link_click_handler = Some(Arc::new(handler));
+        self
+    }
+
+    /// Selects link underline presentation without changing text or layout.
+    /// Unspecified views retain their existing solid underline.
+    pub fn link_underline<F>(mut self, style: F) -> Self
+    where
+        F: Fn(&SharedString, &App) -> LinkUnderline + Send + Sync + 'static,
+    {
+        self.link_underline = Some(Arc::new(style));
+        self
+    }
+
+    /// Decorates each actual, measured text-link target after its ordinary
+    /// click handler is installed. This can publish accessibility, focus and
+    /// hover behavior on the same fragment. The parser, text layout and text
+    /// selection remain owned by TextView. The decorator must preserve the
+    /// supplied target's dimensions and existing click handler.
+    pub fn link_with<F>(mut self, decorator: F) -> Self
+    where
+        F: Fn(
+                &LinkFragment,
+                gpui::Stateful<gpui::Div>,
+                &mut Window,
+                &mut App,
+            ) -> gpui::Stateful<gpui::Div>
+            + Send
+            + Sync
+            + 'static,
+    {
+        self.link_fragment_decorator = Some(Arc::new(decorator));
         self
     }
 
@@ -554,6 +621,8 @@ impl Element for TextView {
             state.code_block_highlighter = code_block_highlighter.clone();
             state.table_actions = self.table_actions.clone();
             state.link_click_handler = self.link_click_handler.clone();
+            state.link_fragment_decorator = self.link_fragment_decorator.clone();
+            state.link_underline = self.link_underline.clone();
             state.set_markdown_extensions(self.markdown_extensions.clone(), cx);
             state.selectable = self.selectable;
             state.selection_format = self.selection_format;
@@ -630,16 +699,14 @@ impl Element for TextView {
             if let Ok(mut line_spans) = state.read(cx).line_spans.lock() {
                 line_spans.clear();
             }
-            // Descendant `Inline`s report their line spans through the state
-            // stack during prepaint (in addition to the paint-time push below).
-            GlobalState::global_mut(cx)
-                .text_view_state_stack
-                .push(state.clone());
         }
+        // Measured link targets retain this same selection authority. Clamped
+        // descendants additionally report their line spans through the stack.
+        GlobalState::global_mut(cx)
+            .text_view_state_stack
+            .push(state.clone());
         request_layout.element.prepaint(window, cx);
-        if max_lines_active {
-            GlobalState::global_mut(cx).text_view_state_stack.pop();
-        }
+        GlobalState::global_mut(cx).text_view_state_stack.pop();
 
         let mut clip_bottom = None;
         if max_lines_active {

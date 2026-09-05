@@ -107,6 +107,31 @@ impl TextView {
         self.inner = self.inner.on_link_click(f);
         self
     }
+    /// Selects Base's solid, dotted or absent underline on the existing text.
+    pub fn link_underline<F>(mut self, style: F) -> Self
+    where
+        F: Fn(&SharedString, &App) -> gpui_base::text::LinkUnderline + Send + Sync + 'static,
+    {
+        self.inner = self.inner.link_underline(style);
+        self
+    }
+    /// Decorates the actual measured Base link targets, preserving its parser,
+    /// selection and click behavior. See [`gpui_base::TextView::link_with`].
+    pub fn link_with<F>(mut self, decorator: F) -> Self
+    where
+        F: Fn(
+                &gpui_base::text::LinkFragment,
+                gpui::Stateful<gpui::Div>,
+                &mut Window,
+                &mut App,
+            ) -> gpui::Stateful<gpui::Div>
+            + Send
+            + Sync
+            + 'static,
+    {
+        self.inner = self.inner.link_with(decorator);
+        self
+    }
     /// Sets which Markdown extensions the parser accepts.
     pub fn markdown_extensions(mut self, value: MarkdownExtensions) -> Self {
         self.inner = self.inner.markdown_extensions(value);

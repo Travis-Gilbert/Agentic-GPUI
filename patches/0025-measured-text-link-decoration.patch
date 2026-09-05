@@ -1,0 +1,723 @@
+diff --git a/crates/base/src/text/inline.rs b/crates/base/src/text/inline.rs
+index 09abe59c..c0711f85 100644
+--- a/crates/base/src/text/inline.rs
++++ b/crates/base/src/text/inline.rs
+@@ -1,15 +1,17 @@
+ use gpui::Corners;
+ use std::{
++    collections::BTreeMap,
+     ops::Range,
+     rc::Rc,
+     sync::{Arc, Mutex},
+ };
+ 
+ use gpui::{
+-    App, BorderStyle, Bounds, ClickEvent, CursorStyle, Edges, Element, ElementId, GlobalElementId,
+-    Half, HighlightStyle, Hitbox, HitboxBehavior, InspectorElementId, IntoElement, LayoutId,
+-    MouseButton, MouseClickEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
+-    SharedString, StyledText, TextLayout, Window, point, px, quad,
++    AnyElement, App, AvailableSpace, BorderStyle, Bounds, ClickEvent, CursorStyle, Edges, Element,
++    ElementId, GlobalElementId, Half, HighlightStyle, Hitbox, HitboxBehavior, InspectorElementId,
++    InteractiveElement as _, IntoElement, LayoutId, MouseButton, MouseClickEvent, MouseDownEvent,
++    MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, StatefulInteractiveElement as _,
++    Styled as _, StyledText, TextLayout, Window, div, point, px, quad, size,
+ };
+ 
+ use crate::{
+@@ -19,7 +21,10 @@ use crate::{
+     text::node::LinkMark,
+     text::selection::word_range_at,
+     text::state::LineSpan,
+-    text::text_view::{LinkClickHandlerFn, handle_link_click},
++    text::text_view::{
++        LinkClickHandlerFn, LinkFragment, LinkFragmentDecoratorFn, LinkUnderline, LinkUnderlineFn,
++        handle_link_click,
++    },
+ };
+ 
+ /// A inline element used to render a inline text and support selectable.
+@@ -32,6 +37,9 @@ pub(super) struct Inline {
+     highlights: Vec<(Range<usize>, HighlightStyle)>,
+     styled_text: StyledText,
+     link_click_handler: Option<Arc<LinkClickHandlerFn>>,
++    link_fragment_decorator: Option<Arc<LinkFragmentDecoratorFn>>,
++    link_source_offset: usize,
++    link_underline: Option<Arc<LinkUnderlineFn>>,
+ 
+     state: Arc<Mutex<InlineState>>,
+ }
+@@ -72,10 +80,132 @@ impl Inline {
+             text: text.clone(),
+             styled_text: StyledText::new(text),
+             link_click_handler,
++            link_fragment_decorator: None,
++            link_source_offset: 0,
++            link_underline: None,
+             state,
+         }
+     }
+ 
++    pub(super) fn link_with(
++        mut self,
++        decorator: Option<Arc<LinkFragmentDecoratorFn>>,
++        source_offset: usize,
++    ) -> Self {
++        self.link_fragment_decorator = decorator;
++        self.link_source_offset = source_offset;
++        self
++    }
++
++    pub(super) fn link_underline(mut self, style: Option<Arc<LinkUnderlineFn>>) -> Self {
++        self.link_underline = style;
++        self
++    }
++
++    fn link_elements(
++        &self,
++        global_id: Option<&GlobalElementId>,
++        window: &mut Window,
++        cx: &mut App,
++    ) -> Vec<AnyElement> {
++        let Some(decorator) = &self.link_fragment_decorator else {
++            return Vec::new();
++        };
++        let mut focus_handles = window
++            .with_element_state::<BTreeMap<SharedString, gpui::FocusHandle>, _>(
++                global_id.expect("Inline has a stable id"),
++                |retained, _| {
++                    let state = retained.unwrap_or_default();
++                    (state.clone(), state)
++                },
++            );
++        let mut retained_ids = Vec::new();
++        let layout = self.styled_text.layout();
++        let mut elements = Vec::new();
++        for (link_ix, (range, link)) in self.links.iter().enumerate() {
++            for (part_ix, (fragment_range, bounds)) in link_fragment_bounds(&layout, range.clone())
++                .into_iter()
++                .enumerate()
++            {
++                let fragment = LinkFragment {
++                    id: format!(
++                        "link-{}-{:?}-{link_ix}-{part_ix}",
++                        self.link_source_offset, self.id
++                    )
++                    .into(),
++                    url: link.url.clone(),
++                    text: self.text[fragment_range].to_string().into(),
++                };
++                let focus = focus_handles
++                    .entry(fragment.id.clone())
++                    .or_insert_with(|| cx.focus_handle())
++                    .clone();
++                retained_ids.push(fragment.id.clone());
++                let click_focus = focus.clone();
++                let handler = self.link_click_handler.clone();
++                let url = link.url.clone();
++                let text_view_state = GlobalState::global(cx).text_view_state().cloned();
++                let click = move |event: &ClickEvent, window: &mut Window, cx: &mut App| {
++                    if !matches!(event, ClickEvent::Keyboard(_))
++                        && text_view_state
++                            .as_ref()
++                            .is_some_and(|state| state.read(cx).has_selection(cx))
++                    {
++                        return;
++                    }
++                    TextSelection::end(window, cx);
++                    // The selection layer focuses its text participant on
++                    // mouse down. A completed link click focuses the actual
++                    // fragment, while a drag keeps the text selection focus.
++                    click_focus.focus(window, cx);
++                    // Selection queues its focus callback on mouse down. A
++                    // semantic press can deliver down and up in one update,
++                    // so that queued callback would otherwise run after this
++                    // completed click and take focus back from the link.
++                    // Correct only that participant's focus; navigation may
++                    // have intentionally focused a different control.
++                    if let Some(state) = &text_view_state {
++                        let selection_focus = state.read(cx).focus_handle().clone();
++                        let completed_focus = click_focus.clone();
++                        window.defer(cx, move |window, cx| {
++                            if selection_focus.is_focused(window) {
++                                completed_focus.focus(window, cx);
++                            }
++                        });
++                    }
++                    cx.stop_propagation();
++                    handle_link_click(&handler, url.clone(), event.clone(), window, cx);
++                };
++                let target = div()
++                    .id(fragment.id.clone())
++                    .tab_index(0)
++                    .track_focus(&focus)
++                    .w(bounds.size.width)
++                    .h(bounds.size.height)
++                    .cursor_pointer()
++                    .on_click(click.clone())
++                    .on_aux_click(click);
++                let mut target = decorator(&fragment, target, window, cx).into_any_element();
++                target.prepaint_as_root(
++                    bounds.origin,
++                    size(
++                        AvailableSpace::Definite(bounds.size.width),
++                        AvailableSpace::Definite(bounds.size.height),
++                    ),
++                    window,
++                    cx,
++                );
++                elements.push(target);
++            }
++        }
++        focus_handles.retain(|id, _| retained_ids.contains(id));
++        window.with_element_state::<BTreeMap<SharedString, gpui::FocusHandle>, _>(
++            global_id.expect("Inline has a stable id"),
++            |_, _| ((), focus_handles),
++        );
++        elements
++    }
++
+     /// Get link at given mouse position.
+     fn link_for_position(
+         layout: &TextLayout,
+@@ -338,7 +468,7 @@ impl IntoElement for Inline {
+ 
+ impl Element for Inline {
+     type RequestLayoutState = ();
+-    type PrepaintState = Hitbox;
++    type PrepaintState = (Hitbox, Vec<AnyElement>);
+ 
+     fn id(&self) -> Option<ElementId> {
+         Some(self.id.clone())
+@@ -357,9 +487,34 @@ impl Element for Inline {
+     ) -> (LayoutId, Self::RequestLayoutState) {
+         let text_style = window.text_style();
+ 
++        let overrides = self
++            .links
++            .iter()
++            .filter_map(|(range, link)| {
++                let style = self
++                    .link_underline
++                    .as_ref()
++                    .map(|style| style(&link.url, cx))
++                    .unwrap_or_default();
++                (style != LinkUnderline::Solid).then(|| {
++                    (
++                        range.clone(),
++                        HighlightStyle {
++                            underline: Some(gpui::UnderlineStyle {
++                                thickness: px(0.),
++                                ..Default::default()
++                            }),
++                            ..Default::default()
++                        },
++                    )
++                })
++            })
++            .collect::<Vec<_>>();
++        let highlights =
++            gpui::combine_highlights(self.highlights.clone(), overrides).collect::<Vec<_>>();
+         let mut runs = Vec::new();
+         let mut ix = 0;
+-        for (range, highlight) in self.highlights.iter() {
++        for (range, highlight) in &highlights {
+             if ix < range.start {
+                 runs.push(text_style.clone().to_run(range.start - ix));
+             }
+@@ -408,7 +563,7 @@ impl Element for Inline {
+         }
+ 
+         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+-        hitbox
++        (hitbox, self.link_elements(id, window, cx))
+     }
+ 
+     fn paint(
+@@ -422,7 +577,7 @@ impl Element for Inline {
+         cx: &mut App,
+     ) {
+         let current_view = window.current_view();
+-        let hitbox = prepaint;
++        let (hitbox, link_elements) = prepaint;
+         let Ok(mut state) = self.state.lock() else {
+             return;
+         };
+@@ -431,6 +586,31 @@ impl Element for Inline {
+         self.styled_text
+             .paint(global_id, None, bounds, &mut (), &mut (), window, cx);
+ 
++        for (range, link) in self.links.iter() {
++            if self
++                .link_underline
++                .as_ref()
++                .map(|style| style(&link.url, cx))
++                != Some(LinkUnderline::Dotted)
++            {
++                continue;
++            }
++            let color = self
++                .highlights
++                .iter()
++                .find_map(|(span, style)| {
++                    (span.start <= range.start && range.start < span.end)
++                        .then_some(style.color)
++                        .flatten()
++                })
++                .unwrap_or(window.text_style().color);
++            for (_, fragment) in link_fragment_bounds(&text_layout, range.clone()) {
++                for dot in dotted_underline_bounds(fragment) {
++                    window.paint_quad(gpui::fill(dot, color));
++                }
++            }
++        }
++
+         // layout selections
+         let (is_selectable, is_selection, selection) =
+             self.layout_selections(&text_layout, &bounds, window, cx);
+@@ -541,7 +721,7 @@ impl Element for Inline {
+             }
+         });
+ 
+-        if !is_selection {
++        if !is_selection && self.link_fragment_decorator.is_none() {
+             // click to open link
+             window.on_mouse_event({
+                 let links = self.links.clone();
+@@ -581,7 +761,73 @@ impl Element for Inline {
+                 }
+             });
+         }
++        // These are the actual link targets, positioned by the same glyph
++        // layout painted above. Their click handlers replace the legacy hit
++        // test only when the caller requested a decorator.
++        for element in link_elements {
++            element.paint(window, cx);
++        }
++    }
++}
++
++/// Split at actual hard/soft line boundaries. Widths come from shaped glyph
++/// advances, including the final glyph before a wrap, never an estimated font
++/// width or a union spanning multiple lines.
++fn link_fragment_bounds(
++    layout: &TextLayout,
++    range: Range<usize>,
++) -> Vec<(Range<usize>, Bounds<Pixels>)> {
++    let mut fragments = Vec::new();
++    let mut line_start = 0;
++    let mut line_y = layout.bounds().top();
++    for line in layout.line_layouts() {
++        let boundaries = std::iter::once(0)
++            .chain(line.wrap_boundaries.iter().map(|boundary| {
++                line.unwrapped_layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix].index
++            }))
++            .chain(std::iter::once(line.len()))
++            .collect::<Vec<_>>();
++        for (row_ix, row) in boundaries.windows(2).enumerate() {
++            let start = range.start.max(line_start + row[0]);
++            let end = range.end.min(line_start + row[1]);
++            if start >= end {
++                continue;
++            }
++            // position_for_index deliberately gives a wrap boundary the
++            // previous line's caret affinity. A visual fragment starts on the
++            // next row, so use the actual wrap row and shaped x advances.
++            let origin = point(
++                layout.bounds().left() + line.unwrapped_layout.x_for_index(start - line_start)
++                    - line.unwrapped_layout.x_for_index(row[0]),
++                line_y + layout.line_height() * row_ix,
++            );
++            let width = line.unwrapped_layout.x_for_index(end - line_start)
++                - line.unwrapped_layout.x_for_index(start - line_start);
++            if width > px(0.) {
++                fragments.push((
++                    start..end,
++                    Bounds::new(origin, size(width, layout.line_height())),
++                ));
++            }
++        }
++        line_start += line.len() + 1;
++        line_y += line.size(layout.line_height()).height;
++    }
++    fragments
++}
++
++/// One-pixel dots separated by two clear pixels on each measured fragment.
++fn dotted_underline_bounds(fragment: Bounds<Pixels>) -> Vec<Bounds<Pixels>> {
++    let mut dots = Vec::new();
++    let mut x = fragment.left();
++    while x < fragment.right() {
++        dots.push(Bounds::new(
++            point(x, fragment.bottom() - px(2.)),
++            size(px(1.).min(fragment.right() - x), px(1.)),
++        ));
++        x += px(3.);
+     }
++    dots
+ }
+ 
+ fn selection_for_multi_click(
+diff --git a/crates/base/src/text/inline_flow.rs b/crates/base/src/text/inline_flow.rs
+index 01706014..e36c716a 100644
+--- a/crates/base/src/text/inline_flow.rs
++++ b/crates/base/src/text/inline_flow.rs
+@@ -11,7 +11,9 @@ use gpui::{
+     WhiteSpace, Window, img, point, prelude::FluentBuilder as _, px, relative, size,
+ };
+ 
+-use crate::text::text_view::{LinkClickHandlerFn, handle_link_click};
++use crate::text::text_view::{
++    LinkClickHandlerFn, LinkFragmentDecoratorFn, LinkUnderlineFn, handle_link_click,
++};
+ 
+ use super::{
+     inline::{Inline, InlineState},
+@@ -25,6 +27,9 @@ pub(super) struct InlineFlow {
+     id: ElementId,
+     items: Vec<InlineFlowItem>,
+     link_click_handler: Option<Arc<LinkClickHandlerFn>>,
++    link_fragment_decorator: Option<Arc<LinkFragmentDecoratorFn>>,
++    link_source_offset: usize,
++    link_underline: Option<Arc<LinkUnderlineFn>>,
+ }
+ 
+ pub(super) enum InlineFlowItem {
+@@ -111,9 +116,27 @@ impl InlineFlow {
+             id: id.into(),
+             items,
+             link_click_handler,
++            link_fragment_decorator: None,
++            link_source_offset: 0,
++            link_underline: None,
+         }
+     }
+ 
++    pub(super) fn link_with(
++        mut self,
++        decorator: Option<Arc<LinkFragmentDecoratorFn>>,
++        source_offset: usize,
++    ) -> Self {
++        self.link_fragment_decorator = decorator;
++        self.link_source_offset = source_offset;
++        self
++    }
++
++    pub(super) fn link_underline(mut self, style: Option<Arc<LinkUnderlineFn>>) -> Self {
++        self.link_underline = style;
++        self
++    }
++
+     fn image_element(
+         ix: usize,
+         url: &SharedUri,
+@@ -286,6 +309,11 @@ impl Element for InlineFlow {
+                         highlights,
+                         self.link_click_handler.clone(),
+                     )
++                    .link_with(
++                        self.link_fragment_decorator.clone(),
++                        self.link_source_offset + source_range.start,
++                    )
++                    .link_underline(self.link_underline.clone())
+                     .into_any_element();
+                     element.prepaint_as_root(
+                         bounds.origin + origin,
+diff --git a/crates/base/src/text/node.rs b/crates/base/src/text/node.rs
+index a008ccc4..34133f45 100644
+--- a/crates/base/src/text/node.rs
++++ b/crates/base/src/text/node.rs
+@@ -17,8 +17,8 @@ use crate::{
+     StyledExt, h_flex,
+     scrollable_mask::horizontal_scroll_area,
+     text::{
+-        CodeBlockActionsFn, CodeBlockHighlighterFn, LinkClickHandlerFn, MarkdownExtensions,
+-        MarkdownNode, TableActionsFn,
++        CodeBlockActionsFn, CodeBlockHighlighterFn, LinkClickHandlerFn, LinkFragmentDecoratorFn,
++        LinkUnderlineFn, MarkdownExtensions, MarkdownNode, TableActionsFn,
+         document::NodeRenderOptions,
+         inline::{Inline, InlineState},
+         inline_flow::{InlineFlow, InlineFlowItem},
+@@ -1336,6 +1336,8 @@ pub(crate) struct NodeContext {
+     pub(crate) code_block_actions: Option<Arc<CodeBlockActionsFn>>,
+     pub(crate) code_block_highlighter: Option<Arc<CodeBlockHighlighterFn>>,
+     pub(crate) table_actions: Option<Arc<TableActionsFn>>,
++    pub(crate) link_underline: Option<Arc<LinkUnderlineFn>>,
++    pub(crate) link_fragment_decorator: Option<Arc<LinkFragmentDecoratorFn>>,
+     pub(crate) link_click_handler: Option<Arc<LinkClickHandlerFn>>,
+     pub(crate) markdown_extensions: Arc<MarkdownExtensions>,
+ }
+@@ -1365,6 +1367,11 @@ impl Paragraph {
+                 self.inline_flow_items(node_cx, cx),
+                 node_cx.link_click_handler.clone(),
+             )
++            .link_with(
++                node_cx.link_fragment_decorator.clone(),
++                node_cx.offset + span.unwrap_or_default().start,
++            )
++            .link_underline(node_cx.link_underline.clone())
+             .into_any_element();
+         }
+ 
+@@ -1393,6 +1400,11 @@ impl Paragraph {
+                             highlights.clone(),
+                             node_cx.link_click_handler.clone(),
+                         )
++                        .link_with(
++                            node_cx.link_fragment_decorator.clone(),
++                            node_cx.offset + span.unwrap_or_default().start,
++                        )
++                        .link_underline(node_cx.link_underline.clone())
+                         .into_any_element(),
+                     );
+                 }
+@@ -1508,6 +1520,11 @@ impl Paragraph {
+                     highlights,
+                     node_cx.link_click_handler.clone(),
+                 )
++                .link_with(
++                    node_cx.link_fragment_decorator.clone(),
++                    node_cx.offset + span.unwrap_or_default().start,
++                )
++                .link_underline(node_cx.link_underline.clone())
+                 .into_any_element(),
+             );
+         }
+diff --git a/crates/base/src/text/state.rs b/crates/base/src/text/state.rs
+index 8e08c75e..07318447 100644
+--- a/crates/base/src/text/state.rs
++++ b/crates/base/src/text/state.rs
+@@ -17,8 +17,8 @@ use crate::{
+     async_util::{Receiver, Sender, unbounded},
+     input::{self, SelectAll},
+     text::{
+-        CodeBlockActionsFn, CodeBlockHighlighterFn, LinkClickHandlerFn, MarkdownExtensions,
+-        TableActionsFn, TextViewStyle,
++        CodeBlockActionsFn, CodeBlockHighlighterFn, LinkClickHandlerFn, LinkFragmentDecoratorFn,
++        LinkUnderlineFn, MarkdownExtensions, TableActionsFn, TextViewStyle,
+         document::ParsedDocument,
+         format,
+         node::{self, NodeContext},
+@@ -103,6 +103,8 @@ pub struct TextViewState {
+     pub(super) code_block_actions: Option<std::sync::Arc<CodeBlockActionsFn>>,
+     pub(super) code_block_highlighter: Option<std::sync::Arc<CodeBlockHighlighterFn>>,
+     pub(super) table_actions: Option<std::sync::Arc<TableActionsFn>>,
++    pub(super) link_underline: Option<Arc<LinkUnderlineFn>>,
++    pub(super) link_fragment_decorator: Option<Arc<LinkFragmentDecoratorFn>>,
+     pub(super) link_click_handler: Option<std::sync::Arc<LinkClickHandlerFn>>,
+     pub(super) markdown_extensions: Arc<MarkdownExtensions>,
+ 
+@@ -203,6 +205,8 @@ impl TextViewState {
+             code_block_highlighter: None,
+             table_actions: None,
+             link_click_handler: None,
++            link_fragment_decorator: None,
++            link_underline: None,
+             markdown_extensions: Arc::default(),
+             is_selecting: false,
+             auto_scroll: AutoScroll::default(),
+@@ -613,6 +617,8 @@ impl Render for TextViewState {
+         node_cx.code_block_highlighter = self.code_block_highlighter.clone();
+         node_cx.table_actions = self.table_actions.clone();
+         node_cx.link_click_handler = self.link_click_handler.clone();
++        node_cx.link_fragment_decorator = self.link_fragment_decorator.clone();
++        node_cx.link_underline = self.link_underline.clone();
+         node_cx.markdown_extensions = self.markdown_extensions.clone();
+         node_cx.style = self.text_view_style.clone();
+ 
+diff --git a/crates/base/src/text/text_view.rs b/crates/base/src/text/text_view.rs
+index 535ee643..2857e1c1 100644
+--- a/crates/base/src/text/text_view.rs
++++ b/crates/base/src/text/text_view.rs
+@@ -73,6 +73,34 @@ impl TextViewDefaults {
+ pub(crate) type TableActionsFn =
+     dyn Fn(&TableData, &mut Window, &mut App) -> AnyElement + Send + Sync;
+ 
++/// A measured visual fragment of a parsed text link. Wrapped links publish one
++/// fragment per visual line, never a rectangle covering the intervening prose.
++#[derive(Clone, Debug)]
++pub struct LinkFragment {
++    /// Stable fragment identity within the containing text view.
++    pub id: SharedString,
++    /// The URL resolved by the existing Markdown/HTML parser.
++    pub url: SharedString,
++    /// The visible text of this fragment, without Markdown syntax.
++    pub text: SharedString,
++}
++
++/// Presentation of a parsed text link. The default is the existing solid
++/// underline; dotted suggestions keep the same glyph layout and hit target.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
++pub enum LinkUnderline {
++    #[default]
++    Solid,
++    Dotted,
++    None,
++}
++
++pub(crate) type LinkUnderlineFn = dyn Fn(&SharedString, &App) -> LinkUnderline + Send + Sync;
++
++pub(crate) type LinkFragmentDecoratorFn = dyn Fn(&LinkFragment, gpui::Stateful<gpui::Div>, &mut Window, &mut App) -> gpui::Stateful<gpui::Div>
++    + Send
++    + Sync;
++
+ pub(crate) type LinkClickHandlerFn =
+     dyn Fn(&SharedString, &ClickEvent, &mut Window, &mut App) + Send + Sync;
+ 
+@@ -128,6 +156,8 @@ pub struct TextView {
+     code_block_highlighter: Option<Arc<CodeBlockHighlighterFn>>,
+     table_actions: Option<Arc<TableActionsFn>>,
+     link_click_handler: Option<Arc<LinkClickHandlerFn>>,
++    link_fragment_decorator: Option<Arc<LinkFragmentDecoratorFn>>,
++    link_underline: Option<Arc<LinkUnderlineFn>>,
+     markdown_extensions: Arc<MarkdownExtensions>,
+ }
+ 
+@@ -172,6 +202,8 @@ impl TextView {
+             code_block_highlighter: None,
+             table_actions: None,
+             link_click_handler: None,
++            link_fragment_decorator: None,
++            link_underline: None,
+             markdown_extensions: Arc::default(),
+         }
+     }
+@@ -193,6 +225,8 @@ impl TextView {
+             code_block_highlighter: None,
+             table_actions: None,
+             link_click_handler: None,
++            link_fragment_decorator: None,
++            link_underline: None,
+             markdown_extensions: Arc::default(),
+         }
+     }
+@@ -214,6 +248,8 @@ impl TextView {
+             code_block_highlighter: None,
+             table_actions: None,
+             link_click_handler: None,
++            link_fragment_decorator: None,
++            link_underline: None,
+             markdown_extensions: Arc::default(),
+         }
+     }
+@@ -333,6 +369,37 @@ impl TextView {
+         self
+     }
+ 
++    /// Selects link underline presentation without changing text or layout.
++    /// Unspecified views retain their existing solid underline.
++    pub fn link_underline<F>(mut self, style: F) -> Self
++    where
++        F: Fn(&SharedString, &App) -> LinkUnderline + Send + Sync + 'static,
++    {
++        self.link_underline = Some(Arc::new(style));
++        self
++    }
++
++    /// Decorates each actual, measured text-link target after its ordinary
++    /// click handler is installed. This can publish accessibility, focus and
++    /// hover behavior on the same fragment. The parser, text layout and text
++    /// selection remain owned by TextView. The decorator must preserve the
++    /// supplied target's dimensions and existing click handler.
++    pub fn link_with<F>(mut self, decorator: F) -> Self
++    where
++        F: Fn(
++                &LinkFragment,
++                gpui::Stateful<gpui::Div>,
++                &mut Window,
++                &mut App,
++            ) -> gpui::Stateful<gpui::Div>
++            + Send
++            + Sync
++            + 'static,
++    {
++        self.link_fragment_decorator = Some(Arc::new(decorator));
++        self
++    }
++
+     /// Replace the Markdown extension registry.
+     pub fn markdown_extensions(mut self, extensions: MarkdownExtensions) -> Self {
+         self.markdown_extensions = Arc::new(extensions);
+@@ -554,6 +621,8 @@ impl Element for TextView {
+             state.code_block_highlighter = code_block_highlighter.clone();
+             state.table_actions = self.table_actions.clone();
+             state.link_click_handler = self.link_click_handler.clone();
++            state.link_fragment_decorator = self.link_fragment_decorator.clone();
++            state.link_underline = self.link_underline.clone();
+             state.set_markdown_extensions(self.markdown_extensions.clone(), cx);
+             state.selectable = self.selectable;
+             state.selection_format = self.selection_format;
+@@ -630,16 +699,14 @@ impl Element for TextView {
+             if let Ok(mut line_spans) = state.read(cx).line_spans.lock() {
+                 line_spans.clear();
+             }
+-            // Descendant `Inline`s report their line spans through the state
+-            // stack during prepaint (in addition to the paint-time push below).
+-            GlobalState::global_mut(cx)
+-                .text_view_state_stack
+-                .push(state.clone());
+         }
++        // Measured link targets retain this same selection authority. Clamped
++        // descendants additionally report their line spans through the stack.
++        GlobalState::global_mut(cx)
++            .text_view_state_stack
++            .push(state.clone());
+         request_layout.element.prepaint(window, cx);
+-        if max_lines_active {
+-            GlobalState::global_mut(cx).text_view_state_stack.pop();
+-        }
++        GlobalState::global_mut(cx).text_view_state_stack.pop();
+ 
+         let mut clip_bottom = None;
+         if max_lines_active {
+diff --git a/crates/component/src/text/compat.rs b/crates/component/src/text/compat.rs
+index a59bb5fb..6ffcfe54 100644
+--- a/crates/component/src/text/compat.rs
++++ b/crates/component/src/text/compat.rs
+@@ -107,6 +107,31 @@ impl TextView {
+         self.inner = self.inner.on_link_click(f);
+         self
+     }
++    /// Selects Base's solid, dotted or absent underline on the existing text.
++    pub fn link_underline<F>(mut self, style: F) -> Self
++    where
++        F: Fn(&SharedString, &App) -> gpui_base::text::LinkUnderline + Send + Sync + 'static,
++    {
++        self.inner = self.inner.link_underline(style);
++        self
++    }
++    /// Decorates the actual measured Base link targets, preserving its parser,
++    /// selection and click behavior. See [`gpui_base::TextView::link_with`].
++    pub fn link_with<F>(mut self, decorator: F) -> Self
++    where
++        F: Fn(
++                &gpui_base::text::LinkFragment,
++                gpui::Stateful<gpui::Div>,
++                &mut Window,
++                &mut App,
++            ) -> gpui::Stateful<gpui::Div>
++            + Send
++            + Sync
++            + 'static,
++    {
++        self.inner = self.inner.link_with(decorator);
++        self
++    }
+     /// Sets which Markdown extensions the parser accepts.
+     pub fn markdown_extensions(mut self, value: MarkdownExtensions) -> Self {
+         self.inner = self.inner.markdown_extensions(value);
+diff --git a/crates/component/src/text/mod.rs b/crates/component/src/text/mod.rs
+index d594bd57..dee55646 100644
+--- a/crates/component/src/text/mod.rs
++++ b/crates/component/src/text/mod.rs
+@@ -7,8 +7,9 @@ pub use compat::{
+     Text, TextView, TextViewLayoutState, TextViewPlugin, TextViewPrepaintState, html, markdown,
+ };
+ pub use gpui_base::text::{
+-    MarkdownBlockParserFn, MarkdownBlockRenderFn, MarkdownExtensions, MarkdownNode,
+-    MarkdownParseContext, MarkdownPlugin, SelectionFormat, TableData, TextViewState, markdown_ast,
++    LinkFragment, LinkUnderline, MarkdownBlockParserFn, MarkdownBlockRenderFn, MarkdownExtensions,
++    MarkdownNode, MarkdownParseContext, MarkdownPlugin, SelectionFormat, TableData, TextViewState,
++    markdown_ast,
+ };
+ pub use style::TextViewStyle;
+ 

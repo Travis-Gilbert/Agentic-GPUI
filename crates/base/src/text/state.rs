@@ -17,8 +17,8 @@ use crate::{
     async_util::{Receiver, Sender, unbounded},
     input::{self, SelectAll},
     text::{
-        CodeBlockActionsFn, CodeBlockHighlighterFn, LinkClickHandlerFn, MarkdownExtensions,
-        TableActionsFn, TextViewStyle,
+        CodeBlockActionsFn, CodeBlockHighlighterFn, LinkClickHandlerFn, LinkFragmentDecoratorFn,
+        LinkUnderlineFn, MarkdownExtensions, TableActionsFn, TextViewStyle,
         document::ParsedDocument,
         format,
         node::{self, NodeContext},
@@ -103,6 +103,8 @@ pub struct TextViewState {
     pub(super) code_block_actions: Option<std::sync::Arc<CodeBlockActionsFn>>,
     pub(super) code_block_highlighter: Option<std::sync::Arc<CodeBlockHighlighterFn>>,
     pub(super) table_actions: Option<std::sync::Arc<TableActionsFn>>,
+    pub(super) link_underline: Option<Arc<LinkUnderlineFn>>,
+    pub(super) link_fragment_decorator: Option<Arc<LinkFragmentDecoratorFn>>,
     pub(super) link_click_handler: Option<std::sync::Arc<LinkClickHandlerFn>>,
     pub(super) markdown_extensions: Arc<MarkdownExtensions>,
 
@@ -203,6 +205,8 @@ impl TextViewState {
             code_block_highlighter: None,
             table_actions: None,
             link_click_handler: None,
+            link_fragment_decorator: None,
+            link_underline: None,
             markdown_extensions: Arc::default(),
             is_selecting: false,
             auto_scroll: AutoScroll::default(),
@@ -613,6 +617,8 @@ impl Render for TextViewState {
         node_cx.code_block_highlighter = self.code_block_highlighter.clone();
         node_cx.table_actions = self.table_actions.clone();
         node_cx.link_click_handler = self.link_click_handler.clone();
+        node_cx.link_fragment_decorator = self.link_fragment_decorator.clone();
+        node_cx.link_underline = self.link_underline.clone();
         node_cx.markdown_extensions = self.markdown_extensions.clone();
         node_cx.style = self.text_view_style.clone();
 
