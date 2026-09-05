@@ -109,4 +109,16 @@ allow the downstream semantic adapter to publish the actual activation
 geometry without a second role or interactive wrapper. The ordered source
 series replay and locked Wasm component library check pass; native measured
 pointer/semantic parity is a consumer
-gate and remains pending for this candidate. This draft requires review.
+gate. This draft requires review.
+
+Row decorations compose in call order. A native tab-stop decoration therefore
+survives the subsequent semantic adapter: pinned GPUI delivers Enter and Space
+through the row's existing click closure, including its submenu behavior.
+No second key handler or interactive wrapper is installed. The actual consumer
+AGPUI library, copied by hash into a bounded temporary workspace and bound to
+this staged Kit source, passes all 159 native tests. Its new measured test
+covers the parent row, expanded submenu exclusion, toggle button, pointer and
+semantic activation, both keyboard keys, and disabled/read-only inertness.
+The original activation, naming and Store source assertions also pass without
+new exemptions. Locked consumer verification follows adoption of this exact
+source revision; staged-source proof is not a browser deployment result.
