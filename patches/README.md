@@ -32,3 +32,6 @@ then advances the Zed pin to include action-profiler compatibility as well.
 The web integration pin selects the published textarea IME/accessibility repair
 and its corrected workspace lock edge. Every GPUI family dependency continues
 to resolve from the same immutable Theorem Zed revision.
+
+The Linux portal follow-up also selects ASHPD 0.13.6 in this consumer lockfile,
+matching the fork's Rust 1.90-compatible dependency closure.
