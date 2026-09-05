@@ -88,10 +88,11 @@ impl TextareaState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{AppContext as _, EntityInputHandler as _, HighlightStyle, TestAppContext};
+    use gpui::{EntityInputHandler as _, HighlightStyle, TestAppContext};
 
     #[gpui::test]
     fn textarea_decorations_preserve_text_selection_and_composition(cx: &mut TestAppContext) {
+        cx.update(crate::init);
         let window = cx.add_window(|window, cx| TextareaState::new(window, cx));
         window
             .update(cx, |state, window, cx| {
