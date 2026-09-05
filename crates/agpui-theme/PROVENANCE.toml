@@ -1,0 +1,145 @@
+# Provenance for `agpui-theme`.
+#
+# SPEC-AGPUI-HOME-1.0 H7 and A05. One row per module, so a reader can tell at a
+# glance which code moved here from Theorem and which was written here, and can
+# check the claim rather than take it.
+#
+# Nothing in this crate is a port. No third-party source was copied, adapted or
+# translated into it, and it carries no attribution header for that reason. The
+# `[oracle.linear]` block below records the one product whose behaviour the code
+# names, under the ledger rule that a behaviour may be read and the code written
+# from scratch.
+#
+# `theorem_sha256` is the digest of the file in the Theorem tree at the commit
+# the move read. `local_sha256` is the digest of the file here at `moved_in`.
+# Equal digests are the verbatim claim, checkable rather than asserted; where
+# they differ the row says what changed, because a move that quietly edits is
+# how the first pass at this deliverable shipped an older generation of the
+# token schema without anyone being able to see it.
+
+schema = "theorem-provenance/1"
+package = "agpui-theme"
+path = "crates/agpui-theme"
+
+[source.theorem]
+repository = "https://github.com/Travis-Gilbert/Theorem"
+commit = "15d2154fe4a6e4cb9d086b3929acc0c9e6903a37"
+branch = "agpui-home/base-1.0"
+note = "The reconciled base: Codex's theoremweb-interaction-1.0 and gpui-kit-0.6-migration lanes merged with the graph-canvas work. Theorem's main carries an older generation of tokens.rs, color.rs and emit_gpui.rs and carries none of theme_law.rs, metrics.rs, bin/theme_check.rs or regions.rs, so main is not a tree this crate may be read from."
+
+[oracle.linear]
+kind = "behaviour"
+product = "Linear"
+note = "The generated theme law, the role names and the 36 shell metrics were derived from measurements of the running product. No Linear source was read, copied or translated; there is none to read. `ThemeInput::linear_reference` and `theme_law.rs::linear_reference_matches_live_painted_values` pin the measurement so a later drift in the derivation is a failing test rather than a changed screenshot."
+
+[[module]]
+path = "src/theme_law.rs"
+status = "moved"
+moved_from = "apps/theoremweb/crates/design-core/src/theme_law.rs"
+moved_in = "SPEC-AGPUI-HOME-1.0 H7"
+authored_in = "efaa28a90"
+theorem_sha256 = "bfa88f33da4f808bc7681d2202b08aea868dd2d579d57717244ee3ee43f8fac4"
+local_sha256 = "821c2c2964bbbb38c76bead6410bb85796ca4f80b9f7a05e474eb86127da9e80"
+divergence = "One no-op rebinding dropped, which clippy's redundant_locals refuses. Nothing else; the digests differ by that line alone."
+
+[[module]]
+path = "src/tokens.rs"
+status = "moved"
+moved_from = "apps/theoremweb/crates/design-core/src/tokens.rs"
+moved_in = "SPEC-AGPUI-HOME-1.0 H7"
+authored_in = "c5ee64770, superseded in efaa28a90"
+theorem_sha256 = "1edf0bb94927a6459a2d4153d054f306383b2fb285b90901eb05c505c0de952f"
+local_sha256 = "1edf0bb94927a6459a2d4153d054f306383b2fb285b90901eb05c505c0de952f"
+note = "Verbatim. efaa28a90 replaced the authored-neutral schema with three theme inputs; the first pass at H7 read Theorem's main and landed the schema that replaced, which is why this row records the superseding commit as well as the first."
+
+[[module]]
+path = "src/color.rs"
+status = "moved"
+moved_from = "apps/theoremweb/crates/design-core/src/color.rs"
+moved_in = "SPEC-AGPUI-HOME-1.0 H7"
+authored_in = "c5ee64770, superseded in efaa28a90"
+theorem_sha256 = "7e4798080de7533c260b8b4f65f827121c05eaf7fc2946aaca76cd85d62944ef"
+local_sha256 = "7e4798080de7533c260b8b4f65f827121c05eaf7fc2946aaca76cd85d62944ef"
+note = "Verbatim."
+
+[[module]]
+path = "src/emit_gpui.rs"
+status = "moved"
+moved_from = "apps/theoremweb/crates/design-core/src/emit_gpui.rs"
+moved_in = "SPEC-AGPUI-HOME-1.0 H7"
+authored_in = "c5ee64770, superseded in efaa28a90"
+theorem_sha256 = "768d315944753e3a51b1ec901a1dcbc539c97b1b79ed99b31e329d3db8eafc2b"
+local_sha256 = "240763443014d23059009a58d434ccb525cc6d40f3aeca56c0dff968e9091b1c"
+divergence = "SEMANTIC_MAPPING widened from pub(crate) to pub, with the reason in its doc comment: the emitter's contract is the table, and a product that emits from this crate asserts against the table from its own tests."
+
+[[module]]
+path = "src/emit_css.rs"
+status = "moved"
+moved_from = "apps/theoremweb/crates/design-core/src/emit_css.rs"
+moved_in = "SPEC-AGPUI-HOME-1.0 H7"
+authored_in = "c5ee64770"
+theorem_sha256 = "7c39e01d1dd43a2f3654ffa424bf3ea2515336fde29ead51e4cf0a7d1dd29483"
+local_sha256 = "7c39e01d1dd43a2f3654ffa424bf3ea2515336fde29ead51e4cf0a7d1dd29483"
+note = "Verbatim. Unchanged between the two generations, which is why blame on it reaches the earlier import rather than the later one."
+
+[[module]]
+path = "src/prose.rs"
+status = "moved"
+moved_from = "apps/theoremweb/crates/design-core/src/prose.rs"
+moved_in = "SPEC-AGPUI-HOME-1.0 H7"
+authored_in = "c5ee64770"
+theorem_sha256 = "d53f3772396cf70d1240f85e0976b1b163347cc5010a5e9907bab05654f3a89e"
+local_sha256 = "d53f3772396cf70d1240f85e0976b1b163347cc5010a5e9907bab05654f3a89e"
+note = "Verbatim."
+
+[[module]]
+path = "src/texture.rs"
+status = "moved"
+moved_from = "apps/theoremweb/crates/design-core/src/texture.rs"
+moved_in = "SPEC-AGPUI-HOME-1.0 H7"
+authored_in = "c5ee64770"
+theorem_sha256 = "c6771e98c6c373489dad43d3bd4e2b11c14ac59b36726fcd1b2fcf8b8cd109af"
+local_sha256 = "c6771e98c6c373489dad43d3bd4e2b11c14ac59b36726fcd1b2fcf8b8cd109af"
+note = "Verbatim. The parameter types moved; grain.rs, which bakes a PNG from them, stayed in Theorem so that a law crate does not depend on an image encoder."
+
+[[module]]
+path = "src/metrics.rs"
+status = "moved"
+moved_from = "apps/theoremweb/crates/design-core/src/metrics.rs"
+moved_in = "SPEC-AGPUI-HOME-1.0 H7"
+authored_in = "efaa28a90"
+theorem_sha256 = "aa41b989b993286c60c22a0b9cca7c0acf87114b04e7d105380ac416818f8efc"
+local_sha256 = "b8b160079b2d15ae9d96b7ccb023bcf4d2d58f7b8584d3e2cbf106e214aba110"
+divergence = "The type moved and the numbers did not. `Metrics` is renamed `ShellMetrics` and keeps all 36 device-pixel fields; `sidebar_collapse_threshold` is added as an inherent method per F12; the `pub const METRICS` holding Theorem's measured values stays in theorem-design-core. The Theorem-only helpers rem_px, rail_width and px() did not move: they convert into a renderer's units, which is the product's business."
+
+[[module]]
+path = "src/bin/theme_check.rs"
+status = "moved"
+moved_from = "apps/theoremweb/crates/design-core/src/bin/theme_check.rs"
+moved_in = "SPEC-AGPUI-HOME-1.0 H7"
+authored_in = "efaa28a90"
+theorem_sha256 = "97fd68fd8aa400e8f38162b0d4b59a226076770d43cc2984d2ac2de88149ce20"
+local_sha256 = "844bf1b4c0c9783d07c6f2a57a710a4c2bf453772c9689d0023067982549c0c4"
+divergence = "The four palette checks are unchanged. The document is now an argument rather than an embedded Theorem asset, and the palette under test is read from that document rather than from ThemeInput::theorem_default, so the gate runs on any product's file. check_shell_metrics did not move: it greps a Theorem source path for numeric px literals, which is a check about Theorem's shell and not about the law."
+
+[[module]]
+path = "src/regions.rs"
+status = "moved"
+moved_from = "apps/theoremweb/crates/gpui/host/src/regions.rs"
+moved_in = "SPEC-AGPUI-HOME-1.0 H7"
+authored_in = "644c6de85"
+theorem_sha256 = "0c212aea528b178bc895d3b9c32374435c89cb4bb84d4f7a0d72675e6b32a71c"
+local_sha256 = "ee4a471a354c39e526b51d727cfb61e4234ff74f2cd6c223481491f0d8d8822d"
+divergence = "`for_content` takes `&ShellMetrics` instead of reading Theorem's METRICS, which is move rule 4: geometry that reads one product's constant cannot be shared. The arithmetic is unchanged. The tests run over a SAMPLE_METRICS chosen to make each invariant visible; the assertion at Theorem's own measured size stays in the host crate, where the palette it asserts lives."
+
+[[module]]
+path = "src/lib.rs"
+status = "assembled"
+introduced_in = "SPEC-AGPUI-HOME-1.0 H7"
+note = "The crate root is written here: module list, re-exports and TokenError. Its ten law tests come from Theorem's design-core lib.rs and run against fixtures/law.tokens.json rather than Theorem's token document. TokenSet::builtin did not move; it embeds a product's asset, so it stays in Theorem as the TheoremTokens extension trait."
+
+[[module]]
+path = "fixtures/law.tokens.json"
+status = "new"
+introduced_in = "SPEC-AGPUI-HOME-1.0 H7"
+note = "A document that exercises the law without carrying anybody's palette: Theorem's structure with the three theme inputs and the four typefaces replaced. The crate's tests read this; Theorem's own document is passed to theme_check as an argument."
