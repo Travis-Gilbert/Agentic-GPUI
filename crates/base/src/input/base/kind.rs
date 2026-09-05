@@ -313,12 +313,6 @@ impl InputModeKind for InputMode {
     /// them would cost more in dispatch than it saves.
     type Extras = ();
 }
-impl InputModeKind for TextareaMode {
-    const MULTI_LINE: bool = true;
-
-    /// Ordinary multi-line text needs nothing beyond the shared engine.
-    type Extras = ();
-}
 // `EditorMode`'s implementation lives with the editor code, next to the
 // language features it dispatches to.
 
