@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 
 use crate::{Rgba, TokenSet};
 
-pub(crate) const SEMANTIC_MAPPING: [(&str, &str); 17] = [
+pub const SEMANTIC_MAPPING: [(&str, &str); 17] = [
     ("background", "surface.page"),
     ("foreground", "color.ink.primary"),
     ("surface", "surface.raised"),

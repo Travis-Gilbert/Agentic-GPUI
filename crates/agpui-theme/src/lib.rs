@@ -21,6 +21,10 @@ mod texture;
 mod tokens;
 
 pub use color::Rgba;
+// The semantic role table is part of the emitter's contract, not an
+// implementation detail of it: a product that emits CSS from this crate has
+// to be able to assert that every role it declares came out the other side.
+pub use emit_gpui::SEMANTIC_MAPPING;
 pub use metrics::ShellMetrics;
 pub use prose::{ProseHighlightStyle, PROSE_CAPTURES};
 pub use texture::{DotGridParams, GrainParams};
