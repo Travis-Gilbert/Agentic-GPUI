@@ -6,9 +6,21 @@
 //! and receipt wire contract. It names no renderer, and `tests/boundary.rs`
 //! fails the build if one enters its dependency tree.
 //!
-//! See `docs/AGPUI-CRATES.md` and `docs/plans/SPEC-AGPUI-SEMANTIC-TREE-1_0.md`.
+//! See `docs/AGPUI.md` and `docs/plans/SPEC-AGPUI-SEMANTIC-TREE-1_0.md`.
+//!
+//! SPEC-AGPUI-HOME-1.0 H2 moved the four UI documents down here from
+//! `theorem-surface-contracts`: they are the vocabulary two AGPUI crates both
+//! need, so move rule 1 puts them in the contract. They name no renderer and
+//! no Theorem type, and they close over each other -- `surface` reads
+//! `intent`, `intent` reads `composer` and `thread`, `composer` reads
+//! `thread` -- so the set moved whole or not at all.
 
 pub mod semantics;
+
+pub mod composer;
+pub mod intent;
+pub mod surface;
+pub mod thread;
 
 pub use semantics::{
     canonical_hash, hex, redact_sensitive_text, ActionOutcome, ActionReceipt, ActionRefusal,

@@ -1,3 +1,29 @@
+[package]
+name = "agpui-boundary"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Workspace-scope boundary oracle for AGPUI. Owns no code, only the test."
+
+# Autodiscovery off. The repository root carries Longbridge's loose
+# `examples/*.rs`, which are theirs and are built by the crates that own them;
+# without this the root package adopts them as its own targets and fails to
+# compile them against dependencies it does not have.
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+
+# No lib and no bin on purpose. SPEC-AGPUI-HOME-1.0's non-goals refuse a crate
+# nothing calls, and this package is not one: it exists so `tests/boundary.rs`
+# has a target, and the declared test is the only thing in it.
+[[test]]
+name = "boundary"
+path = "tests/boundary.rs"
+
+[dev-dependencies]
+serde_json = "1"
+
 [workspace]
 default-members = ["crates/story"]
 members = [
@@ -29,6 +55,7 @@ members = [
     "examples/markdown_table",
     "crates/shell",
     "crates/component-shell",
+    "crates/agpui-contract",
 ]
 resolver = "2"
 
