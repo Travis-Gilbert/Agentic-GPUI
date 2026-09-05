@@ -1,17 +1,18 @@
 [package]
-name = "theorem-design-core"
+name = "agpui-theme"
 version = "0.1.0"
 edition = "2021"
-description = "Renderer-free derived design tokens for Theorem product surfaces"
-license = "MIT"
-repository = "https://github.com/Travis-Gilbert/Theorem"
+description = "Renderer-free design-token law, deterministic emitters, and shell metrics for AGPUI"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Travis-Gilbert/Agentic-GPUI"
 rust-version = "1.85"
 
+# Written out rather than inherited from the AGPUI workspace root, for the same
+# reason `agpui-contract` is: a consumer that cannot afford a workspace root
+# still has to be able to name this package by git rev.
 [dependencies]
-png = "0.18"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
 thiserror = "2"
 
 [lints.rust]

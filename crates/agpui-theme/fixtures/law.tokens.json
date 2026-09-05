@@ -1,0 +1,34 @@
+{
+  "$description": "AGPUI theme-law fixture. Deliberately not Theorem's palette: the hue is blue and the ramp is round, so a value that leaks from here into a product assertion is obvious on sight. Its job is to prove the mechanism -- generation, alias resolution, and the two refusals -- without a product token file.",
+  "color": {
+    "neutral": {
+      "$description": "Chroma is output, never authored per step.",
+      "hue": { "$value": 250, "$type": "number" },
+      "surfaceA": { "$value": 0.3026, "$type": "number" },
+      "surfaceExponent": { "$value": 6, "$type": "number" },
+      "inkSlope": { "$value": 0.02, "$type": "number" },
+      "maxRelativeChroma": { "$value": 0.02, "$type": "number" }
+    },
+    "cream": {
+      "25":  { "$value": { "lightness": 0.98 }, "$type": "color" },
+      "50":  { "$value": { "lightness": 0.96 }, "$type": "color" },
+      "100": { "$value": { "lightness": 0.94 }, "$type": "color" },
+      "200": { "$value": { "lightness": 0.90 }, "$type": "color" },
+      "300": { "$value": { "lightness": 0.85 }, "$type": "color" },
+      "400": { "$value": { "lightness": 0.76 }, "$type": "color" },
+      "700": { "$value": { "lightness": 0.46 }, "$type": "color" },
+      "900": { "$value": { "lightness": 0.32 }, "$type": "color" }
+    },
+    "ink": {
+      "primary": { "$value": { "lightness": 0.26 }, "$type": "color" },
+      "muted":   { "$value": { "lightness": 0.44 }, "$type": "color" },
+      "faint":   { "$value": { "lightness": 0.62 }, "$type": "color" },
+      "inverse": { "$value": "{color.cream.50}", "$type": "color" }
+    }
+  },
+  "surface": {
+    "page":   { "$value": "{color.cream.25}", "$type": "color" },
+    "raised": { "$value": "#FFFFFF", "$type": "color" },
+    "echo":   { "$value": "{color.ink.inverse}", "$type": "color" }
+  }
+}
