@@ -7,8 +7,9 @@ pub use compat::{
     Text, TextView, TextViewLayoutState, TextViewPlugin, TextViewPrepaintState, html, markdown,
 };
 pub use gpui_base::text::{
-    MarkdownBlockParserFn, MarkdownBlockRenderFn, MarkdownExtensions, MarkdownNode,
-    MarkdownParseContext, MarkdownPlugin, SelectionFormat, TableData, TextViewState, markdown_ast,
+    LinkFragment, LinkUnderline, MarkdownBlockParserFn, MarkdownBlockRenderFn, MarkdownExtensions,
+    MarkdownNode, MarkdownParseContext, MarkdownPlugin, SelectionFormat, TableData, TextViewState,
+    markdown_ast,
 };
 pub use style::TextViewStyle;
 

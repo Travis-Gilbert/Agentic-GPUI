@@ -1,0 +1,41 @@
+From abf772c47825061b7099ac0d8eb62e4a930d4f8e Mon Sep 17 00:00:00 2001
+From: Travis Gilbert <1travisgilbert@gmail.com>
+Date: Sat, 5 Sep 2026 06:30:03 -0400
+Subject: [PATCH] fix(gpui): pin browser selected replacement repair
+
+---
+ Cargo.toml | 14 +++++++-------
+ 1 file changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/Cargo.toml b/Cargo.toml
+index 019f9f91..401efdc6 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -48,12 +48,12 @@ gpui-wry = { path = "crates/webview", version = "0.6.0" }
+ gpui-component-shell = { path = "crates/component-shell", version = "0.6.0" }
+ story = { path = "crates/story" }
+ 
+-gpui = { git = "https://github.com/Travis-Gilbert/zed", rev = "2f7f1da474f6a8ab0f1f61ce35a1a2278ee31db4" }
+-gpui_platform = { git = "https://github.com/Travis-Gilbert/zed", rev = "2f7f1da474f6a8ab0f1f61ce35a1a2278ee31db4", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
+-gpui_web = { git = "https://github.com/Travis-Gilbert/zed", rev = "2f7f1da474f6a8ab0f1f61ce35a1a2278ee31db4" }
+-gpui_macros = { git = "https://github.com/Travis-Gilbert/zed", rev = "2f7f1da474f6a8ab0f1f61ce35a1a2278ee31db4" }
+-reqwest_client = { git = "https://github.com/Travis-Gilbert/zed", rev = "2f7f1da474f6a8ab0f1f61ce35a1a2278ee31db4" }
+-sum-tree = { package = "sum_tree", git = "https://github.com/Travis-Gilbert/zed", rev = "2f7f1da474f6a8ab0f1f61ce35a1a2278ee31db4" }
++gpui = { git = "https://github.com/Travis-Gilbert/zed", rev = "de1d65ee70ac21a1ef02a500151a96d96ff937e1" }
++gpui_platform = { git = "https://github.com/Travis-Gilbert/zed", rev = "de1d65ee70ac21a1ef02a500151a96d96ff937e1", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
++gpui_web = { git = "https://github.com/Travis-Gilbert/zed", rev = "de1d65ee70ac21a1ef02a500151a96d96ff937e1" }
++gpui_macros = { git = "https://github.com/Travis-Gilbert/zed", rev = "de1d65ee70ac21a1ef02a500151a96d96ff937e1" }
++reqwest_client = { git = "https://github.com/Travis-Gilbert/zed", rev = "de1d65ee70ac21a1ef02a500151a96d96ff937e1" }
++sum-tree = { package = "sum_tree", git = "https://github.com/Travis-Gilbert/zed", rev = "de1d65ee70ac21a1ef02a500151a96d96ff937e1" }
+ reqwest = { package = "zed-reqwest", git = "https://github.com/zed-industries/reqwest.git", rev = "33bc764aa15ff7b200bf7c93bd96e24878d53e14", version = "0.12.15-zed", default-features = false, features = [
+     "charset",
+     "http2",
+@@ -159,4 +159,4 @@ ignored = ["log", "anyhow", "serde"]
+ [workspace.metadata.theorem-fork]
+ upstream = "https://github.com/longbridge/gpui-kit"
+ upstream_tag = "v0.6.0"
+-zed_rev = "2f7f1da474f6a8ab0f1f61ce35a1a2278ee31db4"
++zed_rev = "de1d65ee70ac21a1ef02a500151a96d96ff937e1"
+-- 
+2.53.0
+

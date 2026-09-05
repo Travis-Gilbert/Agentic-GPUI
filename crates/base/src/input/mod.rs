@@ -96,4 +96,4 @@ pub use rope_ext::{InputEdit, Point, RopeExt, RopeLines};
 pub use ropey::Rope;
 pub use search::{SearchMatcher, SearchSession};
 pub use state::*;
-pub use textarea::{Textarea, TextareaState};
+pub use textarea::{Textarea, TextareaExtras, TextareaState};

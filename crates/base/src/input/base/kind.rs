@@ -185,6 +185,10 @@ pub trait InputModeKind: sealed::Sealed + Sized + 'static {
     /// Drops decorations and hover state when the text is replaced wholesale.
     fn reset_annotations(_state: &mut InputBaseState<Self>) {}
 
+    /// Drops presentation ranges after an authoritative whole-text replacement.
+    /// Existing mode behavior is unchanged unless a mode opts into this hook.
+    fn reset_document_presentation(_state: &mut InputBaseState<Self>) {}
+
     /// Slides decoration ranges along with an edit.
     fn adjust_annotations(
         _state: &mut InputBaseState<Self>,
@@ -311,12 +315,6 @@ impl InputModeKind for InputMode {
     /// validation and number stepping live there: together they are ~120 bytes
     /// and their access sites sit inside the shared edit path, so separating
     /// them would cost more in dispatch than it saves.
-    type Extras = ();
-}
-impl InputModeKind for TextareaMode {
-    const MULTI_LINE: bool = true;
-
-    /// Ordinary multi-line text needs nothing beyond the shared engine.
     type Extras = ();
 }
 // `EditorMode`'s implementation lives with the editor code, next to the

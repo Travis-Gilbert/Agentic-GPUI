@@ -9,3 +9,17 @@
 0009-rust-1.90-atomics.patch
 0010-rust-1.90-final-zed-pin.patch
 0011-feat-settings-add-controlled-navigation-state.patch
+0012-gpui-web-ime-integration-pin.patch
+0013-gpui-linux-portal-compatible-pin.patch
+0014-gpui-desktop-keyboard-focus-pin.patch
+0015-platform-input-configuration.patch
+0016-patch-spelling-identifiers.patch
+0017-patch-pattern-spelling.patch
+0018-textarea-presentation-styles.patch
+0019-textarea-test-initialization.patch
+0020-textarea-replacement-presentation.patch
+0021-gpui-selected-replacement-pin.patch
+0022-gpui-selected-replacement-lock.patch
+0023-sidebar-semantic-decoration.patch
+0024-compose-sidebar-row-decorations.patch
+0025-measured-text-link-decoration.patch

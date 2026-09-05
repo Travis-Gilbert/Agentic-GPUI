@@ -158,7 +158,7 @@ impl DecorationCollections {
     }
 }
 
-fn adjust_range_for_edit(
+pub(crate) fn adjust_range_for_edit(
     range: &Range<usize>,
     edited_range: &Range<usize>,
     inserted_len: usize,
@@ -204,7 +204,7 @@ fn adjust_range_for_edit(
     start..end
 }
 
-fn normalize(text: &Rope, decorations: Vec<TextDecoration>) -> Vec<TextDecoration> {
+pub(crate) fn normalize(text: &Rope, decorations: Vec<TextDecoration>) -> Vec<TextDecoration> {
     decorations
         .into_iter()
         .filter_map(|decoration| {

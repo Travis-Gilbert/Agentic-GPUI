@@ -17,8 +17,8 @@ use crate::{
     StyledExt, h_flex,
     scrollable_mask::horizontal_scroll_area,
     text::{
-        CodeBlockActionsFn, CodeBlockHighlighterFn, LinkClickHandlerFn, MarkdownExtensions,
-        MarkdownNode, TableActionsFn,
+        CodeBlockActionsFn, CodeBlockHighlighterFn, LinkClickHandlerFn, LinkFragmentDecoratorFn,
+        LinkUnderlineFn, MarkdownExtensions, MarkdownNode, TableActionsFn,
         document::NodeRenderOptions,
         inline::{Inline, InlineState},
         inline_flow::{InlineFlow, InlineFlowItem},
@@ -1336,6 +1336,8 @@ pub(crate) struct NodeContext {
     pub(crate) code_block_actions: Option<Arc<CodeBlockActionsFn>>,
     pub(crate) code_block_highlighter: Option<Arc<CodeBlockHighlighterFn>>,
     pub(crate) table_actions: Option<Arc<TableActionsFn>>,
+    pub(crate) link_underline: Option<Arc<LinkUnderlineFn>>,
+    pub(crate) link_fragment_decorator: Option<Arc<LinkFragmentDecoratorFn>>,
     pub(crate) link_click_handler: Option<Arc<LinkClickHandlerFn>>,
     pub(crate) markdown_extensions: Arc<MarkdownExtensions>,
 }
@@ -1365,6 +1367,11 @@ impl Paragraph {
                 self.inline_flow_items(node_cx, cx),
                 node_cx.link_click_handler.clone(),
             )
+            .link_with(
+                node_cx.link_fragment_decorator.clone(),
+                node_cx.offset + span.unwrap_or_default().start,
+            )
+            .link_underline(node_cx.link_underline.clone())
             .into_any_element();
         }
 
@@ -1393,6 +1400,11 @@ impl Paragraph {
                             highlights.clone(),
                             node_cx.link_click_handler.clone(),
                         )
+                        .link_with(
+                            node_cx.link_fragment_decorator.clone(),
+                            node_cx.offset + span.unwrap_or_default().start,
+                        )
+                        .link_underline(node_cx.link_underline.clone())
                         .into_any_element(),
                     );
                 }
@@ -1508,6 +1520,11 @@ impl Paragraph {
                     highlights,
                     node_cx.link_click_handler.clone(),
                 )
+                .link_with(
+                    node_cx.link_fragment_decorator.clone(),
+                    node_cx.offset + span.unwrap_or_default().start,
+                )
+                .link_underline(node_cx.link_underline.clone())
                 .into_any_element(),
             );
         }
