@@ -29,12 +29,15 @@ actions!(inspector, [ToggleInspector]);
 
 /// Initialize the inspector and register the action to toggle it.
 pub(crate) fn init(cx: &mut App) {
-    cx.bind_keys(vec![
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-alt-i", ToggleInspector, None),
-        #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-shift-i", ToggleInspector, None),
-    ]);
+    // Not a mirror -- macOS uses Command+Option and elsewhere it is
+    // Control+Shift -- so the whole binding is chosen at runtime rather than by
+    // `#[cfg(target_os = "macos")]`, which on the web reports `unknown` for
+    // every browser and would give a Mac the Windows chord.
+    cx.bind_keys(vec![if gpui::secondary_modifier_is_platform() {
+        KeyBinding::new("cmd-alt-i", ToggleInspector, None)
+    } else {
+        KeyBinding::new("ctrl-shift-i", ToggleInspector, None)
+    }]);
 
     cx.on_action(|_: &ToggleInspector, cx| {
         let Some(active_window) = cx.active_window() else {
