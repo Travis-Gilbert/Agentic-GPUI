@@ -48,12 +48,12 @@ gpui-wry = { path = "crates/webview", version = "0.6.0" }
 gpui-component-shell = { path = "crates/component-shell", version = "0.6.0" }
 story = { path = "crates/story" }
 
-gpui = { git = "https://github.com/Travis-Gilbert/zed", rev = "a8430db4a26974ee9e3414da61cdd6d25b187fe3" }
-gpui_platform = { git = "https://github.com/Travis-Gilbert/zed", rev = "a8430db4a26974ee9e3414da61cdd6d25b187fe3", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
-gpui_web = { git = "https://github.com/Travis-Gilbert/zed", rev = "a8430db4a26974ee9e3414da61cdd6d25b187fe3" }
-gpui_macros = { git = "https://github.com/Travis-Gilbert/zed", rev = "a8430db4a26974ee9e3414da61cdd6d25b187fe3" }
-reqwest_client = { git = "https://github.com/Travis-Gilbert/zed", rev = "a8430db4a26974ee9e3414da61cdd6d25b187fe3" }
-sum-tree = { package = "sum_tree", git = "https://github.com/Travis-Gilbert/zed", rev = "a8430db4a26974ee9e3414da61cdd6d25b187fe3" }
+gpui = { git = "https://github.com/Travis-Gilbert/zed", rev = "207177c51070288bd172fea977ffb2d4cb835367" }
+gpui_platform = { git = "https://github.com/Travis-Gilbert/zed", rev = "207177c51070288bd172fea977ffb2d4cb835367", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
+gpui_web = { git = "https://github.com/Travis-Gilbert/zed", rev = "207177c51070288bd172fea977ffb2d4cb835367" }
+gpui_macros = { git = "https://github.com/Travis-Gilbert/zed", rev = "207177c51070288bd172fea977ffb2d4cb835367" }
+reqwest_client = { git = "https://github.com/Travis-Gilbert/zed", rev = "207177c51070288bd172fea977ffb2d4cb835367" }
+sum-tree = { package = "sum_tree", git = "https://github.com/Travis-Gilbert/zed", rev = "207177c51070288bd172fea977ffb2d4cb835367" }
 reqwest = { package = "zed-reqwest", git = "https://github.com/zed-industries/reqwest.git", rev = "33bc764aa15ff7b200bf7c93bd96e24878d53e14", version = "0.12.15-zed", default-features = false, features = [
     "charset",
     "http2",
@@ -159,4 +159,4 @@ ignored = ["log", "anyhow", "serde"]
 [workspace.metadata.theorem-fork]
 upstream = "https://github.com/longbridge/gpui-kit"
 upstream_tag = "v0.6.0"
-zed_rev = "a8430db4a26974ee9e3414da61cdd6d25b187fe3"
+zed_rev = "207177c51070288bd172fea977ffb2d4cb835367"

@@ -132,3 +132,10 @@ overriding focus chosen by navigation. The actual AGPUI consumer tests cover
 wrapped pointer targets, semantic activation, Enter and Space, and drag
 selection with the real TextSelectionLayer. Native interaction passed; browser
 link and deployed application verification remain consumer gates.
+
+The shipping-surface bump moves the zed pin to
+207177c51070288bd172fea977ffb2d4cb835367, which corrects HTML-in-Canvas
+detection to the members a browser defines. Both manifests must move together:
+`[patch.crates-io]` rewrites crates.io sources and not git ones, so a consumer
+that bumps only its own pin builds two `gpui` versions and fails where the two
+dependency chains meet.
