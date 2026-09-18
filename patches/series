@@ -24,3 +24,4 @@
 0024-compose-sidebar-row-decorations.patch
 0025-measured-text-link-decoration.patch
 0026-gpui-native-editable-leaf-pin.patch
+0027-gpui-native-editable-leaf-lock.patch
