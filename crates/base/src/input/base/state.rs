@@ -129,6 +129,16 @@ pub enum InputEvent {
 
 pub(super) const CONTEXT: &str = "Input";
 
+/// How much text either side of an offset is enough to decide a grapheme
+/// boundary.
+///
+/// A cluster is a handful of code points in practice, and the longest real ones
+/// -- regional-indicator flag pairs, family emoji with skin tones, Indic
+/// conjuncts -- are far inside this. A window rather than the whole rope
+/// because these are text inputs, and reading a document from its start to move
+/// a caret one place left is the wrong shape of work.
+const GRAPHEME_WINDOW: usize = 256;
+
 pub(crate) fn init(cx: &mut App) {
     // The macOS keymap and the other one are two different keymaps, not one
     // keymap with Command swapped for Control: macOS puts MoveHome on ctrl-a
@@ -3333,14 +3343,56 @@ impl<M: InputModeKind> InputBaseState<M> {
         }
     }
 
+    /// The offset one grapheme cluster before `offset`.
+    ///
+    /// A cluster, not a `char`. Backspacing through a family emoji one `char`
+    /// at a time deletes the boy from
+    /// `\u{1F469}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F466}` and leaves the
+    /// zero-width joiner behind, which renders as three people and a box and
+    /// is not a string anyone typed. The same applies to a caret moving left
+    /// past a flag, a skin-tone modifier or an Indic conjunct.
+    ///
+    /// `GraphemeCursor` also subsumes the CRLF special case this used to carry:
+    /// a carriage return and a line feed are one cluster, so the pair is
+    /// crossed in one step without a separate check.
     pub(super) fn previous_boundary(&self, offset: usize) -> usize {
-        let offset = self.cursor_boundary(offset.saturating_sub(1), Bias::Left);
-        self.clamp_offset_to_visible_backward(offset)
+        if offset == 0 {
+            return self.clamp_offset_to_visible_backward(0);
+        }
+        let start = self
+            .text
+            .clip_offset(offset.saturating_sub(GRAPHEME_WINDOW), Bias::Left);
+        let chunk = self.text.slice(start..offset).to_string();
+        let boundary = GraphemeCursor::new(offset, self.text.len(), true)
+            .prev_boundary(&chunk, start)
+            .ok()
+            .flatten()
+            // Not enough context, or a window that began mid-cluster. One
+            // `char` back is what this did before clusters were considered,
+            // and it is still a valid offset rather than a panic.
+            .unwrap_or_else(|| self.text.clip_offset(offset.saturating_sub(1), Bias::Left));
+
+        // Atomic tokens still win over a cluster boundary inside them.
+        self.clamp_offset_to_visible_backward(self.cursor_boundary(boundary, Bias::Left))
     }
 
+    /// The offset one grapheme cluster after `offset`. See
+    /// [`Self::previous_boundary`]; forward delete has the same problem from
+    /// the other end.
     pub(super) fn next_boundary(&self, offset: usize) -> usize {
-        let offset = self.cursor_boundary(offset.saturating_add(1), Bias::Right);
-        self.clamp_offset_to_visible_forward(offset)
+        let length = self.text.len();
+        if offset >= length {
+            return self.clamp_offset_to_visible_forward(length);
+        }
+        let end = self.text.clip_offset(offset + GRAPHEME_WINDOW, Bias::Right);
+        let chunk = self.text.slice(offset..end).to_string();
+        let boundary = GraphemeCursor::new(offset, length, true)
+            .next_boundary(&chunk, offset)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| self.text.clip_offset(offset + 1, Bias::Right));
+
+        self.clamp_offset_to_visible_forward(self.cursor_boundary(boundary, Bias::Right))
     }
 
     /// Returns the true to let InputElement to render cursor, when Input is focused and current BlinkCursor is visible.
