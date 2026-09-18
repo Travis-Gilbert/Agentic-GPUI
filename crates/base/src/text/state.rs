@@ -35,15 +35,16 @@ const MAX_COALESCED_UPDATES_PER_PARSE: usize = 64;
 const MAX_SYNC_FULL_REPLACE_BYTES: usize = 4 * 1024;
 
 pub(crate) fn init(cx: &mut App) {
+    // `secondary-` rather than a `#[cfg(target_os = "macos")]` pair, because on
+    // the web that cfg is a lie: one wasm binary serves a Mac and a Windows PC
+    // and `target_os` is `unknown` for both, so the gate hands every Mac user
+    // the Windows keymap and leaves `cmd-c` and `cmd-a` bound to nothing. These
+    // two are a true mirror -- Command where the platform key is Command,
+    // Control elsewhere -- so `secondary-` says exactly that, and GPUI resolves
+    // it against the browser's own platform where there is a browser.
     cx.bind_keys(vec![
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-c", input::Copy, Some(CONTEXT)),
-        #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-c", input::Copy, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-a", input::SelectAll, Some(CONTEXT)),
-        #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-a", input::SelectAll, Some(CONTEXT)),
+        KeyBinding::new("secondary-c", input::Copy, Some(CONTEXT)),
+        KeyBinding::new("secondary-a", input::SelectAll, Some(CONTEXT)),
     ]);
 }
 

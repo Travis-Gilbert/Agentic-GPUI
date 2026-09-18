@@ -120,25 +120,24 @@ pub enum InputEvent {
 pub(super) const CONTEXT: &str = "Input";
 
 pub(crate) fn init(cx: &mut App) {
-    cx.bind_keys([
+    // The macOS keymap and the other one are two different keymaps, not one
+    // keymap with Command swapped for Control: macOS puts MoveHome on ctrl-a
+    // and word movement on alt-arrows, while elsewhere ctrl-a is SelectAll and
+    // ctrl-arrows move by word. So the choice is made once, over the whole set.
+    //
+    // Chosen at runtime rather than with `#[cfg(target_os = "macos")]`, because
+    // on the web that cfg is a lie. One wasm binary is served to a Mac and to a
+    // Windows PC, `target_os` is `unknown` for both, and the gate silently
+    // hands every Mac user the Windows keymap: Command does nothing, Control
+    // does everything, and `cmd-a`, `cmd-c`, `cmd-v` and `cmd-z` are bound to
+    // no action at all. `gpui::secondary_modifier_is_platform` is the browser's
+    // own answer where there is a browser and the compile-time one everywhere
+    // else, so no native target changes behavior.
+    let mut bindings = vec![
         KeyBinding::new("backspace", Backspace, Some(CONTEXT)),
         KeyBinding::new("shift-backspace", Backspace, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("ctrl-backspace", Backspace, Some(CONTEXT)),
         KeyBinding::new("delete", Delete, Some(CONTEXT)),
         KeyBinding::new("shift-delete", Delete, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-backspace", DeleteToBeginningOfLine, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-delete", DeleteToEndOfLine, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("alt-backspace", DeleteToPreviousWordStart, Some(CONTEXT)),
-        #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-backspace", DeleteToPreviousWordStart, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("alt-delete", DeleteToNextWordEnd, Some(CONTEXT)),
-        #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-delete", DeleteToNextWordEnd, Some(CONTEXT)),
         KeyBinding::new(
             "enter",
             Enter {
@@ -172,14 +171,6 @@ pub(crate) fn init(cx: &mut App) {
         KeyBinding::new("pagedown", MovePageDown, Some(CONTEXT)),
         KeyBinding::new("tab", IndentInline, Some(CONTEXT)),
         KeyBinding::new("shift-tab", OutdentInline, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-]", Indent, Some(CONTEXT)),
-        #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-]", Indent, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-[", Outdent, Some(CONTEXT)),
-        #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-[", Outdent, Some(CONTEXT)),
         KeyBinding::new("shift-left", SelectLeft, Some(CONTEXT)),
         KeyBinding::new("shift-right", SelectRight, Some(CONTEXT)),
         KeyBinding::new("shift-up", SelectUp, Some(CONTEXT)),
@@ -188,85 +179,65 @@ pub(crate) fn init(cx: &mut App) {
         KeyBinding::new("end", MoveEnd, Some(CONTEXT)),
         KeyBinding::new("shift-home", SelectToStartOfLine, Some(CONTEXT)),
         KeyBinding::new("shift-end", SelectToEndOfLine, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("ctrl-shift-a", SelectToStartOfLine, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("ctrl-shift-e", SelectToEndOfLine, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("shift-cmd-left", SelectToStartOfLine, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("shift-cmd-right", SelectToEndOfLine, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("alt-shift-left", SelectToPreviousWordStart, Some(CONTEXT)),
-        #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-shift-left", SelectToPreviousWordStart, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("alt-shift-right", SelectToNextWordEnd, Some(CONTEXT)),
-        #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-shift-right", SelectToNextWordEnd, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("ctrl-cmd-space", ShowCharacterPalette, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-a", SelectAll, Some(CONTEXT)),
-        #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-a", SelectAll, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-c", Copy, Some(CONTEXT)),
-        #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-c", Copy, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-x", Cut, Some(CONTEXT)),
-        #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-x", Cut, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-v", Paste, Some(CONTEXT)),
-        #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-v", Paste, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("ctrl-a", MoveHome, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-left", MoveHome, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("ctrl-e", MoveEnd, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-right", MoveEnd, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-z", Undo, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-shift-z", Redo, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-up", MoveToStart, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-down", MoveToEnd, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("alt-left", MoveToPreviousWord, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("alt-right", MoveToNextWord, Some(CONTEXT)),
-        #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-left", MoveToPreviousWord, Some(CONTEXT)),
-        #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-right", MoveToNextWord, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-shift-up", SelectToStart, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-shift-down", SelectToEnd, Some(CONTEXT)),
-        #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-z", Undo, Some(CONTEXT)),
-        #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-y", Redo, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-.", ToggleCodeActions, Some(CONTEXT)),
-        #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-.", ToggleCodeActions, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-f", Search, Some(CONTEXT)),
-        #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-f", Search, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-shift-f", Replace, Some(CONTEXT)),
-        #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-h", Replace, Some(CONTEXT)),
-    ]);
+    ];
+    bindings.extend(if gpui::secondary_modifier_is_platform() {
+        vec![
+            KeyBinding::new("ctrl-backspace", Backspace, Some(CONTEXT)),
+            KeyBinding::new("cmd-backspace", DeleteToBeginningOfLine, Some(CONTEXT)),
+            KeyBinding::new("cmd-delete", DeleteToEndOfLine, Some(CONTEXT)),
+            KeyBinding::new("alt-backspace", DeleteToPreviousWordStart, Some(CONTEXT)),
+            KeyBinding::new("alt-delete", DeleteToNextWordEnd, Some(CONTEXT)),
+            KeyBinding::new("cmd-]", Indent, Some(CONTEXT)),
+            KeyBinding::new("cmd-[", Outdent, Some(CONTEXT)),
+            KeyBinding::new("ctrl-shift-a", SelectToStartOfLine, Some(CONTEXT)),
+            KeyBinding::new("ctrl-shift-e", SelectToEndOfLine, Some(CONTEXT)),
+            KeyBinding::new("shift-cmd-left", SelectToStartOfLine, Some(CONTEXT)),
+            KeyBinding::new("shift-cmd-right", SelectToEndOfLine, Some(CONTEXT)),
+            KeyBinding::new("alt-shift-left", SelectToPreviousWordStart, Some(CONTEXT)),
+            KeyBinding::new("alt-shift-right", SelectToNextWordEnd, Some(CONTEXT)),
+            KeyBinding::new("ctrl-cmd-space", ShowCharacterPalette, Some(CONTEXT)),
+            KeyBinding::new("cmd-a", SelectAll, Some(CONTEXT)),
+            KeyBinding::new("cmd-c", Copy, Some(CONTEXT)),
+            KeyBinding::new("cmd-x", Cut, Some(CONTEXT)),
+            KeyBinding::new("cmd-v", Paste, Some(CONTEXT)),
+            KeyBinding::new("ctrl-a", MoveHome, Some(CONTEXT)),
+            KeyBinding::new("cmd-left", MoveHome, Some(CONTEXT)),
+            KeyBinding::new("ctrl-e", MoveEnd, Some(CONTEXT)),
+            KeyBinding::new("cmd-right", MoveEnd, Some(CONTEXT)),
+            KeyBinding::new("cmd-z", Undo, Some(CONTEXT)),
+            KeyBinding::new("cmd-shift-z", Redo, Some(CONTEXT)),
+            KeyBinding::new("cmd-up", MoveToStart, Some(CONTEXT)),
+            KeyBinding::new("cmd-down", MoveToEnd, Some(CONTEXT)),
+            KeyBinding::new("alt-left", MoveToPreviousWord, Some(CONTEXT)),
+            KeyBinding::new("alt-right", MoveToNextWord, Some(CONTEXT)),
+            KeyBinding::new("cmd-shift-up", SelectToStart, Some(CONTEXT)),
+            KeyBinding::new("cmd-shift-down", SelectToEnd, Some(CONTEXT)),
+            KeyBinding::new("cmd-.", ToggleCodeActions, Some(CONTEXT)),
+            KeyBinding::new("cmd-f", Search, Some(CONTEXT)),
+            KeyBinding::new("cmd-shift-f", Replace, Some(CONTEXT)),
+        ]
+    } else {
+        vec![
+            KeyBinding::new("ctrl-backspace", DeleteToPreviousWordStart, Some(CONTEXT)),
+            KeyBinding::new("ctrl-delete", DeleteToNextWordEnd, Some(CONTEXT)),
+            KeyBinding::new("ctrl-]", Indent, Some(CONTEXT)),
+            KeyBinding::new("ctrl-[", Outdent, Some(CONTEXT)),
+            KeyBinding::new("ctrl-shift-left", SelectToPreviousWordStart, Some(CONTEXT)),
+            KeyBinding::new("ctrl-shift-right", SelectToNextWordEnd, Some(CONTEXT)),
+            KeyBinding::new("ctrl-a", SelectAll, Some(CONTEXT)),
+            KeyBinding::new("ctrl-c", Copy, Some(CONTEXT)),
+            KeyBinding::new("ctrl-x", Cut, Some(CONTEXT)),
+            KeyBinding::new("ctrl-v", Paste, Some(CONTEXT)),
+            KeyBinding::new("ctrl-left", MoveToPreviousWord, Some(CONTEXT)),
+            KeyBinding::new("ctrl-right", MoveToNextWord, Some(CONTEXT)),
+            KeyBinding::new("ctrl-z", Undo, Some(CONTEXT)),
+            KeyBinding::new("ctrl-y", Redo, Some(CONTEXT)),
+            KeyBinding::new("ctrl-.", ToggleCodeActions, Some(CONTEXT)),
+            KeyBinding::new("ctrl-f", Search, Some(CONTEXT)),
+            KeyBinding::new("ctrl-h", Replace, Some(CONTEXT)),
+        ]
+    });
+    cx.bind_keys(bindings);
 }
 
 /// The shared text-editing engine behind [`crate::input::InputState`],

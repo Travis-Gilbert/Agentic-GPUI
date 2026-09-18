@@ -1089,10 +1089,11 @@ fn install_key_bindings(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("tab", Tab, Some(CONTEXT)),
         KeyBinding::new("shift-tab", TabPrev, Some(CONTEXT)),
-        #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-c", Copy, Some(CONTEXT)),
-        #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-c", Copy, Some(CONTEXT)),
+        // `secondary-` rather than a `#[cfg(target_os = "macos")]` pair: on the
+        // web that cfg is `unknown` for a Mac and a Windows PC alike, so the
+        // gate would bind copy to Control for everyone and leave `cmd-c` dead
+        // on a Mac. This one is a true mirror, which is what `secondary-` means.
+        KeyBinding::new("secondary-c", Copy, Some(CONTEXT)),
     ]);
     cx.set_global(KeyBindingsInstalled);
 }

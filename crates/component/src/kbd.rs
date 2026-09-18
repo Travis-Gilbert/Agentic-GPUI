@@ -87,11 +87,20 @@ impl Kbd {
     ///
     /// macOS: https://support.apple.com/en-us/HT201236
     /// Windows: https://support.microsoft.com/en-us/windows/keyboard-shortcuts-in-windows-dcc61a57-8ff0-cffe-9796-cb9706c75eec
+    ///
+    /// Which of the two vocabularies is used is decided at runtime, not by
+    /// `#[cfg(target_os = "macos")]`. On the web that cfg is a lie: one wasm
+    /// binary is served to a Mac and to a Windows PC and `target_os` is
+    /// `unknown` for both. The bindings themselves already resolve at runtime,
+    /// and a keycap that reads `Ctrl+A` above a shortcut that answers to
+    /// Command is worse than either vocabulary alone -- the product would be
+    /// lying about its own shortcuts. `gpui::secondary_modifier_is_platform`
+    /// is the same answer the keymap asked, so the two cannot drift apart. It
+    /// falls back to the compile-time cfg off the web, so no native target
+    /// changes.
     pub fn format(key: &Keystroke) -> String {
-        #[cfg(target_os = "macos")]
-        const SEPARATOR: &str = "";
-        #[cfg(not(target_os = "macos"))]
-        const SEPARATOR: &str = "+";
+        let mac = gpui::secondary_modifier_is_platform();
+        let separator = if mac { "" } else { "+" };
 
         let mut parts = vec![];
 
@@ -99,92 +108,39 @@ impl Kbd {
         // And in Windows is: Ctrl+Alt+Shift+Win
 
         if key.modifiers.control {
-            #[cfg(target_os = "macos")]
-            parts.push("⌃");
-
-            #[cfg(not(target_os = "macos"))]
-            parts.push("Ctrl");
+            parts.push(if mac { "⌃" } else { "Ctrl" });
         }
 
         if key.modifiers.alt {
-            #[cfg(target_os = "macos")]
-            parts.push("⌥");
-
-            #[cfg(not(target_os = "macos"))]
-            parts.push("Alt");
+            parts.push(if mac { "⌥" } else { "Alt" });
         }
 
         if key.modifiers.shift {
-            #[cfg(target_os = "macos")]
-            parts.push("⇧");
-
-            #[cfg(not(target_os = "macos"))]
-            parts.push("Shift");
+            parts.push(if mac { "⇧" } else { "Shift" });
         }
 
         if key.modifiers.platform {
-            #[cfg(target_os = "macos")]
-            parts.push("⌘");
-
-            #[cfg(not(target_os = "macos"))]
-            parts.push("Win");
+            parts.push(if mac { "⌘" } else { "Win" });
         }
 
         let mut keys = String::new();
         let key_str = key.key.as_str();
         match key_str {
-            #[cfg(target_os = "macos")]
-            "ctrl" => keys.push('⌃'),
-            #[cfg(not(target_os = "macos"))]
-            "ctrl" => keys.push_str("Ctrl"),
-            #[cfg(target_os = "macos")]
-            "alt" => keys.push('⌥'),
-            #[cfg(not(target_os = "macos"))]
-            "alt" => keys.push_str("Alt"),
-            #[cfg(target_os = "macos")]
-            "shift" => keys.push('⇧'),
-            #[cfg(not(target_os = "macos"))]
-            "shift" => keys.push_str("Shift"),
-            #[cfg(target_os = "macos")]
-            "cmd" => keys.push('⌘'),
-            #[cfg(not(target_os = "macos"))]
-            "cmd" => keys.push_str("Win"),
-            #[cfg(target_os = "macos")]
+            "ctrl" => keys.push_str(if mac { "⌃" } else { "Ctrl" }),
+            "alt" => keys.push_str(if mac { "⌥" } else { "Alt" }),
+            "shift" => keys.push_str(if mac { "⇧" } else { "Shift" }),
+            "cmd" => keys.push_str(if mac { "⌘" } else { "Win" }),
             "space" => keys.push_str("Space"),
-            #[cfg(target_os = "macos")]
-            "backspace" => keys.push('⌫'),
-            #[cfg(not(target_os = "macos"))]
-            "backspace" => keys.push_str("Backspace"),
-            #[cfg(target_os = "macos")]
-            "delete" => keys.push('⌫'),
-            #[cfg(not(target_os = "macos"))]
-            "delete" => keys.push_str("Delete"),
-            #[cfg(target_os = "macos")]
-            "escape" => keys.push('⎋'),
-            #[cfg(not(target_os = "macos"))]
-            "escape" => keys.push_str("Esc"),
-            #[cfg(target_os = "macos")]
-            "enter" => keys.push('⏎'),
-            #[cfg(not(target_os = "macos"))]
-            "enter" => keys.push_str("Enter"),
+            "backspace" => keys.push_str(if mac { "⌫" } else { "Backspace" }),
+            "delete" => keys.push_str(if mac { "⌫" } else { "Delete" }),
+            "escape" => keys.push_str(if mac { "⎋" } else { "Esc" }),
+            "enter" => keys.push_str(if mac { "⏎" } else { "Enter" }),
             "pagedown" => keys.push_str("Page Down"),
             "pageup" => keys.push_str("Page Up"),
-            #[cfg(target_os = "macos")]
-            "left" => keys.push('←'),
-            #[cfg(not(target_os = "macos"))]
-            "left" => keys.push_str("Left"),
-            #[cfg(target_os = "macos")]
-            "right" => keys.push('→'),
-            #[cfg(not(target_os = "macos"))]
-            "right" => keys.push_str("Right"),
-            #[cfg(target_os = "macos")]
-            "up" => keys.push('↑'),
-            #[cfg(not(target_os = "macos"))]
-            "up" => keys.push_str("Up"),
-            #[cfg(target_os = "macos")]
-            "down" => keys.push('↓'),
-            #[cfg(not(target_os = "macos"))]
-            "down" => keys.push_str("Down"),
+            "left" => keys.push_str(if mac { "←" } else { "Left" }),
+            "right" => keys.push_str(if mac { "→" } else { "Right" }),
+            "up" => keys.push_str(if mac { "↑" } else { "Up" }),
+            "down" => keys.push_str(if mac { "↓" } else { "Down" }),
             _ => {
                 if key_str.len() == 1 {
                     keys.push_str(&key_str.to_uppercase());
@@ -204,7 +160,7 @@ impl Kbd {
         }
 
         parts.push(&keys);
-        parts.join(SEPARATOR)
+        parts.join(separator)
     }
 }
 
