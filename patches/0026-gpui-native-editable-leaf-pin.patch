@@ -1,0 +1,42 @@
+From 213870c98620b98168e7119d25f091051bd43018 Mon Sep 17 00:00:00 2001
+From: Travis Gilbert <1travisgilbert@gmail.com>
+Date: Fri, 18 Sep 2026 14:55:46 -0400
+Subject: [PATCH 1/2] fix(gpui): pin the native editable leaf repair
+
+The component library and its consumer resolve one GPUI. A consumer that
+moves its own pin alone gets two: every type that crosses the boundary is
+then two types with one name, and the errors name traits rather than
+revisions.
+---
+ Cargo.toml | 14 +++++++-------
+ 1 file changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/Cargo.toml b/Cargo.toml
+index 401efdc6..e6ee4bdb 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -48,12 +48,12 @@ gpui-wry = { path = "crates/webview", version = "0.6.0" }
+ gpui-component-shell = { path = "crates/component-shell", version = "0.6.0" }
+ story = { path = "crates/story" }
+ 
+-gpui = { git = "https://github.com/Travis-Gilbert/zed", rev = "de1d65ee70ac21a1ef02a500151a96d96ff937e1" }
+-gpui_platform = { git = "https://github.com/Travis-Gilbert/zed", rev = "de1d65ee70ac21a1ef02a500151a96d96ff937e1", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
+-gpui_web = { git = "https://github.com/Travis-Gilbert/zed", rev = "de1d65ee70ac21a1ef02a500151a96d96ff937e1" }
+-gpui_macros = { git = "https://github.com/Travis-Gilbert/zed", rev = "de1d65ee70ac21a1ef02a500151a96d96ff937e1" }
+-reqwest_client = { git = "https://github.com/Travis-Gilbert/zed", rev = "de1d65ee70ac21a1ef02a500151a96d96ff937e1" }
+-sum-tree = { package = "sum_tree", git = "https://github.com/Travis-Gilbert/zed", rev = "de1d65ee70ac21a1ef02a500151a96d96ff937e1" }
++gpui = { git = "https://github.com/Travis-Gilbert/zed", rev = "95dc20e360a888cb0ae39fd8ed69e0b7c91f2845" }
++gpui_platform = { git = "https://github.com/Travis-Gilbert/zed", rev = "95dc20e360a888cb0ae39fd8ed69e0b7c91f2845", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
++gpui_web = { git = "https://github.com/Travis-Gilbert/zed", rev = "95dc20e360a888cb0ae39fd8ed69e0b7c91f2845" }
++gpui_macros = { git = "https://github.com/Travis-Gilbert/zed", rev = "95dc20e360a888cb0ae39fd8ed69e0b7c91f2845" }
++reqwest_client = { git = "https://github.com/Travis-Gilbert/zed", rev = "95dc20e360a888cb0ae39fd8ed69e0b7c91f2845" }
++sum-tree = { package = "sum_tree", git = "https://github.com/Travis-Gilbert/zed", rev = "95dc20e360a888cb0ae39fd8ed69e0b7c91f2845" }
+ reqwest = { package = "zed-reqwest", git = "https://github.com/zed-industries/reqwest.git", rev = "33bc764aa15ff7b200bf7c93bd96e24878d53e14", version = "0.12.15-zed", default-features = false, features = [
+     "charset",
+     "http2",
+@@ -159,4 +159,4 @@ ignored = ["log", "anyhow", "serde"]
+ [workspace.metadata.theorem-fork]
+ upstream = "https://github.com/longbridge/gpui-kit"
+ upstream_tag = "v0.6.0"
+-zed_rev = "de1d65ee70ac21a1ef02a500151a96d96ff937e1"
++zed_rev = "95dc20e360a888cb0ae39fd8ed69e0b7c91f2845"
