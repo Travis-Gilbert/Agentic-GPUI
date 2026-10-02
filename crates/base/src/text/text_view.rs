@@ -2412,14 +2412,16 @@ mod tests {
             crate::init(cx);
             crate::Theme::global_mut(cx).tokens.typography.mono = MONO.into();
         });
-        for scale_factor in [1.6, 2.] {
+        // The Theorem Zed test window has one fixed scale factor (2.0) and no
+        // `simulate_scale_factor_change`, so the fractional 1.6 case upstream
+        // runs here needs that hook in the Zed fork first. See patches/README.md.
+        for scale_factor in [2.] {
             for preview_zoom in [1., 1.25] {
                 let mut window = app.open_window(|_, cx| LineRoot {
                     plain: cx.new(|cx| TextViewState::markdown("plain body words", cx)),
                     code: cx.new(|cx| TextViewState::markdown("plain `code` words", cx)),
                     preview_zoom,
                 });
-                window.simulate_scale_factor_change(scale_factor);
                 window.draw();
                 app.run_until_parked();
                 window.draw();

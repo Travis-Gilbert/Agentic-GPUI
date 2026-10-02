@@ -115,7 +115,13 @@ fn image_sources(
         cx.on_release(move |images: &mut DocumentImages, cx| {
             for uri in &images.used {
                 let source = (owner.clone(), uri.clone());
-                if let Some(Ok(image)) = cx.fetch_asset::<DocumentImage>(&source) {
+                // The Theorem Zed source answers with the shared load and
+                // whether this call started it. Only a load that already
+                // existed and has finished holds an image to drop.
+                let (load, started_here) = cx.fetch_asset::<DocumentImage>(&source);
+                if !started_here
+                    && let Some(Ok(image)) = smol::future::block_on(smol::future::poll_once(load))
+                {
                     cx.drop_image(image, None);
                 }
                 cx.remove_asset::<DocumentImage>(&source);

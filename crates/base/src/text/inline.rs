@@ -1038,7 +1038,7 @@ impl Element for Inline {
             text_runs(self.text.len(), &text_style, &self.highlights)
         } else {
             let highlights =
-                combine_highlights(self.highlights.clone(), overrides).collect::<Vec<_>>();
+                combine_highlights(self.highlights.clone(), overrides);
             text_runs(self.text.len(), &text_style, &highlights)
         };
 

@@ -7,7 +7,7 @@ use crate::{
     input::{Input, InputState},
     resizable_panel,
     setting::SettingPage,
-    sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem},
+    sidebar::{Sidebar, SidebarGroup, SidebarItem, SidebarMenu, SidebarMenuItem},
 };
 use gpui::{
     App, AppContext as _, Axis, ElementId, Entity, IntoElement, ParentElement as _, Pixels,
@@ -340,25 +340,37 @@ impl Settings {
             )
         };
 
-        Sidebar::new("settings-sidebar")
-            .w(relative(1.))
-            .border_0()
-            .refine_style(&self.sidebar_style)
-            .collapsible(false)
-            .collapsed(false)
-            .header(
-                div()
-                    .w_full()
-                    .refine_style(&self.header_style)
-                    .child(Input::new(&search_input).prefix(IconName::Search)),
-            )
-            .when(self.sections.is_empty(), |this| {
-                this.child(SidebarMenu::new().children(filter.visible_pages().map(&item)))
-            })
-            .children(sections.iter().map(|(title, page_ixs)| {
-                SidebarGroup::new(title.clone())
-                    .child(SidebarMenu::new().children(page_ixs.iter().copied().map(&item)))
-            }))
+        // A flat sidebar and a sectioned one hold different item types, so
+        // each is built whole and the two meet as elements.
+        fn frame<E: SidebarItem>(
+            sidebar: Sidebar<E>,
+            style: &StyleRefinement,
+            header: impl IntoElement,
+        ) -> Sidebar<E> {
+            sidebar
+                .w(relative(1.))
+                .border_0()
+                .refine_style(style)
+                .collapsible(false)
+                .collapsed(false)
+                .header(header)
+        }
+        let header = div()
+            .w_full()
+            .refine_style(&self.header_style)
+            .child(Input::new(&search_input).prefix(IconName::Search));
+        if self.sections.is_empty() {
+            frame(Sidebar::new("settings-sidebar"), &self.sidebar_style, header)
+                .child(SidebarMenu::new().children(filter.visible_pages().map(&item)))
+                .into_any_element()
+        } else {
+            frame(Sidebar::new("settings-sidebar"), &self.sidebar_style, header)
+                .children(sections.iter().map(|(title, page_ixs)| {
+                    SidebarGroup::new(title.clone())
+                        .child(SidebarMenu::new().children(page_ixs.iter().copied().map(&item)))
+                }))
+                .into_any_element()
+        }
     }
 }
 

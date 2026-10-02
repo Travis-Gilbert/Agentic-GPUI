@@ -1576,12 +1576,16 @@ mod tests {
         });
         let cx: &mut VisualTestContext = cx;
         cx.run_until_parked();
-        cx.update(|window, cx| {
-            let _ = window.draw(cx);
-        });
+        // Read the probe from the frame that actually painted the panel. The
+        // Theorem Zed source clears debug bounds every frame and a replayed
+        // cached view does not record them again, so the lookup has to come
+        // before the replay below rather than after it.
         let bounds = cx
             .debug_bounds("cached-text-view")
             .expect("cached TextView bounds");
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
 
         let start = bounds.origin + point(px(30.), px(8.));
         drag(cx, start, start + point(px(60.), px(40.)));

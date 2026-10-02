@@ -2124,6 +2124,7 @@ impl Paragraph {
         _window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
+        let span = self.span;
         let children = &self.children;
         let fades = node_cx.stream_fades(fade_key);
         let backgrounds = node_cx.range_backgrounds(fade_key);
