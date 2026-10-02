@@ -1,0 +1,541 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Travis Gilbert <1travisgilbert@gmail.com>
+Date: Fri, 18 Sep 2026 15:32:56 -0400
+Subject: [PATCH 16/18] fix(input): choose the keymap at runtime, so the web
+ gets the right one
+
+Every keybinding in this repository was gated on
+`#[cfg(target_os = "macos")]`, which is a question the web cannot
+answer. One wasm binary is served to a Mac and to a Windows PC and
+`target_os` is `unknown` for both, so every Mac user of a GPUI web
+application received the Windows keymap: `cmd-a`, `cmd-c`, `cmd-v` and
+`cmd-z` were bound to no action at all. Measured in Chrome with
+`navigator.platform` reporting `MacIntel`: Meta+A appended to the
+composer while Control+A selected.
+
+Three shapes, three answers:
+
+  - True mirrors -- Command here, Control there -- become `secondary-`,
+    which is what that prefix has always meant. That covers copy in the
+    two Root views and copy and select-all in TextView.
+
+  - The Input keymap is not a mirror. macOS puts MoveHome on ctrl-a and
+    word movement on alt-arrows; elsewhere ctrl-a is SelectAll and
+    ctrl-arrows move by word. Those are two keymaps, not one keymap with
+    a modifier swapped, so the whole 33/17 split is selected at runtime
+    and appended to the 24 shared bindings. The inspector's
+    cmd-alt-i/ctrl-shift-i is the same shape at smaller scale.
+
+  - `Kbd::format` renders the keycap a person reads. Left alone it would
+    print `Ctrl+A` above a shortcut that now answers to Command, which
+    is worse than either vocabulary alone, so it asks the same question
+    the keymap asked.
+
+`gpui::secondary_modifier_is_platform` falls back to
+`cfg!(target_os = "macos")` when nothing set it, so every native target
+and every existing test keeps its current behavior.
+---
+ crates/base/src/input/base/state.rs | 224 ++++++++++++----------------
+ crates/base/src/root.rs             |   9 +-
+ crates/base/src/text/state.rs       |  17 ++-
+ crates/component/src/inspector.rs   |  15 +-
+ crates/component/src/kbd.rs         | 104 ++++---------
+ crates/shell/src/root.rs            |   9 +-
+ 6 files changed, 155 insertions(+), 223 deletions(-)
+
+diff --git a/crates/base/src/input/base/state.rs b/crates/base/src/input/base/state.rs
+index 9e5e0031..665248c3 100644
+--- a/crates/base/src/input/base/state.rs
++++ b/crates/base/src/input/base/state.rs
+@@ -130,25 +130,24 @@ pub enum InputEvent {
+ pub(super) const CONTEXT: &str = "Input";
+ 
+ pub(crate) fn init(cx: &mut App) {
+-    cx.bind_keys([
++    // The macOS keymap and the other one are two different keymaps, not one
++    // keymap with Command swapped for Control: macOS puts MoveHome on ctrl-a
++    // and word movement on alt-arrows, while elsewhere ctrl-a is SelectAll and
++    // ctrl-arrows move by word. So the choice is made once, over the whole set.
++    //
++    // Chosen at runtime rather than with `#[cfg(target_os = "macos")]`, because
++    // on the web that cfg is a lie. One wasm binary is served to a Mac and to a
++    // Windows PC, `target_os` is `unknown` for both, and the gate silently
++    // hands every Mac user the Windows keymap: Command does nothing, Control
++    // does everything, and `cmd-a`, `cmd-c`, `cmd-v` and `cmd-z` are bound to
++    // no action at all. `gpui::secondary_modifier_is_platform` is the browser's
++    // own answer where there is a browser and the compile-time one everywhere
++    // else, so no native target changes behavior.
++    let mut bindings = vec![
+         KeyBinding::new("backspace", Backspace, Some(CONTEXT)),
+         KeyBinding::new("shift-backspace", Backspace, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("ctrl-backspace", Backspace, Some(CONTEXT)),
+         KeyBinding::new("delete", Delete, Some(CONTEXT)),
+         KeyBinding::new("shift-delete", Delete, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("cmd-backspace", DeleteToBeginningOfLine, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("cmd-delete", DeleteToEndOfLine, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("alt-backspace", DeleteToPreviousWordStart, Some(CONTEXT)),
+-        #[cfg(not(target_os = "macos"))]
+-        KeyBinding::new("ctrl-backspace", DeleteToPreviousWordStart, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("alt-delete", DeleteToNextWordEnd, Some(CONTEXT)),
+-        #[cfg(not(target_os = "macos"))]
+-        KeyBinding::new("ctrl-delete", DeleteToNextWordEnd, Some(CONTEXT)),
+         KeyBinding::new(
+             "enter",
+             Enter {
+@@ -182,126 +181,97 @@ pub(crate) fn init(cx: &mut App) {
+         KeyBinding::new("pagedown", MovePageDown, Some(CONTEXT)),
+         KeyBinding::new("tab", IndentInline, Some(CONTEXT)),
+         KeyBinding::new("shift-tab", OutdentInline, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("cmd-]", Indent, Some(CONTEXT)),
+-        #[cfg(not(target_os = "macos"))]
+-        KeyBinding::new("ctrl-]", Indent, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("cmd-[", Outdent, Some(CONTEXT)),
+-        #[cfg(not(target_os = "macos"))]
+-        KeyBinding::new("ctrl-[", Outdent, Some(CONTEXT)),
+         KeyBinding::new("shift-left", SelectLeft, Some(CONTEXT)),
+         KeyBinding::new("shift-right", SelectRight, Some(CONTEXT)),
+         KeyBinding::new("shift-up", SelectUp, Some(CONTEXT)),
+         KeyBinding::new("shift-down", SelectDown, Some(CONTEXT)),
+-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+-        KeyBinding::new("shift-alt-left", SelectLeft, Some(CONTEXT)),
+-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+-        KeyBinding::new("shift-alt-right", SelectRight, Some(CONTEXT)),
+-        // Avoid Ctrl+Alt+arrows on Linux, where desktops may reserve them.
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("cmd-alt-up", AddCursorAbove, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("cmd-alt-down", AddCursorBelow, Some(CONTEXT)),
+-        #[cfg(target_os = "windows")]
+-        KeyBinding::new("ctrl-alt-up", AddCursorAbove, Some(CONTEXT)),
+-        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+-        KeyBinding::new("shift-alt-up", AddCursorAbove, Some(CONTEXT)),
+-        #[cfg(target_os = "windows")]
+-        KeyBinding::new("ctrl-alt-down", AddCursorBelow, Some(CONTEXT)),
+-        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+-        KeyBinding::new("shift-alt-down", AddCursorBelow, Some(CONTEXT)),
+         KeyBinding::new("home", MoveHome, Some(CONTEXT)),
+         KeyBinding::new("end", MoveEnd, Some(CONTEXT)),
+-        #[cfg(not(target_os = "macos"))]
+-        KeyBinding::new("ctrl-home", MoveToStart, Some(CONTEXT)),
+-        #[cfg(not(target_os = "macos"))]
+-        KeyBinding::new("ctrl-end", MoveToEnd, Some(CONTEXT)),
+-        #[cfg(not(target_os = "macos"))]
+-        KeyBinding::new("ctrl-shift-home", SelectToStart, Some(CONTEXT)),
+-        #[cfg(not(target_os = "macos"))]
+-        KeyBinding::new("ctrl-shift-end", SelectToEnd, Some(CONTEXT)),
+         KeyBinding::new("shift-home", SelectToStartOfLine, Some(CONTEXT)),
+         KeyBinding::new("shift-end", SelectToEndOfLine, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("ctrl-shift-a", SelectToStartOfLine, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("ctrl-shift-e", SelectToEndOfLine, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("shift-cmd-left", SelectToStartOfLine, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("shift-cmd-right", SelectToEndOfLine, Some(CONTEXT)),
+-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+-        KeyBinding::new("alt-shift-left", SelectToPreviousWordStart, Some(CONTEXT)),
+-        #[cfg(not(target_os = "macos"))]
+-        KeyBinding::new("ctrl-shift-left", SelectToPreviousWordStart, Some(CONTEXT)),
+-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+-        KeyBinding::new("alt-shift-right", SelectToNextWordEnd, Some(CONTEXT)),
+-        #[cfg(not(target_os = "macos"))]
+-        KeyBinding::new("ctrl-shift-right", SelectToNextWordEnd, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("ctrl-cmd-space", ShowCharacterPalette, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("cmd-a", SelectAll, Some(CONTEXT)),
+-        #[cfg(not(target_os = "macos"))]
+-        KeyBinding::new("ctrl-a", SelectAll, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("cmd-c", Copy, Some(CONTEXT)),
+-        #[cfg(not(target_os = "macos"))]
+-        KeyBinding::new("ctrl-c", Copy, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("cmd-x", Cut, Some(CONTEXT)),
+-        #[cfg(not(target_os = "macos"))]
+-        KeyBinding::new("ctrl-x", Cut, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("cmd-v", Paste, Some(CONTEXT)),
+-        #[cfg(not(target_os = "macos"))]
+-        KeyBinding::new("ctrl-v", Paste, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("ctrl-a", MoveHome, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("cmd-left", MoveHome, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("ctrl-e", MoveEnd, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("cmd-right", MoveEnd, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("cmd-z", Undo, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("cmd-shift-z", Redo, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("cmd-up", MoveToStart, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("cmd-down", MoveToEnd, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("alt-left", MoveToPreviousWord, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("alt-right", MoveToNextWord, Some(CONTEXT)),
+-        #[cfg(not(target_os = "macos"))]
+-        KeyBinding::new("ctrl-left", MoveToPreviousWord, Some(CONTEXT)),
+-        #[cfg(not(target_os = "macos"))]
+-        KeyBinding::new("ctrl-right", MoveToNextWord, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("cmd-shift-up", SelectToStart, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("cmd-shift-down", SelectToEnd, Some(CONTEXT)),
+-        #[cfg(not(target_os = "macos"))]
+-        KeyBinding::new("ctrl-z", Undo, Some(CONTEXT)),
+-        #[cfg(not(target_os = "macos"))]
+-        KeyBinding::new("ctrl-y", Redo, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("cmd-.", ToggleCodeActions, Some(CONTEXT)),
+-        #[cfg(not(target_os = "macos"))]
+-        KeyBinding::new("ctrl-.", ToggleCodeActions, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("cmd-f", Search, Some(CONTEXT)),
+-        #[cfg(not(target_os = "macos"))]
+-        KeyBinding::new("ctrl-f", Search, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("cmd-shift-f", Replace, Some(CONTEXT)),
+-        #[cfg(not(target_os = "macos"))]
+-        KeyBinding::new("ctrl-h", Replace, Some(CONTEXT)),
+-    ]);
++    ];
++    bindings.extend(if gpui::secondary_modifier_is_platform() {
++        vec![
++            KeyBinding::new("ctrl-backspace", Backspace, Some(CONTEXT)),
++            KeyBinding::new("cmd-backspace", DeleteToBeginningOfLine, Some(CONTEXT)),
++            KeyBinding::new("cmd-delete", DeleteToEndOfLine, Some(CONTEXT)),
++            KeyBinding::new("alt-backspace", DeleteToPreviousWordStart, Some(CONTEXT)),
++            KeyBinding::new("alt-delete", DeleteToNextWordEnd, Some(CONTEXT)),
++            KeyBinding::new("cmd-]", Indent, Some(CONTEXT)),
++            KeyBinding::new("cmd-[", Outdent, Some(CONTEXT)),
++            KeyBinding::new("ctrl-shift-a", SelectToStartOfLine, Some(CONTEXT)),
++            KeyBinding::new("ctrl-shift-e", SelectToEndOfLine, Some(CONTEXT)),
++            KeyBinding::new("shift-cmd-left", SelectToStartOfLine, Some(CONTEXT)),
++            KeyBinding::new("shift-cmd-right", SelectToEndOfLine, Some(CONTEXT)),
++            KeyBinding::new("alt-shift-left", SelectToPreviousWordStart, Some(CONTEXT)),
++            KeyBinding::new("alt-shift-right", SelectToNextWordEnd, Some(CONTEXT)),
++            KeyBinding::new("ctrl-cmd-space", ShowCharacterPalette, Some(CONTEXT)),
++            KeyBinding::new("cmd-a", SelectAll, Some(CONTEXT)),
++            KeyBinding::new("cmd-c", Copy, Some(CONTEXT)),
++            KeyBinding::new("cmd-x", Cut, Some(CONTEXT)),
++            KeyBinding::new("cmd-v", Paste, Some(CONTEXT)),
++            KeyBinding::new("ctrl-a", MoveHome, Some(CONTEXT)),
++            KeyBinding::new("cmd-left", MoveHome, Some(CONTEXT)),
++            KeyBinding::new("ctrl-e", MoveEnd, Some(CONTEXT)),
++            KeyBinding::new("cmd-right", MoveEnd, Some(CONTEXT)),
++            KeyBinding::new("cmd-z", Undo, Some(CONTEXT)),
++            KeyBinding::new("cmd-shift-z", Redo, Some(CONTEXT)),
++            KeyBinding::new("cmd-up", MoveToStart, Some(CONTEXT)),
++            KeyBinding::new("cmd-down", MoveToEnd, Some(CONTEXT)),
++            KeyBinding::new("alt-left", MoveToPreviousWord, Some(CONTEXT)),
++            KeyBinding::new("alt-right", MoveToNextWord, Some(CONTEXT)),
++            KeyBinding::new("cmd-shift-up", SelectToStart, Some(CONTEXT)),
++            KeyBinding::new("cmd-shift-down", SelectToEnd, Some(CONTEXT)),
++            KeyBinding::new("cmd-.", ToggleCodeActions, Some(CONTEXT)),
++            KeyBinding::new("cmd-f", Search, Some(CONTEXT)),
++            KeyBinding::new("cmd-shift-f", Replace, Some(CONTEXT)),
++            KeyBinding::new("cmd-alt-up", AddCursorAbove, Some(CONTEXT)),
++            KeyBinding::new("cmd-alt-down", AddCursorBelow, Some(CONTEXT)),
++        ]
++    } else {
++        vec![
++            KeyBinding::new("ctrl-backspace", DeleteToPreviousWordStart, Some(CONTEXT)),
++            KeyBinding::new("ctrl-delete", DeleteToNextWordEnd, Some(CONTEXT)),
++            KeyBinding::new("ctrl-]", Indent, Some(CONTEXT)),
++            KeyBinding::new("ctrl-[", Outdent, Some(CONTEXT)),
++            KeyBinding::new("ctrl-shift-left", SelectToPreviousWordStart, Some(CONTEXT)),
++            KeyBinding::new("ctrl-shift-right", SelectToNextWordEnd, Some(CONTEXT)),
++            KeyBinding::new("ctrl-a", SelectAll, Some(CONTEXT)),
++            KeyBinding::new("ctrl-c", Copy, Some(CONTEXT)),
++            KeyBinding::new("ctrl-x", Cut, Some(CONTEXT)),
++            KeyBinding::new("ctrl-v", Paste, Some(CONTEXT)),
++            KeyBinding::new("ctrl-left", MoveToPreviousWord, Some(CONTEXT)),
++            KeyBinding::new("ctrl-right", MoveToNextWord, Some(CONTEXT)),
++            KeyBinding::new("ctrl-z", Undo, Some(CONTEXT)),
++            KeyBinding::new("ctrl-y", Redo, Some(CONTEXT)),
++            KeyBinding::new("ctrl-.", ToggleCodeActions, Some(CONTEXT)),
++            KeyBinding::new("ctrl-f", Search, Some(CONTEXT)),
++            KeyBinding::new("ctrl-h", Replace, Some(CONTEXT)),
++            KeyBinding::new("ctrl-home", MoveToStart, Some(CONTEXT)),
++            KeyBinding::new("ctrl-end", MoveToEnd, Some(CONTEXT)),
++            KeyBinding::new("ctrl-shift-home", SelectToStart, Some(CONTEXT)),
++            KeyBinding::new("ctrl-shift-end", SelectToEnd, Some(CONTEXT)),
++            // Linux desktops may reserve Ctrl+Alt+arrows and keep Alt+Shift
++            // arrows for word selection; elsewhere those select by character.
++            #[cfg(target_os = "linux")]
++            KeyBinding::new("alt-shift-left", SelectToPreviousWordStart, Some(CONTEXT)),
++            #[cfg(target_os = "linux")]
++            KeyBinding::new("alt-shift-right", SelectToNextWordEnd, Some(CONTEXT)),
++            #[cfg(not(target_os = "linux"))]
++            KeyBinding::new("shift-alt-left", SelectLeft, Some(CONTEXT)),
++            #[cfg(not(target_os = "linux"))]
++            KeyBinding::new("shift-alt-right", SelectRight, Some(CONTEXT)),
++            #[cfg(target_os = "windows")]
++            KeyBinding::new("ctrl-alt-up", AddCursorAbove, Some(CONTEXT)),
++            #[cfg(target_os = "windows")]
++            KeyBinding::new("ctrl-alt-down", AddCursorBelow, Some(CONTEXT)),
++            #[cfg(not(target_os = "windows"))]
++            KeyBinding::new("shift-alt-up", AddCursorAbove, Some(CONTEXT)),
++            #[cfg(not(target_os = "windows"))]
++            KeyBinding::new("shift-alt-down", AddCursorBelow, Some(CONTEXT)),
++        ]
++    });
++    cx.bind_keys(bindings);
+ }
+ 
+ /// A mouse position resolved for a columnar (block) selection.
+diff --git a/crates/base/src/root.rs b/crates/base/src/root.rs
+index 0ea70b54..05c41c5c 100644
+--- a/crates/base/src/root.rs
++++ b/crates/base/src/root.rs
+@@ -15,10 +15,11 @@ pub(crate) fn init(cx: &mut App) {
+     cx.bind_keys([
+         KeyBinding::new("tab", Tab, Some(CONTEXT)),
+         KeyBinding::new("shift-tab", TabPrev, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("cmd-c", Copy, Some(CONTEXT)),
+-        #[cfg(not(target_os = "macos"))]
+-        KeyBinding::new("ctrl-c", Copy, Some(CONTEXT)),
++        // `secondary-` rather than a `#[cfg(target_os = "macos")]` pair: on the
++        // web that cfg is `unknown` for a Mac and a Windows PC alike, so the
++        // gate would bind copy to Control for everyone and leave `cmd-c` dead
++        // on a Mac. This one is a true mirror, which is what `secondary-` means.
++        KeyBinding::new("secondary-c", Copy, Some(CONTEXT)),
+     ]);
+ }
+ 
+diff --git a/crates/base/src/text/state.rs b/crates/base/src/text/state.rs
+index 65295acc..6dfc50dc 100644
+--- a/crates/base/src/text/state.rs
++++ b/crates/base/src/text/state.rs
+@@ -47,15 +47,16 @@ const MAX_SYNC_FULL_REPLACE_BYTES: usize = 4 * 1024;
+ const STREAM_FADE_TICK: Duration = Duration::from_millis(33);
+ 
+ pub(crate) fn init(cx: &mut App) {
++    // `secondary-` rather than a `#[cfg(target_os = "macos")]` pair, because on
++    // the web that cfg is a lie: one wasm binary serves a Mac and a Windows PC
++    // and `target_os` is `unknown` for both, so the gate hands every Mac user
++    // the Windows keymap and leaves `cmd-c` and `cmd-a` bound to nothing. These
++    // two are a true mirror -- Command where the platform key is Command,
++    // Control elsewhere -- so `secondary-` says exactly that, and GPUI resolves
++    // it against the browser's own platform where there is a browser.
+     cx.bind_keys(vec![
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("cmd-c", input::Copy, Some(CONTEXT)),
+-        #[cfg(not(target_os = "macos"))]
+-        KeyBinding::new("ctrl-c", input::Copy, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("cmd-a", input::SelectAll, Some(CONTEXT)),
+-        #[cfg(not(target_os = "macos"))]
+-        KeyBinding::new("ctrl-a", input::SelectAll, Some(CONTEXT)),
++        KeyBinding::new("secondary-c", input::Copy, Some(CONTEXT)),
++        KeyBinding::new("secondary-a", input::SelectAll, Some(CONTEXT)),
+     ]);
+ }
+ 
+diff --git a/crates/component/src/inspector.rs b/crates/component/src/inspector.rs
+index cd475bb5..67ad7795 100644
+--- a/crates/component/src/inspector.rs
++++ b/crates/component/src/inspector.rs
+@@ -29,12 +29,15 @@ actions!(inspector, [ToggleInspector]);
+ 
+ /// Initialize the inspector and register the action to toggle it.
+ pub(crate) fn init(cx: &mut App) {
+-    cx.bind_keys(vec![
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("cmd-alt-i", ToggleInspector, None),
+-        #[cfg(not(target_os = "macos"))]
+-        KeyBinding::new("ctrl-shift-i", ToggleInspector, None),
+-    ]);
++    // Not a mirror -- macOS uses Command+Option and elsewhere it is
++    // Control+Shift -- so the whole binding is chosen at runtime rather than by
++    // `#[cfg(target_os = "macos")]`, which on the web reports `unknown` for
++    // every browser and would give a Mac the Windows chord.
++    cx.bind_keys(vec![if gpui::secondary_modifier_is_platform() {
++        KeyBinding::new("cmd-alt-i", ToggleInspector, None)
++    } else {
++        KeyBinding::new("ctrl-shift-i", ToggleInspector, None)
++    }]);
+ 
+     cx.on_action(|_: &ToggleInspector, cx| {
+         let Some(active_window) = cx.active_window() else {
+diff --git a/crates/component/src/kbd.rs b/crates/component/src/kbd.rs
+index 98e3e1c0..10c5a852 100644
+--- a/crates/component/src/kbd.rs
++++ b/crates/component/src/kbd.rs
+@@ -102,11 +102,20 @@ impl Kbd {
+     ///
+     /// macOS: https://support.apple.com/en-us/HT201236
+     /// Windows: https://support.microsoft.com/en-us/windows/keyboard-shortcuts-in-windows-dcc61a57-8ff0-cffe-9796-cb9706c75eec
++    ///
++    /// Which of the two vocabularies is used is decided at runtime, not by
++    /// `#[cfg(target_os = "macos")]`. On the web that cfg is a lie: one wasm
++    /// binary is served to a Mac and to a Windows PC and `target_os` is
++    /// `unknown` for both. The bindings themselves already resolve at runtime,
++    /// and a keycap that reads `Ctrl+A` above a shortcut that answers to
++    /// Command is worse than either vocabulary alone -- the product would be
++    /// lying about its own shortcuts. `gpui::secondary_modifier_is_platform`
++    /// is the same answer the keymap asked, so the two cannot drift apart. It
++    /// falls back to the compile-time cfg off the web, so no native target
++    /// changes.
+     pub fn format(key: &Keystroke) -> String {
+-        #[cfg(target_os = "macos")]
+-        const SEPARATOR: &str = "";
+-        #[cfg(not(target_os = "macos"))]
+-        const SEPARATOR: &str = "+";
++        let mac = gpui::secondary_modifier_is_platform();
++        let separator = if mac { "" } else { "+" };
+ 
+         let mut parts = vec![];
+ 
+@@ -114,92 +123,39 @@ impl Kbd {
+         // And in Windows is: Ctrl+Alt+Shift+Win
+ 
+         if key.modifiers.control {
+-            #[cfg(target_os = "macos")]
+-            parts.push("⌃");
+-
+-            #[cfg(not(target_os = "macos"))]
+-            parts.push("Ctrl");
++            parts.push(if mac { "⌃" } else { "Ctrl" });
+         }
+ 
+         if key.modifiers.alt {
+-            #[cfg(target_os = "macos")]
+-            parts.push("⌥");
+-
+-            #[cfg(not(target_os = "macos"))]
+-            parts.push("Alt");
++            parts.push(if mac { "⌥" } else { "Alt" });
+         }
+ 
+         if key.modifiers.shift {
+-            #[cfg(target_os = "macos")]
+-            parts.push("⇧");
+-
+-            #[cfg(not(target_os = "macos"))]
+-            parts.push("Shift");
++            parts.push(if mac { "⇧" } else { "Shift" });
+         }
+ 
+         if key.modifiers.platform {
+-            #[cfg(target_os = "macos")]
+-            parts.push("⌘");
+-
+-            #[cfg(not(target_os = "macos"))]
+-            parts.push("Win");
++            parts.push(if mac { "⌘" } else { "Win" });
+         }
+ 
+         let mut keys = String::new();
+         let key_str = key.key.as_str();
+         match key_str {
+-            #[cfg(target_os = "macos")]
+-            "ctrl" => keys.push('⌃'),
+-            #[cfg(not(target_os = "macos"))]
+-            "ctrl" => keys.push_str("Ctrl"),
+-            #[cfg(target_os = "macos")]
+-            "alt" => keys.push('⌥'),
+-            #[cfg(not(target_os = "macos"))]
+-            "alt" => keys.push_str("Alt"),
+-            #[cfg(target_os = "macos")]
+-            "shift" => keys.push('⇧'),
+-            #[cfg(not(target_os = "macos"))]
+-            "shift" => keys.push_str("Shift"),
+-            #[cfg(target_os = "macos")]
+-            "cmd" => keys.push('⌘'),
+-            #[cfg(not(target_os = "macos"))]
+-            "cmd" => keys.push_str("Win"),
+-            #[cfg(target_os = "macos")]
++            "ctrl" => keys.push_str(if mac { "⌃" } else { "Ctrl" }),
++            "alt" => keys.push_str(if mac { "⌥" } else { "Alt" }),
++            "shift" => keys.push_str(if mac { "⇧" } else { "Shift" }),
++            "cmd" => keys.push_str(if mac { "⌘" } else { "Win" }),
+             "space" => keys.push_str("Space"),
+-            #[cfg(target_os = "macos")]
+-            "backspace" => keys.push('⌫'),
+-            #[cfg(not(target_os = "macos"))]
+-            "backspace" => keys.push_str("Backspace"),
+-            #[cfg(target_os = "macos")]
+-            "delete" => keys.push('⌫'),
+-            #[cfg(not(target_os = "macos"))]
+-            "delete" => keys.push_str("Delete"),
+-            #[cfg(target_os = "macos")]
+-            "escape" => keys.push('⎋'),
+-            #[cfg(not(target_os = "macos"))]
+-            "escape" => keys.push_str("Esc"),
+-            #[cfg(target_os = "macos")]
+-            "enter" => keys.push('⏎'),
+-            #[cfg(not(target_os = "macos"))]
+-            "enter" => keys.push_str("Enter"),
++            "backspace" => keys.push_str(if mac { "⌫" } else { "Backspace" }),
++            "delete" => keys.push_str(if mac { "⌫" } else { "Delete" }),
++            "escape" => keys.push_str(if mac { "⎋" } else { "Esc" }),
++            "enter" => keys.push_str(if mac { "⏎" } else { "Enter" }),
+             "pagedown" => keys.push_str("Page Down"),
+             "pageup" => keys.push_str("Page Up"),
+-            #[cfg(target_os = "macos")]
+-            "left" => keys.push('←'),
+-            #[cfg(not(target_os = "macos"))]
+-            "left" => keys.push_str("Left"),
+-            #[cfg(target_os = "macos")]
+-            "right" => keys.push('→'),
+-            #[cfg(not(target_os = "macos"))]
+-            "right" => keys.push_str("Right"),
+-            #[cfg(target_os = "macos")]
+-            "up" => keys.push('↑'),
+-            #[cfg(not(target_os = "macos"))]
+-            "up" => keys.push_str("Up"),
+-            #[cfg(target_os = "macos")]
+-            "down" => keys.push('↓'),
+-            #[cfg(not(target_os = "macos"))]
+-            "down" => keys.push_str("Down"),
++            "left" => keys.push_str(if mac { "←" } else { "Left" }),
++            "right" => keys.push_str(if mac { "→" } else { "Right" }),
++            "up" => keys.push_str(if mac { "↑" } else { "Up" }),
++            "down" => keys.push_str(if mac { "↓" } else { "Down" }),
+             _ => {
+                 if key_str.len() == 1 {
+                     keys.push_str(&key_str.to_uppercase());
+@@ -219,7 +175,7 @@ impl Kbd {
+         }
+ 
+         parts.push(&keys);
+-        parts.join(SEPARATOR)
++        parts.join(separator)
+     }
+ }
+ 
+diff --git a/crates/shell/src/root.rs b/crates/shell/src/root.rs
+index cebb9a5b..b2e3a294 100644
+--- a/crates/shell/src/root.rs
++++ b/crates/shell/src/root.rs
+@@ -1082,10 +1082,11 @@ fn install_key_bindings(cx: &mut App) {
+     cx.bind_keys([
+         KeyBinding::new("tab", Tab, Some(CONTEXT)),
+         KeyBinding::new("shift-tab", TabPrev, Some(CONTEXT)),
+-        #[cfg(target_os = "macos")]
+-        KeyBinding::new("cmd-c", Copy, Some(CONTEXT)),
+-        #[cfg(not(target_os = "macos"))]
+-        KeyBinding::new("ctrl-c", Copy, Some(CONTEXT)),
++        // `secondary-` rather than a `#[cfg(target_os = "macos")]` pair: on the
++        // web that cfg is `unknown` for a Mac and a Windows PC alike, so the
++        // gate would bind copy to Control for everyone and leave `cmd-c` dead
++        // on a Mac. This one is a true mirror, which is what `secondary-` means.
++        KeyBinding::new("secondary-c", Copy, Some(CONTEXT)),
+     ]);
+     cx.set_global(KeyBindingsInstalled);
+ }

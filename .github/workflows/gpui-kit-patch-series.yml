@@ -38,7 +38,7 @@ jobs:
           if [ "${{ github.event_name }}" = "schedule" ]; then
             echo "ref=main" >> "$GITHUB_OUTPUT"
           else
-            echo "ref=v0.6.0" >> "$GITHUB_OUTPUT"
+            echo "ref=v0.7.0" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Checkout upstream GPUI Kit
@@ -92,7 +92,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if grep -R -n "gpui-pre" --include='Cargo.toml' --include='Cargo.lock' .; then
+          # Comments may name gpui-pre (v0.7.0 explains a feature choice by
+          # it); only a dependency line resolving to it is refused.
+          if grep -R -n -E '^[^#]*gpui-pre' --include='Cargo.toml' --include='Cargo.lock' .; then
             echo "::error::gpui-pre must not appear in dependency manifests or the lockfile"
             exit 1
           fi

@@ -1,15 +1,15 @@
-From bd326291bb967274acd50cd6ece9935b93172463 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Travis Gilbert <1travisgilbert@gmail.com>
 Date: Sat, 5 Sep 2026 05:23:00 -0400
-Subject: [PATCH] fix(ci): recognize the capture name inside its own patch
- pattern
+Subject: [PATCH 09/18] fix(ci): recognize the capture name inside its own
+ patch pattern
 
 ---
  _typos.toml | 2 +-
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/_typos.toml b/_typos.toml
-index e9abe518..78a0e762 100644
+index acadc026..9113402a 100644
 --- a/_typos.toml
 +++ b/_typos.toml
 @@ -4,7 +4,7 @@ extend-ignore-re = [
@@ -21,6 +21,3 @@ index e9abe518..78a0e762 100644
  ]
  
  [default.extend-words]
--- 
-2.53.0
-

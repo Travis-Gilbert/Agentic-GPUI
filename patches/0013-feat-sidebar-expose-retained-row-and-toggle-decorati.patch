@@ -1,21 +1,31 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Travis Gilbert <1travisgilbert@gmail.com>
+Date: Sat, 5 Sep 2026 09:45:37 -0400
+Subject: [PATCH 13/18] feat(sidebar): expose retained row and toggle
+ decoration hooks
+
+---
+ crates/component/src/sidebar/menu.rs | 24 ++++++++++++++++++++++--
+ crates/component/src/sidebar/mod.rs  | 13 +++++++++++++
+ 2 files changed, 35 insertions(+), 2 deletions(-)
+
 diff --git a/crates/component/src/sidebar/menu.rs b/crates/component/src/sidebar/menu.rs
-index cbaa60ca..7ca8ca05 100644
+index fe26ed96..6abf5847 100644
 --- a/crates/component/src/sidebar/menu.rs
 +++ b/crates/component/src/sidebar/menu.rs
-@@ -8,9 +8,9 @@ use crate::{
+@@ -8,8 +8,9 @@ use crate::{
      v_flex,
  };
  use gpui::{
 -    AnyElement, App, ClickEvent, ElementId, InteractiveElement as _, IntoElement,
--    ParentElement as _, SharedString, StatefulInteractiveElement as _, StyleRefinement, Styled,
--    Window, div, percentage, prelude::FluentBuilder,
+-    ParentElement as _, Role, SharedString, StatefulInteractiveElement as _, StyleRefinement,
 +    AnyElement, App, ClickEvent, Div, ElementId, InteractiveElement as _, IntoElement,
-+    ParentElement as _, SharedString, Stateful, StatefulInteractiveElement as _, StyleRefinement,
-+    Styled, Window, div, percentage, prelude::FluentBuilder,
++    ParentElement as _, Role, SharedString, Stateful, StatefulInteractiveElement as _,
++    StyleRefinement,
+     Styled, Window, div, percentage, prelude::FluentBuilder,
  };
- use std::rc::Rc;
- 
-@@ -101,6 +101,7 @@ pub struct SidebarMenuItem {
+ use gpui_base::TestSupportExt as _;
+@@ -105,6 +106,7 @@ pub struct SidebarMenuItem {
      click_to_toggle: bool,
      children: Vec<Self>,
      suffix: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyElement + 'static>>,
@@ -23,7 +33,7 @@ index cbaa60ca..7ca8ca05 100644
      disabled: bool,
      context_menu: Option<Rc<dyn Fn(PopupMenu, &mut Window, &mut App) -> PopupMenu + 'static>>,
  }
-@@ -119,6 +120,7 @@ impl SidebarMenuItem {
+@@ -126,6 +128,7 @@ impl SidebarMenuItem {
              click_to_toggle: false,
              children: Vec::new(),
              suffix: None,
@@ -31,7 +41,7 @@ index cbaa60ca..7ca8ca05 100644
              disabled: false,
              context_menu: None,
          }
-@@ -196,6 +198,19 @@ impl SidebarMenuItem {
+@@ -217,6 +220,19 @@ impl SidebarMenuItem {
          self
      }
  
@@ -51,7 +61,7 @@ index cbaa60ca..7ca8ca05 100644
      /// Set disabled flat for menu item.
      pub fn disable(mut self, disable: bool) -> Self {
          self.disabled = disable;
-@@ -369,6 +384,10 @@ impl SidebarItem for SidebarMenuItem {
+@@ -398,6 +414,10 @@ impl SidebarItem for SidebarMenuItem {
                              this
                          }
                      })
@@ -63,7 +73,7 @@ index cbaa60ca..7ca8ca05 100644
                          if let Some(context_menu) = self.context_menu {
                              this.context_menu(move |menu, window, cx| {
 diff --git a/crates/component/src/sidebar/mod.rs b/crates/component/src/sidebar/mod.rs
-index 09c686bd..95a4d3d3 100644
+index a3254688..5690e634 100644
 --- a/crates/component/src/sidebar/mod.rs
 +++ b/crates/component/src/sidebar/mod.rs
 @@ -305,6 +305,7 @@ pub struct SidebarToggleButton {
@@ -92,7 +102,7 @@ index 09c686bd..95a4d3d3 100644
      /// Set the side of the toggle button.
      ///
      /// Default is `Side::Left`.
-@@ -372,6 +381,10 @@ impl RenderOnce for SidebarToggleButton {
+@@ -381,6 +390,10 @@ impl RenderOnce for SidebarToggleButton {
                  false => t!("Sidebar.Collapse"),
              })
              .icon(Icon::new(icon).size_4())

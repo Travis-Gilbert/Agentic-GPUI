@@ -1,8 +1,18 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Travis Gilbert <1travisgilbert@gmail.com>
+Date: Sat, 5 Sep 2026 10:14:24 -0400
+Subject: [PATCH 14/18] fix(sidebar): retain composed keyboard and semantic row
+ bindings
+
+---
+ crates/component/src/sidebar/menu.rs | 15 +++++++++++----
+ 1 file changed, 11 insertions(+), 4 deletions(-)
+
 diff --git a/crates/component/src/sidebar/menu.rs b/crates/component/src/sidebar/menu.rs
-index 7ca8ca05..586ccd2b 100644
+index 6abf5847..a521c5e9 100644
 --- a/crates/component/src/sidebar/menu.rs
 +++ b/crates/component/src/sidebar/menu.rs
-@@ -200,14 +200,21 @@ impl SidebarMenuItem {
+@@ -222,14 +222,21 @@ impl SidebarMenuItem {
  
      /// Decorate the actual clickable row, excluding its expanded submenu.
      ///
