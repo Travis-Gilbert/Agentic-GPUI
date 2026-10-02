@@ -16,3 +16,4 @@
 0016-fix-input-choose-the-keymap-at-runtime-so-the-web-ge.patch
 0017-fix-input-delete-by-grapheme-cluster-and-let-paste-r.patch
 0018-fix-fork-build-the-v0.7.0-rebase-against-the-Theorem.patch
+0019-fix-text-decorate-links-on-the-plain-paragraph-fast-.patch

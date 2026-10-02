@@ -1,0 +1,31 @@
+From 011a0c416213f89b84e4405700d6a65c56a99bee Mon Sep 17 00:00:00 2001
+From: Travis Gilbert <1travisgilbert@gmail.com>
+Date: Fri, 2 Oct 2026 12:32:06 -0400
+Subject: [PATCH] fix(text): decorate links on the plain paragraph fast path
+
+Kit v0.7 added a text-only paragraph path that builds one Inline and caches
+its runs. It skipped link_with and link_underline, so a TextView with a link
+decorator published no link targets for an ordinary paragraph.
+---
+ crates/base/src/text/node.rs | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/crates/base/src/text/node.rs b/crates/base/src/text/node.rs
+index a1fd597b..2ac78b2f 100644
+--- a/crates/base/src/text/node.rs
++++ b/crates/base/src/text/node.rs
+@@ -2172,6 +2172,11 @@ impl Paragraph {
+             )
+             .range_backgrounds(backgrounds)
+             .reveal(reveal)
++            .link_with(
++                node_cx.link_fragment_decorator.clone(),
++                node_cx.offset + span.unwrap_or_default().start,
++            )
++            .link_underline(node_cx.link_underline.clone())
+             .into_any_element();
+         }
+ 
+-- 
+2.53.0
+
