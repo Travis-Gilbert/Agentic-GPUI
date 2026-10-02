@@ -1,0 +1,136 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Travis Gilbert <1travisgilbert@gmail.com>
+Date: Thu, 3 Sep 2026 21:53:46 -0400
+Subject: [PATCH 05/18] build(gpui): use the Theorem Zed source
+
+---
+ Cargo.toml                                | 36 +++++++++++------------
+ crates/component-macros/src/crate_path.rs |  8 ++---
+ crates/fps/README.md                      |  9 +++---
+ crates/kit/src/lib.rs                     |  4 +--
+ 4 files changed, 27 insertions(+), 30 deletions(-)
+
+diff --git a/Cargo.toml b/Cargo.toml
+index 29a8e7d2..c7295e61 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -58,20 +58,13 @@ gpui-wry = { path = "crates/webview", version = "0.7.0" }
+ gpui-component-shell = { path = "crates/component-shell", version = "0.7.0" }
+ story = { path = "crates/story" }
+ 
+-# GPUI comes from the `gpui-pre-*` snapshots of Zed's crates, and any snapshot
+-# may change GPUI's API. These requirements are what the published gpui-kit
+-# crates carry to crates.io, so they pin the exact snapshot the release was
+-# built against: a caret requirement let the weekly release move applications
+-# onto a newer snapshot that gpui-component did not compile with (#3156). Bump
+-# every snapshot crate together with its Cargo.lock entry; `script/check-gpui-pin.ts`
+-# fails CI when a pin is not exact.
+-gpui = { package = "gpui-pre", version = "=0.3.7" }
+-gpui_platform = { package = "gpui-pre-platform", version = "=0.3.7", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
+-gpui_web = { package = "gpui-pre-web", version = "=0.3.7" }
+-gpui_macros = { package = "gpui-pre-macros", version = "=0.3.7" }
+-reqwest_client = { package = "gpui-pre-reqwest-client", version = "=0.3.7" }
+-sum-tree = { package = "gpui-pre-sum-tree", version = "=0.3.7" }
+-reqwest = { package = "gpui-pre-reqwest", version = "=0.12.15", default-features = false, features = [
++gpui = { git = "https://github.com/Travis-Gilbert/zed", rev = "6d4d90754f7dde3e62afb6fe74a632c0b4660396" }
++gpui_platform = { git = "https://github.com/Travis-Gilbert/zed", rev = "6d4d90754f7dde3e62afb6fe74a632c0b4660396", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
++gpui_web = { git = "https://github.com/Travis-Gilbert/zed", rev = "6d4d90754f7dde3e62afb6fe74a632c0b4660396" }
++gpui_macros = { git = "https://github.com/Travis-Gilbert/zed", rev = "6d4d90754f7dde3e62afb6fe74a632c0b4660396" }
++reqwest_client = { git = "https://github.com/Travis-Gilbert/zed", rev = "6d4d90754f7dde3e62afb6fe74a632c0b4660396" }
++sum-tree = { package = "sum_tree", git = "https://github.com/Travis-Gilbert/zed", rev = "6d4d90754f7dde3e62afb6fe74a632c0b4660396" }
++reqwest = { package = "zed-reqwest", git = "https://github.com/zed-industries/reqwest.git", rev = "33bc764aa15ff7b200bf7c93bd96e24878d53e14", version = "0.12.15-zed", default-features = false, features = [
+     "charset",
+     "http2",
+     "macos-system-configuration",
+@@ -144,14 +137,14 @@ rustybuzz = { opt-level = 3 }
+ taffy = { opt-level = 3 }
+ ttf-parser = { opt-level = 3 }
+ smol = { opt-level = 3 }
+-gpui-pre = { opt-level = 3 }
+-gpui-pre-platform = { opt-level = 3 }
+-gpui-pre-macros = { opt-level = 3 }
++gpui = { opt-level = 3 }
++gpui_platform = { opt-level = 3 }
++gpui_macros = { opt-level = 3 }
+ tree-sitter = { opt-level = 3 }
+-gpui-pre-sum-tree = { opt-level = 3 }
++sum_tree = { opt-level = 3 }
+ ropey = { opt-level = 3 }
+ lsp-types = { opt-level = 3 }
+-gpui-pre-reqwest-client = { opt-level = 3 }
++reqwest_client = { opt-level = 3 }
+ markdown = { opt-level = 3 }
+ xml5ever = { opt-level = 3 }
+ # `quickjs-jit` is a facade that re-exports `quickjs-jit-core`, so naming it alone
+@@ -179,3 +172,8 @@ consts = "consts"
+ 
+ [workspace.metadata.cargo-machete]
+ ignored = ["log", "anyhow", "serde"]
++
++[workspace.metadata.theorem-fork]
++upstream = "https://github.com/longbridge/gpui-kit"
++upstream_tag = "v0.6.0"
++zed_rev = "6d4d90754f7dde3e62afb6fe74a632c0b4660396"
+diff --git a/crates/component-macros/src/crate_path.rs b/crates/component-macros/src/crate_path.rs
+index 89ae1c44..11db02e0 100644
+--- a/crates/component-macros/src/crate_path.rs
++++ b/crates/component-macros/src/crate_path.rs
+@@ -5,20 +5,20 @@ use quote::quote;
+ /// Resolve the GPUI API exposed to the crate where a macro is expanded.
+ ///
+ /// `gpui-kit` is preferred because it re-exports GPUI and is the only direct
+-/// dependency required by kit consumers. The `gpui-pre` package fallback
++/// dependency required by kit consumers. The `gpui` package fallback
+ /// preserves standalone `gpui-component` consumers, including dependencies
+ /// that rename that package to `gpui` (the conventional name).
+ pub(crate) fn gpui() -> syn::Result<TokenStream> {
+     match crate_name("gpui-kit") {
+         Ok(found) => Ok(found_crate_path(found)),
+-        Err(kit_error) => crate_name("gpui-pre")
++        Err(kit_error) => crate_name("gpui")
+             .map(found_crate_path)
+             .map_err(|gpui_error| {
+                 syn::Error::new(
+                     Span::call_site(),
+                     format!(
+-                        "IntoPlot requires a direct dependency on `gpui-kit` or `gpui-pre`: \
+-                         gpui-kit lookup failed: {kit_error}; gpui-pre lookup failed: {gpui_error}"
++                        "IntoPlot requires a direct dependency on `gpui-kit` or `gpui`: \
++                         gpui-kit lookup failed: {kit_error}; gpui lookup failed: {gpui_error}"
+                     ),
+                 )
+             }),
+diff --git a/crates/fps/README.md b/crates/fps/README.md
+index 0cb942ea..192f23e7 100644
+--- a/crates/fps/README.md
++++ b/crates/fps/README.md
+@@ -41,11 +41,10 @@ It does not depend on `gpui-component`, so it works in any GPUI application.
+ gpui-fps = { git = "https://github.com/longbridge/gpui-kit" }
+ ```
+ 
+-It must resolve to the same `gpui` as your application. Both depending on the
+-same `gpui-pre` version is enough — Cargo unifies them — but a `[patch]`, a
+-different `gpui-pre` version, or a checkout of the Zed repository will produce
+-two incompatible `gpui` crates, and the error will be about mismatched `Window`
+-types rather than about versions.
++It must resolve to the same `gpui` as your application. This fork pins the GPUI
++family to one immutable revision of Theorem's Zed fork. A different Zed
++revision produces two incompatible `gpui` crates, and the error will be about
++mismatched `Window` types rather than about versions.
+ 
+ ### 2. Render it
+ 
+diff --git a/crates/kit/src/lib.rs b/crates/kit/src/lib.rs
+index 39776c2b..85acced6 100644
+--- a/crates/kit/src/lib.rs
++++ b/crates/kit/src/lib.rs
+@@ -1,7 +1,7 @@
+ //! GPUI Kit: one dependency for building desktop applications with GPUI.
+ //!
+-//! GPUI itself is published as a family of `gpui-pre-*` crates that move
+-//! together. This crate depends on the matching set for you, so an
++//! GPUI is consumed from Theorem's pinned Zed fork as a family of crates that
++//! move together. This crate depends on the matching set for you, so an
+ //! application lists `gpui-kit` alone. `use gpui_kit::*;` is GPUI, and each
+ //! layer is reachable by name:
+ //!

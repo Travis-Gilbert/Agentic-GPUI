@@ -1,24 +1,73 @@
 # Theorem GPUI Kit patch series
 
-This hard fork tracks `longbridge/gpui-kit` tag `v0.6.0`. The files listed in
+This hard fork tracks `longbridge/gpui-kit` tag `v0.7.0`. The files listed in
 `series` are applied in order and are never proposed upstream. The fork pins
-the entire GPUI family to one immutable revision of `Travis-Gilbert/zed`.
+the entire GPUI family to one immutable revision of `Travis-Gilbert/zed`
+(`6d4d90754f7dde3e62afb6fe74a632c0b4660396`) in place of upstream's
+`gpui-pre =0.3.7` crates.
 
-The replay workflow applies this series to `v0.6.0` for branch validation and
+The replay workflow applies this series to `v0.7.0` for branch validation and
 to upstream `main` on its monthly schedule. A failed scheduled run is the
 signal to rebase the series. If upstream independently implements a patch, the
 patch is removed during that rebase.
 
-The v0.6.0 rebase deliberately drops three historical patches:
+## The v0.7.0 rebase
 
-- Longbridge change `#2823` is already present in v0.6.0.
-- The earlier selectable-text patch is superseded by v0.6.0's
-  `gpui_base::SelectableText` implementation.
-- The old text-input-hints chain is superseded by Zed's
-  `TextInputConfiguration` API at the pinned Theorem revision.
+The series was regenerated from the branch with
+`git format-patch v0.7.0..HEAD -- . ':(exclude)patches'`. Replaying it onto a
+clean `v0.7.0` export reproduces the branch tree byte for byte. The v0.6.0
+series had 29 entries, most of them manifest and lock pin moves; on v0.7.0
+those fold into patch 0005 (the Zed source) and patch 0018 (the regenerated
+lock), leaving 18.
 
-The replayable text-change-delta commit from the old fork was not consumed by
-the named Theorem PR stack and is not part of this series.
+What v0.7.0 changed underneath the series:
+
+- `Root` moved into `gpui_base::Root` with presentation plugins. The fork's
+  runtime keymap now lands on Base's root (`secondary-c`), and the component
+  crate only registers its `WindowState` plugin.
+- Settings filtering became index-based (`SettingsFilter`). Labelled sections
+  and controlled navigation (patch 0004) are ported onto it: sections hold
+  their pages, `take_pages` flattens them, and each section's sidebar group
+  lists global page indices, so filtering never renumbers source data.
+- Text `Inline` retains its shaped layout across frames and lost its element
+  id. Measured link fragments (patch 0015) give an `Inline` an id only when a
+  fragment decorator is set, because the fragments' focus handles live in its
+  element state. A fragment id is `link-{source offset}-{link}-{part}`.
+- Upstream added an asynchronous web paste with a stale-target guard. Patch
+  0017 keeps upstream's paste and carries only the grapheme-cluster
+  boundaries, which still pass through upstream's atomic-token
+  `cursor_boundary`.
+- Upstream added Linux and Windows multi-cursor and word-selection chords.
+  Patch 0016 places them inside its runtime split: the Command keymap gains
+  `cmd-alt-up`/`cmd-alt-down`; the other keymap gains the Control
+  home/end chords and keeps the Linux and Windows distinctions as `cfg`, which
+  the web never reaches.
+
+What the Theorem Zed source does not have, and how patch 0018 meets it:
+
+- `register_inspector_element` takes the renderer closure, not a per-window
+  factory, so the inspector entity is created on first use.
+- `TestAppWindow::simulate_scale_factor_change` does not exist and the test
+  window's scale factor is fixed at 2.0. The upstream line-height parity test
+  runs at 2.0 with both preview zooms; its 1.6 case needs that hook added to
+  the Zed fork first.
+- `App::fetch_asset` answers with the shared load and whether the call
+  started it, not an `Option` of a finished result. The shell's document
+  images drop an image on release only when an existing load has finished.
+- `#[derive(Action)]` expands to bare `gpui::` paths, so the story crate
+  depends on `gpui` directly instead of reaching it only through `gpui-kit`.
+- A replayed cached view does not re-record debug bounds. The cached-view
+  selection test reads its probe from the first painted frame; its eight
+  replayed-frame assertions run unchanged.
+
+Verification on the rebased branch (rustc stable and 1.96.1 toolchains, the
+Theorem repository pin): `cargo check -p gpui-base -p gpui-component --lib`
+native and `wasm32-unknown-unknown`; `cargo nextest run --locked -p gpui-base
+-p gpui-component --lib` 1804/1804; `cargo check -p gpui-component-story`,
+the workflow's second check, with no warnings. The workflow's Rust 1.90 replay has not run:
+GitHub Actions is disabled on this account.
+
+## History from the v0.6.0 series
 
 The final pin patches advance the Theorem Zed revision through its Rust 1.90
 compatibility commits. The first selects the API-equivalent `oo7 0.6.0-alpha`

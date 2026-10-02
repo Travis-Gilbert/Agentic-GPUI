@@ -1,8 +1,17 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Travis Gilbert <1travisgilbert@gmail.com>
+Date: Sat, 5 Sep 2026 06:05:11 -0400
+Subject: [PATCH 11/18] test(input): initialize mounted textarea regression
+
+---
+ crates/base/src/input/textarea/mod.rs | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
 diff --git a/crates/base/src/input/textarea/mod.rs b/crates/base/src/input/textarea/mod.rs
-index 57e32e58..371d33a2 100644
+index 5799beb1..872b32ce 100644
 --- a/crates/base/src/input/textarea/mod.rs
 +++ b/crates/base/src/input/textarea/mod.rs
-@@ -88,10 +88,11 @@ impl TextareaState {
+@@ -109,10 +109,11 @@ impl TextareaState {
  #[cfg(test)]
  mod tests {
      use super::*;

@@ -1,7 +1,7 @@
-From d6e6f24265545c8f1f06ef41316f2d15471c87e8 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Travis Gilbert <1travisgilbert@gmail.com>
 Date: Thu, 3 Sep 2026 21:36:56 -0400
-Subject: [PATCH] feat(table): replay record-grid interaction seams
+Subject: [PATCH 03/18] feat(table): replay record-grid interaction seams
 
 ---
  LICENSE_LEDGER.md                             |  30 ++
@@ -48,10 +48,10 @@ index 00000000..f1c1f3a9
 +  0–1 (`crates/ui/src/table/state.rs`). Untouched: it predates this fork and
 +  fixing it is not one of these changes.
 diff --git a/crates/component/src/table/state.rs b/crates/component/src/table/state.rs
-index e2ac7233..7c197ec0 100644
+index 9c590edf..8ed8ee0a 100644
 --- a/crates/component/src/table/state.rs
 +++ b/crates/component/src/table/state.rs
-@@ -21,6 +21,11 @@ use gpui::{
+@@ -22,6 +22,11 @@ use gpui::{
  
  use super::*;
  
@@ -63,7 +63,7 @@ index e2ac7233..7c197ec0 100644
  /// How far behind the pointer a resize drag trails the column edge.
  const HANDLE_SIZE: Pixels = px(2.);
  
-@@ -232,6 +237,10 @@ pub struct TableState<D: TableDelegate> {
+@@ -252,6 +257,10 @@ pub struct TableState<D: TableDelegate> {
      pub col_movable: bool,
      /// Enable/disable fixed columns feature.
      pub col_fixed: bool,
@@ -74,7 +74,7 @@ index e2ac7233..7c197ec0 100644
  
      pub vertical_scroll_handle: UniformListScrollHandle,
      pub horizontal_scroll_handle: VirtualListScrollHandle,
-@@ -292,6 +301,8 @@ where
+@@ -312,6 +321,8 @@ where
              col_movable: true,
              col_resizable: true,
              col_fixed: true,
@@ -83,7 +83,7 @@ index e2ac7233..7c197ec0 100644
              _load_more_task: Task::ready(()),
              _measure: Vec::new(),
          };
-@@ -383,6 +394,18 @@ where
+@@ -403,6 +414,18 @@ where
          self
      }
  
@@ -102,7 +102,7 @@ index e2ac7233..7c197ec0 100644
      /// When we update columns or rows, we need to refresh the table.
      pub fn refresh(&mut self, cx: &mut Context<Self>) {
          self.prepare_col_groups(cx);
-@@ -723,7 +746,9 @@ where
+@@ -779,7 +802,9 @@ where
          cx: &mut Context<Self>,
      ) {
          self.right_clicked_row = row_ix;
@@ -113,7 +113,7 @@ index e2ac7233..7c197ec0 100644
          cx.emit(TableEvent::RightClickedRow(row_ix));
      }
  
-@@ -739,9 +764,7 @@ where
+@@ -795,9 +820,7 @@ where
              return;
          }
  
@@ -123,7 +123,7 @@ index e2ac7233..7c197ec0 100644
          cx.emit(TableEvent::RightClickedCell(row_ix, col_ix));
      }
  
-@@ -1298,7 +1321,7 @@ where
+@@ -1365,7 +1388,7 @@ where
          _row_ix: Option<usize>,
          col_ix: usize,
          _window: &mut Window,
@@ -132,7 +132,7 @@ index e2ac7233..7c197ec0 100644
      ) -> Div {
          let Some(col_group) = self.col_groups.get(col_ix) else {
              return div();
-@@ -1314,6 +1337,9 @@ where
+@@ -1381,6 +1404,9 @@ where
              .overflow_hidden()
              .whitespace_nowrap()
              .table_cell_size(self.options.size)
@@ -142,7 +142,7 @@ index e2ac7233..7c197ec0 100644
              .map(|this| match col_padding {
                  Some(padding) => this
                      .pl(padding.left)
-@@ -1552,7 +1578,10 @@ where
+@@ -1616,7 +1642,10 @@ where
                  .rounded(cx.theme().radius / 2.)
                  .map(|this| match is_on {
                      true => this,
@@ -154,7 +154,7 @@ index e2ac7233..7c197ec0 100644
                  })
                  .hover(|this| this.bg(cx.theme().tokens.secondary).opacity(7.))
                  .active(|this| this.bg(cx.theme().tokens.secondary_active).opacity(1.))
-@@ -1560,9 +1589,13 @@ where
+@@ -1624,9 +1653,13 @@ where
                      cx.listener(move |table, _, window, cx| table.perform_sort(col_ix, window, cx)),
                  )
                  .child(
@@ -171,15 +171,15 @@ index e2ac7233..7c197ec0 100644
                  ),
          )
      }
-@@ -1584,6 +1617,7 @@ where
-             .child(
+@@ -1649,6 +1682,7 @@ where
                  self.render_cell(None, col_ix, window, cx)
                      .id(("col-header", col_ix))
+                     .test_support()
 +                    .group(col_header_group(col_ix))
                      .on_click(cx.listener(move |this, _, window, cx| {
                          this.on_col_head_click(col_ix, window, cx);
                      }))
-@@ -2391,7 +2425,7 @@ where
+@@ -2440,7 +2474,7 @@ where
          let actual_height = row_height * rows_count as f32;
          let extra_rows_count =
              self.calculate_extra_rows_needed(total_height, actual_height, row_height);
@@ -486,4 +486,3 @@ index 00000000..b31ae31f
 +        "and the click reaches the row, so the row's menu is the one that opens"
 +    );
 +}
-

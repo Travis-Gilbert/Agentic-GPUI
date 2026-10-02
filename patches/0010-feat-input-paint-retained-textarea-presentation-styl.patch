@@ -1,8 +1,22 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Travis Gilbert <1travisgilbert@gmail.com>
+Date: Sat, 5 Sep 2026 05:57:19 -0400
+Subject: [PATCH 10/18] feat(input): paint retained textarea presentation
+ styles
+
+---
+ crates/base/src/input/base/kind.rs          |   6 --
+ crates/base/src/input/editor/decorations.rs |   4 +-
+ crates/base/src/input/editor/mod.rs         |   2 +-
+ crates/base/src/input/mod.rs                |   2 +-
+ crates/base/src/input/textarea/mod.rs       | 102 +++++++++++++++++++-
+ 5 files changed, 104 insertions(+), 12 deletions(-)
+
 diff --git a/crates/base/src/input/base/kind.rs b/crates/base/src/input/base/kind.rs
-index 26c28d53..393b49bd 100644
+index f3c7eff0..20b286e6 100644
 --- a/crates/base/src/input/base/kind.rs
 +++ b/crates/base/src/input/base/kind.rs
-@@ -313,12 +313,6 @@ impl InputModeKind for InputMode {
+@@ -340,12 +340,6 @@ impl InputModeKind for InputMode {
      /// them would cost more in dispatch than it saves.
      type Extras = ();
  }
@@ -16,10 +30,10 @@ index 26c28d53..393b49bd 100644
  // language features it dispatches to.
  
 diff --git a/crates/base/src/input/editor/decorations.rs b/crates/base/src/input/editor/decorations.rs
-index dc4b393c..231546fc 100644
+index e3965f09..a5127c9c 100644
 --- a/crates/base/src/input/editor/decorations.rs
 +++ b/crates/base/src/input/editor/decorations.rs
-@@ -158,7 +158,7 @@ impl DecorationCollections {
+@@ -427,7 +427,7 @@ impl<T: TrackedDecoration> DecorationCollections<T> {
      }
  }
  
@@ -28,17 +42,17 @@ index dc4b393c..231546fc 100644
      range: &Range<usize>,
      edited_range: &Range<usize>,
      inserted_len: usize,
-@@ -204,7 +204,7 @@ fn adjust_range_for_edit(
+@@ -473,7 +473,7 @@ fn adjust_range_for_edit(
      start..end
  }
  
--fn normalize(text: &Rope, decorations: Vec<TextDecoration>) -> Vec<TextDecoration> {
-+pub(crate) fn normalize(text: &Rope, decorations: Vec<TextDecoration>) -> Vec<TextDecoration> {
+-fn normalize<T: TrackedDecoration>(text: &Rope, decorations: Vec<T>) -> Vec<T> {
++pub(crate) fn normalize<T: TrackedDecoration>(text: &Rope, decorations: Vec<T>) -> Vec<T> {
      decorations
          .into_iter()
-         .filter_map(|decoration| {
+         .filter_map(|mut decoration| {
 diff --git a/crates/base/src/input/editor/mod.rs b/crates/base/src/input/editor/mod.rs
-index d4e16e3d..ce32baae 100644
+index 1ee09d0a..53d30d36 100644
 --- a/crates/base/src/input/editor/mod.rs
 +++ b/crates/base/src/input/editor/mod.rs
 @@ -5,7 +5,7 @@ use super::{EditorMode, InputBaseState, InputModeKind};
@@ -51,17 +65,17 @@ index d4e16e3d..ce32baae 100644
  /// exposes them.
  pub type EditorState = InputBaseState<EditorMode>;
 diff --git a/crates/base/src/input/mod.rs b/crates/base/src/input/mod.rs
-index e8d9c2b2..0a4ddeb2 100644
+index bb2ae494..e2703def 100644
 --- a/crates/base/src/input/mod.rs
 +++ b/crates/base/src/input/mod.rs
-@@ -96,4 +96,4 @@ pub use rope_ext::{InputEdit, Point, RopeExt, RopeLines};
+@@ -120,4 +120,4 @@ pub use rope_ext::{InputEdit, Point, RopeExt, RopeLines};
  pub use ropey::Rope;
  pub use search::{SearchMatcher, SearchSession};
  pub use state::*;
 -pub use textarea::{Textarea, TextareaState};
 +pub use textarea::{Textarea, TextareaExtras, TextareaState};
 diff --git a/crates/base/src/input/textarea/mod.rs b/crates/base/src/input/textarea/mod.rs
-index 341d108e..57e32e58 100644
+index cf0e5cd7..5799beb1 100644
 --- a/crates/base/src/input/textarea/mod.rs
 +++ b/crates/base/src/input/textarea/mod.rs
 @@ -1,6 +1,6 @@
@@ -73,7 +87,7 @@ index 341d108e..57e32e58 100644
  
  /// State for editing ordinary multi-line text.
  ///
-@@ -28,3 +28,101 @@ impl RenderOnce for Textarea {
+@@ -49,3 +49,101 @@ impl RenderOnce for Textarea {
          self.state
      }
  }
@@ -175,31 +189,3 @@ index 341d108e..57e32e58 100644
 +            .expect("textarea remains mounted");
 +    }
 +}
-diff --git a/crates/component/src/status_bar.rs b/crates/component/src/status_bar.rs
-index 44dff594..1cfe3306 100644
---- a/crates/component/src/status_bar.rs
-+++ b/crates/component/src/status_bar.rs
-@@ -23,7 +23,7 @@ use crate::{ActiveTheme, StyledExt, h_flex};
- /// otherwise (only `right`, or neither — like a plain container).
- ///
- /// ```
--/// use gpui_kit::component::status_bar::StatusBar;
-+/// use gpui_component::status_bar::StatusBar;
- ///
- /// let _ = StatusBar::new().left("Ln 1, Col 1").right("UTF-8");
- /// ```
-diff --git a/crates/component/src/title_bar.rs b/crates/component/src/title_bar.rs
-index 45b091bb..32254a47 100644
---- a/crates/component/src/title_bar.rs
-+++ b/crates/component/src/title_bar.rs
-@@ -70,8 +70,8 @@ impl TitleBar {
-     /// [`crate::TitleBar`], so the title bar owns dragging and double clicking itself:
-     ///
-     /// ```no_run
--    /// # use gpui_kit::WindowOptions;
--    /// # use gpui_kit::component::TitleBar;
-+    /// # use gpui::WindowOptions;
-+    /// # use gpui_component::TitleBar;
-     /// let options = WindowOptions {
-     ///     window_min_size: None,
-     ///     ..TitleBar::window_options()

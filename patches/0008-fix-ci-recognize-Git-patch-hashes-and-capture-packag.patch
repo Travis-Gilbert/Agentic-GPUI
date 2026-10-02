@@ -1,14 +1,15 @@
-From a3292163a868b4c81514e658c1d3c06edfd0927b Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Travis Gilbert <1travisgilbert@gmail.com>
 Date: Sat, 5 Sep 2026 05:10:49 -0400
-Subject: [PATCH] fix(ci): recognize Git patch hashes and capture package names
+Subject: [PATCH 08/18] fix(ci): recognize Git patch hashes and capture package
+ names
 
 ---
  _typos.toml | 8 +++++++-
  1 file changed, 7 insertions(+), 1 deletion(-)
 
 diff --git a/_typos.toml b/_typos.toml
-index 3e996300..e9abe518 100644
+index 61c1bde9..acadc026 100644
 --- a/_typos.toml
 +++ b/_typos.toml
 @@ -1,5 +1,11 @@
@@ -23,7 +24,4 @@ index 3e996300..e9abe518 100644
 +]
  
  [default.extend-words]
- # Correct Italian singular of "command".
--- 
-2.53.0
-
+ # Official Lucide icon name for the astroid curve.

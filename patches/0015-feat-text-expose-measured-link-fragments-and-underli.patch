@@ -1,31 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Travis Gilbert <1travisgilbert@gmail.com>
+Date: Sat, 5 Sep 2026 13:08:52 -0400
+Subject: [PATCH 15/18] feat(text): expose measured link fragments and
+ underline styles
+
+---
+ crates/base/src/text/inline.rs      | 285 ++++++++++++++++++++++++++--
+ crates/base/src/text/inline_flow.rs |  30 ++-
+ crates/base/src/text/node.rs        |  21 +-
+ crates/base/src/text/state.rs       |  11 +-
+ crates/base/src/text/text_view.rs   |  82 +++++++-
+ crates/component/src/text/compat.rs |  25 +++
+ crates/component/src/text/mod.rs    |   7 +-
+ 7 files changed, 432 insertions(+), 29 deletions(-)
+
 diff --git a/crates/base/src/text/inline.rs b/crates/base/src/text/inline.rs
-index 09abe59c..c0711f85 100644
+index 8767ff00..1d66c033 100644
 --- a/crates/base/src/text/inline.rs
 +++ b/crates/base/src/text/inline.rs
-@@ -1,15 +1,17 @@
+@@ -1,7 +1,7 @@
  use gpui::Corners;
  use std::{
-+    collections::BTreeMap,
+     cell::RefCell,
+-    collections::HashMap,
++    collections::{BTreeMap, HashMap},
+     mem,
      ops::Range,
      rc::Rc,
-     sync::{Arc, Mutex},
+@@ -9,11 +9,12 @@ use std::{
  };
  
  use gpui::{
 -    App, BorderStyle, Bounds, ClickEvent, CursorStyle, Edges, Element, ElementId, GlobalElementId,
--    Half, HighlightStyle, Hitbox, HitboxBehavior, InspectorElementId, IntoElement, LayoutId,
+-    Half, HighlightStyle, Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId,
 -    MouseButton, MouseClickEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
--    SharedString, StyledText, TextLayout, Window, point, px, quad,
+-    SharedString, StyledText, TextAlign, TextLayout, TextRun, TextStyle, Window, point, px, quad,
+-    size,
 +    AnyElement, App, AvailableSpace, BorderStyle, Bounds, ClickEvent, CursorStyle, Edges, Element,
-+    ElementId, GlobalElementId, Half, HighlightStyle, Hitbox, HitboxBehavior, InspectorElementId,
-+    InteractiveElement as _, IntoElement, LayoutId, MouseButton, MouseClickEvent, MouseDownEvent,
-+    MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, StatefulInteractiveElement as _,
-+    Styled as _, StyledText, TextLayout, Window, div, point, px, quad, size,
++    ElementId, GlobalElementId, Half, HighlightStyle, Hitbox, HitboxBehavior, Hsla,
++    InspectorElementId, InteractiveElement as _, IntoElement, LayoutId, MouseButton,
++    MouseClickEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString,
++    StatefulInteractiveElement as _, Styled as _, StyledText, TextAlign, TextLayout, TextRun,
++    TextStyle, Window, div, point, px, quad, size,
  };
  
  use crate::{
-@@ -19,7 +21,10 @@ use crate::{
-     text::node::LinkMark,
+@@ -24,7 +25,10 @@ use crate::{
+     text::range_highlight::RevealAt,
      text::selection::word_range_at,
      text::state::LineSpan,
 -    text::text_view::{LinkClickHandlerFn, handle_link_click},
@@ -33,26 +54,31 @@ index 09abe59c..c0711f85 100644
 +        LinkClickHandlerFn, LinkFragment, LinkFragmentDecoratorFn, LinkUnderline, LinkUnderlineFn,
 +        handle_link_click,
 +    },
+     text_selection::text_rows_extent,
  };
  
- /// A inline element used to render a inline text and support selectable.
-@@ -32,6 +37,9 @@ pub(super) struct Inline {
-     highlights: Vec<(Range<usize>, HighlightStyle)>,
-     styled_text: StyledText,
+@@ -211,6 +215,12 @@ pub(super) struct Inline {
+     /// The start of a pending reveal, when it is in this text.
+     reveal: Option<RevealAt>,
      link_click_handler: Option<Arc<LinkClickHandlerFn>>,
++    /// Decorates each measured link fragment; when set, the fragments are
++    /// the link targets and the hit-tested click handler is not installed.
 +    link_fragment_decorator: Option<Arc<LinkFragmentDecoratorFn>>,
++    /// The source byte offset of this text, which names its fragments.
 +    link_source_offset: usize,
 +    link_underline: Option<Arc<LinkUnderlineFn>>,
- 
-     state: Arc<Mutex<InlineState>>,
- }
-@@ -72,10 +80,132 @@ impl Inline {
-             text: text.clone(),
-             styled_text: StyledText::new(text),
+     /// What this frame's layout was shaped with, to hand the shaped text to
+     /// the next frame (see [`RetainedLayout`]).
+     retained_key: Option<(Vec<TextRun>, TextStyle)>,
+@@ -372,12 +382,140 @@ impl Inline {
+             range_backgrounds: Vec::new(),
+             reveal: None,
              link_click_handler,
 +            link_fragment_decorator: None,
 +            link_source_offset: 0,
 +            link_underline: None,
+             retained_key: None,
+             handed_over: false,
              state,
          }
      }
@@ -72,25 +98,35 @@ index 09abe59c..c0711f85 100644
 +        self
 +    }
 +
++    fn link_underline_for(&self, url: &SharedString, cx: &App) -> LinkUnderline {
++        self.link_underline
++            .as_ref()
++            .map(|style| style(url, cx))
++            .unwrap_or_default()
++    }
++
++    /// The measured link targets, one per visual line of each link. Their
++    /// focus handles are kept in this element's state so keyboard focus
++    /// survives a frame.
 +    fn link_elements(
 +        &self,
 +        global_id: Option<&GlobalElementId>,
 +        window: &mut Window,
 +        cx: &mut App,
 +    ) -> Vec<AnyElement> {
-+        let Some(decorator) = &self.link_fragment_decorator else {
++        let (Some(decorator), Some(global_id)) = (&self.link_fragment_decorator, global_id) else {
 +            return Vec::new();
 +        };
 +        let mut focus_handles = window
 +            .with_element_state::<BTreeMap<SharedString, gpui::FocusHandle>, _>(
-+                global_id.expect("Inline has a stable id"),
++                global_id,
 +                |retained, _| {
 +                    let state = retained.unwrap_or_default();
 +                    (state.clone(), state)
 +                },
 +            );
 +        let mut retained_ids = Vec::new();
-+        let layout = self.styled_text.layout();
++        let layout = self.styled_text.layout().clone();
 +        let mut elements = Vec::new();
 +        for (link_ix, (range, link)) in self.links.iter().enumerate() {
 +            for (part_ix, (fragment_range, bounds)) in link_fragment_bounds(&layout, range.clone())
@@ -98,11 +134,7 @@ index 09abe59c..c0711f85 100644
 +                .enumerate()
 +            {
 +                let fragment = LinkFragment {
-+                    id: format!(
-+                        "link-{}-{:?}-{link_ix}-{part_ix}",
-+                        self.link_source_offset, self.id
-+                    )
-+                    .into(),
++                    id: format!("link-{}-{link_ix}-{part_ix}", self.link_source_offset).into(),
 +                    url: link.url.clone(),
 +                    text: self.text[fragment_range].to_string().into(),
 +                };
@@ -170,100 +202,109 @@ index 09abe59c..c0711f85 100644
 +        }
 +        focus_handles.retain(|id, _| retained_ids.contains(id));
 +        window.with_element_state::<BTreeMap<SharedString, gpui::FocusHandle>, _>(
-+            global_id.expect("Inline has a stable id"),
++            global_id,
 +            |_, _| ((), focus_handles),
 +        );
 +        elements
 +    }
 +
-     /// Get link at given mouse position.
-     fn link_for_position(
-         layout: &TextLayout,
-@@ -338,7 +468,7 @@ impl IntoElement for Inline {
+     /// Use the resolved style captured by a deferred parent layout.
+     pub(super) fn text_style(mut self, text_style: TextStyle) -> Self {
+         self.text_style = Some(text_style);
+@@ -851,10 +989,15 @@ impl IntoElement for Inline {
  
  impl Element for Inline {
      type RequestLayoutState = ();
 -    type PrepaintState = Hitbox;
 +    type PrepaintState = (Hitbox, Vec<AnyElement>);
  
++    /// Only text with decorated links needs an identity: it keeps the focus
++    /// handles of its link targets. Source offsets are distinct within a
++    /// document, so they name the runs of one text view apart.
      fn id(&self) -> Option<ElementId> {
-         Some(self.id.clone())
-@@ -357,9 +487,34 @@ impl Element for Inline {
-     ) -> (LayoutId, Self::RequestLayoutState) {
-         let text_style = window.text_style();
+-        None
++        self.link_fragment_decorator.as_ref().map(|_| {
++            ElementId::NamedInteger("text-link-run".into(), self.link_source_offset as u64)
++        })
+     }
  
+     fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+@@ -872,7 +1015,32 @@ impl Element for Inline {
+             .text_style
+             .clone()
+             .unwrap_or_else(|| window.text_style());
+-        let runs = text_runs(self.text.len(), &text_style, &self.highlights);
++        // A dotted or absent underline replaces the solid one the parser
++        // gave the link; the dots are painted over the measured fragments.
 +        let overrides = self
 +            .links
 +            .iter()
-+            .filter_map(|(range, link)| {
-+                let style = self
-+                    .link_underline
-+                    .as_ref()
-+                    .map(|style| style(&link.url, cx))
-+                    .unwrap_or_default();
-+                (style != LinkUnderline::Solid).then(|| {
-+                    (
-+                        range.clone(),
-+                        HighlightStyle {
-+                            underline: Some(gpui::UnderlineStyle {
-+                                thickness: px(0.),
-+                                ..Default::default()
-+                            }),
++            .filter(|(_, link)| self.link_underline_for(&link.url, cx) != LinkUnderline::Solid)
++            .map(|(range, _)| {
++                (
++                    range.clone(),
++                    InlineHighlight::from(HighlightStyle {
++                        underline: Some(gpui::UnderlineStyle {
++                            thickness: px(0.),
 +                            ..Default::default()
-+                        },
-+                    )
-+                })
++                        }),
++                        ..Default::default()
++                    }),
++                )
 +            })
 +            .collect::<Vec<_>>();
-+        let highlights =
-+            gpui::combine_highlights(self.highlights.clone(), overrides).collect::<Vec<_>>();
-         let mut runs = Vec::new();
-         let mut ix = 0;
--        for (range, highlight) in self.highlights.iter() {
-+        for (range, highlight) in &highlights {
-             if ix < range.start {
-                 runs.push(text_style.clone().to_run(range.start - ix));
-             }
-@@ -408,7 +563,7 @@ impl Element for Inline {
-         }
++        let runs = if overrides.is_empty() {
++            text_runs(self.text.len(), &text_style, &self.highlights)
++        } else {
++            let highlights =
++                combine_highlights(self.highlights.clone(), overrides).collect::<Vec<_>>();
++            text_runs(self.text.len(), &text_style, &highlights)
++        };
+ 
+         // Reuse the previous frame's shaped text when it was shaped from the
+         // same text, runs and style; `StyledText` consumes its runs on every
+@@ -925,8 +1093,9 @@ impl Element for Inline {
+         self.request_reveal(window);
  
          let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
++        let link_elements = self.link_elements(id, window, cx);
+         self.retain_styled_text();
 -        hitbox
-+        (hitbox, self.link_elements(id, window, cx))
++        (hitbox, link_elements)
      }
  
      fn paint(
-@@ -422,7 +577,7 @@ impl Element for Inline {
-         cx: &mut App,
+@@ -941,7 +1110,7 @@ impl Element for Inline {
      ) {
+         let bounds = Bounds::new(self.paint_origin.unwrap_or(bounds.origin), bounds.size);
          let current_view = window.current_view();
 -        let hitbox = prepaint;
 +        let (hitbox, link_elements) = prepaint;
-         let Ok(mut state) = self.state.lock() else {
-             return;
-         };
-@@ -431,6 +586,31 @@ impl Element for Inline {
+         if !self.reclaim_styled_text() {
+             // Cannot happen (only this element takes what it handed over,
+             // and a live state is never swept); skip the frame rather than
+@@ -955,6 +1124,31 @@ impl Element for Inline {
          self.styled_text
              .paint(global_id, None, bounds, &mut (), &mut (), window, cx);
  
++        let text_color = self
++            .text_style
++            .as_ref()
++            .map(|style| style.color)
++            .unwrap_or_else(|| window.text_style().color);
 +        for (range, link) in self.links.iter() {
-+            if self
-+                .link_underline
-+                .as_ref()
-+                .map(|style| style(&link.url, cx))
-+                != Some(LinkUnderline::Dotted)
-+            {
++            if self.link_underline_for(&link.url, cx) != LinkUnderline::Dotted {
 +                continue;
 +            }
 +            let color = self
 +                .highlights
 +                .iter()
-+                .find_map(|(span, style)| {
++                .find_map(|(span, highlight)| {
 +                    (span.start <= range.start && range.start < span.end)
-+                        .then_some(style.color)
++                        .then_some(highlight.style.color)
 +                        .flatten()
 +                })
-+                .unwrap_or(window.text_style().color);
++                .unwrap_or(text_color);
 +            for (_, fragment) in link_fragment_bounds(&text_layout, range.clone()) {
 +                for dot in dotted_underline_bounds(fragment) {
 +                    window.paint_quad(gpui::fill(dot, color));
@@ -274,28 +315,28 @@ index 09abe59c..c0711f85 100644
          // layout selections
          let (is_selectable, is_selection, selection) =
              self.layout_selections(&text_layout, &bounds, window, cx);
-@@ -541,7 +721,7 @@ impl Element for Inline {
-             }
-         });
+@@ -1122,7 +1316,7 @@ impl Element for Inline {
+             });
+         }
  
 -        if !is_selection {
 +        if !is_selection && self.link_fragment_decorator.is_none() {
              // click to open link
              window.on_mouse_event({
                  let links = self.links.clone();
-@@ -581,7 +761,73 @@ impl Element for Inline {
-                 }
-             });
+@@ -1164,10 +1358,75 @@ impl Element for Inline {
          }
-+        // These are the actual link targets, positioned by the same glyph
-+        // layout painted above. Their click handlers replace the legacy hit
-+        // test only when the caller requested a decorator.
-+        for element in link_elements {
+ 
+         drop(state);
++        // The decorated link targets, placed by the glyph layout painted
++        // above. They replace the hit-tested click handler.
++        for element in link_elements.iter_mut() {
 +            element.paint(window, cx);
 +        }
-+    }
-+}
-+
+         self.retain_styled_text();
+     }
+ }
+ 
 +/// Split at actual hard/soft line boundaries. Widths come from shaped glyph
 +/// advances, including the final glyph before a wrap, never an estimated font
 +/// width or a union spanning multiple lines.
@@ -352,17 +393,19 @@ index 09abe59c..c0711f85 100644
 +            size(px(1.).min(fragment.right() - x), px(1.)),
 +        ));
 +        x += px(3.);
-     }
++    }
 +    dots
- }
- 
- fn selection_for_multi_click(
++}
++
+ /// Where one glyph of laid-out text paints: its row, and its horizontal
+ /// extent past the text's origin, alignment applied. `text` is the byte range
+ /// of the text it draws.
 diff --git a/crates/base/src/text/inline_flow.rs b/crates/base/src/text/inline_flow.rs
-index 01706014..e36c716a 100644
+index 00de6d88..1267742a 100644
 --- a/crates/base/src/text/inline_flow.rs
 +++ b/crates/base/src/text/inline_flow.rs
-@@ -11,7 +11,9 @@ use gpui::{
-     WhiteSpace, Window, img, point, prelude::FluentBuilder as _, px, relative, size,
+@@ -14,7 +14,9 @@ use gpui::{
+     TextStyle, WhiteSpace, Window, img, point, prelude::FluentBuilder as _, px, relative, size,
  };
  
 -use crate::text::text_view::{LinkClickHandlerFn, handle_link_click};
@@ -371,8 +414,8 @@ index 01706014..e36c716a 100644
 +};
  
  use super::{
-     inline::{Inline, InlineState},
-@@ -25,6 +27,9 @@ pub(super) struct InlineFlow {
+     inline::{Inline, InlineHighlight, InlineState, text_runs, text_size_ranges},
+@@ -30,6 +32,9 @@ pub(super) struct InlineFlow {
      id: ElementId,
      items: Vec<InlineFlowItem>,
      link_click_handler: Option<Arc<LinkClickHandlerFn>>,
@@ -381,8 +424,8 @@ index 01706014..e36c716a 100644
 +    link_underline: Option<Arc<LinkUnderlineFn>>,
  }
  
- pub(super) enum InlineFlowItem {
-@@ -111,9 +116,27 @@ impl InlineFlow {
+ pub(super) type InlineRenderer = dyn Fn(&super::InlineRenderContext, &mut Window, &mut App) -> Option<super::InlineElement>
+@@ -251,9 +256,27 @@ impl InlineFlow {
              id: id.into(),
              items,
              link_click_handler,
@@ -409,21 +452,21 @@ index 01706014..e36c716a 100644
 +
      fn image_element(
          ix: usize,
-         url: &SharedUri,
-@@ -286,6 +309,11 @@ impl Element for InlineFlow {
-                         highlights,
-                         self.link_click_handler.clone(),
-                     )
+         source: &ImageSource,
+@@ -584,6 +607,11 @@ impl Element for InlineFlow {
+                         size(bounds.size.width, selection_bounds.size.height),
+                     ))
+                     .paint_origin(bounds.origin + origin + point(padding, Pixels::ZERO))
 +                    .link_with(
 +                        self.link_fragment_decorator.clone(),
 +                        self.link_source_offset + source_range.start,
 +                    )
 +                    .link_underline(self.link_underline.clone())
                      .into_any_element();
-                     element.prepaint_as_root(
-                         bounds.origin + origin,
+                     // The `Inline` is its own layout root, with no box around
+                     // it: its text measures with the window's text style, so
 diff --git a/crates/base/src/text/node.rs b/crates/base/src/text/node.rs
-index a008ccc4..34133f45 100644
+index 9fb6b37e..9ca22f2f 100644
 --- a/crates/base/src/text/node.rs
 +++ b/crates/base/src/text/node.rs
 @@ -17,8 +17,8 @@ use crate::{
@@ -435,19 +478,19 @@ index a008ccc4..34133f45 100644
 +        CodeBlockActionsFn, CodeBlockHighlighterFn, LinkClickHandlerFn, LinkFragmentDecoratorFn,
 +        LinkUnderlineFn, MarkdownExtensions, MarkdownNode, TableActionsFn,
          document::NodeRenderOptions,
-         inline::{Inline, InlineState},
-         inline_flow::{InlineFlow, InlineFlowItem},
-@@ -1336,6 +1336,8 @@ pub(crate) struct NodeContext {
-     pub(crate) code_block_actions: Option<Arc<CodeBlockActionsFn>>,
+         inline::{
+             Inline, InlineHighlight, InlineState, combine_highlights, fade_highlights, text_runs,
+@@ -1993,6 +1993,8 @@ pub(crate) struct NodeContext {
      pub(crate) code_block_highlighter: Option<Arc<CodeBlockHighlighterFn>>,
      pub(crate) table_actions: Option<Arc<TableActionsFn>>,
+     pub(crate) image_source: Option<Arc<super::text_view::ImageSourceFn>>,
 +    pub(crate) link_underline: Option<Arc<LinkUnderlineFn>>,
 +    pub(crate) link_fragment_decorator: Option<Arc<LinkFragmentDecoratorFn>>,
      pub(crate) link_click_handler: Option<Arc<LinkClickHandlerFn>>,
      pub(crate) markdown_extensions: Arc<MarkdownExtensions>,
- }
-@@ -1365,6 +1367,11 @@ impl Paragraph {
-                 self.inline_flow_items(node_cx, cx),
+     /// This frame's streamed fade-in, when any text is still fading.
+@@ -2132,6 +2134,11 @@ impl Paragraph {
+                 self.inline_flow_items(fade_key, fades, backgrounds, node_cx, cx),
                  node_cx.link_click_handler.clone(),
              )
 +            .link_with(
@@ -458,10 +501,10 @@ index a008ccc4..34133f45 100644
              .into_any_element();
          }
  
-@@ -1393,6 +1400,11 @@ impl Paragraph {
-                             highlights.clone(),
-                             node_cx.link_click_handler.clone(),
-                         )
+@@ -2202,6 +2209,11 @@ impl Paragraph {
+                             consumed + text.len(),
+                         ))
+                         .reveal(node_cx.reveal_at(fade_key, consumed, consumed + text.len()))
 +                        .link_with(
 +                            node_cx.link_fragment_decorator.clone(),
 +                            node_cx.offset + span.unwrap_or_default().start,
@@ -470,10 +513,10 @@ index a008ccc4..34133f45 100644
                          .into_any_element(),
                      );
                  }
-@@ -1508,6 +1520,11 @@ impl Paragraph {
-                     highlights,
-                     node_cx.link_click_handler.clone(),
+@@ -2295,6 +2307,11 @@ impl Paragraph {
                  )
+                 .range_backgrounds(slice_backgrounds(backgrounds, consumed, text_end))
+                 .reveal(node_cx.reveal_at(fade_key, consumed, text_end))
 +                .link_with(
 +                    node_cx.link_fragment_decorator.clone(),
 +                    node_cx.offset + span.unwrap_or_default().start,
@@ -483,55 +526,56 @@ index a008ccc4..34133f45 100644
              );
          }
 diff --git a/crates/base/src/text/state.rs b/crates/base/src/text/state.rs
-index 8e08c75e..07318447 100644
+index 85744b43..65295acc 100644
 --- a/crates/base/src/text/state.rs
 +++ b/crates/base/src/text/state.rs
-@@ -17,8 +17,8 @@ use crate::{
+@@ -22,8 +22,9 @@ use crate::{
      async_util::{Receiver, Sender, unbounded},
      input::{self, SelectAll},
      text::{
 -        CodeBlockActionsFn, CodeBlockHighlighterFn, LinkClickHandlerFn, MarkdownExtensions,
--        TableActionsFn, TextViewStyle,
+-        RangeHighlight, RangeHighlightError, RenderedText, TableActionsFn, TextViewStyle,
 +        CodeBlockActionsFn, CodeBlockHighlighterFn, LinkClickHandlerFn, LinkFragmentDecoratorFn,
-+        LinkUnderlineFn, MarkdownExtensions, TableActionsFn, TextViewStyle,
++        LinkUnderlineFn, MarkdownExtensions, RangeHighlight, RangeHighlightError, RenderedText,
++        TableActionsFn, TextViewStyle,
          document::ParsedDocument,
          format,
          node::{self, NodeContext},
-@@ -103,6 +103,8 @@ pub struct TextViewState {
-     pub(super) code_block_actions: Option<std::sync::Arc<CodeBlockActionsFn>>,
+@@ -116,6 +117,8 @@ pub struct TextViewState {
      pub(super) code_block_highlighter: Option<std::sync::Arc<CodeBlockHighlighterFn>>,
      pub(super) table_actions: Option<std::sync::Arc<TableActionsFn>>,
+     pub(super) image_source: Option<std::sync::Arc<super::text_view::ImageSourceFn>>,
 +    pub(super) link_underline: Option<Arc<LinkUnderlineFn>>,
 +    pub(super) link_fragment_decorator: Option<Arc<LinkFragmentDecoratorFn>>,
      pub(super) link_click_handler: Option<std::sync::Arc<LinkClickHandlerFn>>,
      pub(super) markdown_extensions: Arc<MarkdownExtensions>,
  
-@@ -203,6 +205,8 @@ impl TextViewState {
-             code_block_highlighter: None,
+@@ -255,6 +258,8 @@ impl TextViewState {
              table_actions: None,
              link_click_handler: None,
+             image_source: None,
 +            link_fragment_decorator: None,
 +            link_underline: None,
              markdown_extensions: Arc::default(),
              is_selecting: false,
-             auto_scroll: AutoScroll::default(),
-@@ -613,6 +617,8 @@ impl Render for TextViewState {
-         node_cx.code_block_highlighter = self.code_block_highlighter.clone();
-         node_cx.table_actions = self.table_actions.clone();
-         node_cx.link_click_handler = self.link_click_handler.clone();
-+        node_cx.link_fragment_decorator = self.link_fragment_decorator.clone();
-+        node_cx.link_underline = self.link_underline.clone();
-         node_cx.markdown_extensions = self.markdown_extensions.clone();
-         node_cx.style = self.text_view_style.clone();
- 
+             preserve_inline_selection: false,
+@@ -1032,6 +1037,8 @@ impl Render for TextViewState {
+             table_actions: self.table_actions.clone(),
+             link_click_handler: self.link_click_handler.clone(),
+             image_source: self.image_source.clone(),
++            link_fragment_decorator: self.link_fragment_decorator.clone(),
++            link_underline: self.link_underline.clone(),
+             markdown_extensions: self.markdown_extensions.clone(),
+             stream_fade,
+             range_highlights: self.range_highlights.clone(),
 diff --git a/crates/base/src/text/text_view.rs b/crates/base/src/text/text_view.rs
-index 535ee643..2857e1c1 100644
+index 3e04ccfc..6b0e8cdb 100644
 --- a/crates/base/src/text/text_view.rs
 +++ b/crates/base/src/text/text_view.rs
-@@ -73,6 +73,34 @@ impl TextViewDefaults {
- pub(crate) type TableActionsFn =
+@@ -76,6 +76,33 @@ pub(crate) type TableActionsFn =
      dyn Fn(&TableData, &mut Window, &mut App) -> AnyElement + Send + Sync;
  
+ pub(crate) type ImageSourceFn = dyn Fn(&gpui::SharedUri) -> gpui::ImageSource + Send + Sync;
 +/// A measured visual fragment of a parsed text link. Wrapped links publish one
 +/// fragment per visual line, never a rectangle covering the intervening prose.
 +#[derive(Clone, Debug)]
@@ -559,47 +603,46 @@ index 535ee643..2857e1c1 100644
 +pub(crate) type LinkFragmentDecoratorFn = dyn Fn(&LinkFragment, gpui::Stateful<gpui::Div>, &mut Window, &mut App) -> gpui::Stateful<gpui::Div>
 +    + Send
 +    + Sync;
-+
+ 
  pub(crate) type LinkClickHandlerFn =
      dyn Fn(&SharedString, &ClickEvent, &mut Window, &mut App) + Send + Sync;
- 
-@@ -128,6 +156,8 @@ pub struct TextView {
-     code_block_highlighter: Option<Arc<CodeBlockHighlighterFn>>,
-     table_actions: Option<Arc<TableActionsFn>>,
+@@ -138,6 +165,8 @@ pub struct TextView {
      link_click_handler: Option<Arc<LinkClickHandlerFn>>,
+     image_source: Option<Arc<ImageSourceFn>>,
+     reveal_handler: Option<Rc<RevealHandlerFn>>,
 +    link_fragment_decorator: Option<Arc<LinkFragmentDecoratorFn>>,
 +    link_underline: Option<Arc<LinkUnderlineFn>>,
      markdown_extensions: Arc<MarkdownExtensions>,
+     motion: Option<TextViewMotion>,
  }
- 
-@@ -172,6 +202,8 @@ impl TextView {
-             code_block_highlighter: None,
-             table_actions: None,
+@@ -185,6 +214,8 @@ impl TextView {
              link_click_handler: None,
+             image_source: None,
+             reveal_handler: None,
 +            link_fragment_decorator: None,
 +            link_underline: None,
              markdown_extensions: Arc::default(),
+             motion: None,
          }
-     }
-@@ -193,6 +225,8 @@ impl TextView {
-             code_block_highlighter: None,
-             table_actions: None,
+@@ -209,6 +240,8 @@ impl TextView {
              link_click_handler: None,
+             image_source: None,
+             reveal_handler: None,
 +            link_fragment_decorator: None,
 +            link_underline: None,
              markdown_extensions: Arc::default(),
+             motion: None,
          }
-     }
-@@ -214,6 +248,8 @@ impl TextView {
-             code_block_highlighter: None,
-             table_actions: None,
+@@ -233,6 +266,8 @@ impl TextView {
              link_click_handler: None,
+             image_source: None,
+             reveal_handler: None,
 +            link_fragment_decorator: None,
 +            link_underline: None,
              markdown_extensions: Arc::default(),
+             motion: None,
          }
-     }
-@@ -333,6 +369,37 @@ impl TextView {
+@@ -399,6 +434,37 @@ impl TextView {
          self
      }
  
@@ -637,16 +680,16 @@ index 535ee643..2857e1c1 100644
      /// Replace the Markdown extension registry.
      pub fn markdown_extensions(mut self, extensions: MarkdownExtensions) -> Self {
          self.markdown_extensions = Arc::new(extensions);
-@@ -554,6 +621,8 @@ impl Element for TextView {
-             state.code_block_highlighter = code_block_highlighter.clone();
+@@ -641,6 +707,8 @@ impl Element for TextView {
              state.table_actions = self.table_actions.clone();
              state.link_click_handler = self.link_click_handler.clone();
+             state.image_source = self.image_source.clone();
 +            state.link_fragment_decorator = self.link_fragment_decorator.clone();
 +            state.link_underline = self.link_underline.clone();
              state.set_markdown_extensions(self.markdown_extensions.clone(), cx);
-             state.selectable = self.selectable;
-             state.selection_format = self.selection_format;
-@@ -630,16 +699,14 @@ impl Element for TextView {
+             if let Some(motion) = &self.motion {
+                 state.set_motion(motion.clone());
+@@ -720,16 +788,14 @@ impl Element for TextView {
              if let Ok(mut line_spans) = state.read(cx).line_spans.lock() {
                  line_spans.clear();
              }
@@ -670,11 +713,11 @@ index 535ee643..2857e1c1 100644
          let mut clip_bottom = None;
          if max_lines_active {
 diff --git a/crates/component/src/text/compat.rs b/crates/component/src/text/compat.rs
-index a59bb5fb..6ffcfe54 100644
+index ce70f902..d38d922a 100644
 --- a/crates/component/src/text/compat.rs
 +++ b/crates/component/src/text/compat.rs
-@@ -107,6 +107,31 @@ impl TextView {
-         self.inner = self.inner.on_link_click(f);
+@@ -162,6 +162,31 @@ impl TextView {
+         self.inner = self.inner.on_reveal(f);
          self
      }
 +    /// Selects Base's solid, dotted or absent underline on the existing text.
@@ -706,18 +749,20 @@ index a59bb5fb..6ffcfe54 100644
      pub fn markdown_extensions(mut self, value: MarkdownExtensions) -> Self {
          self.inner = self.inner.markdown_extensions(value);
 diff --git a/crates/component/src/text/mod.rs b/crates/component/src/text/mod.rs
-index d594bd57..dee55646 100644
+index 0f460524..9b419aef 100644
 --- a/crates/component/src/text/mod.rs
 +++ b/crates/component/src/text/mod.rs
-@@ -7,8 +7,9 @@ pub use compat::{
-     Text, TextView, TextViewLayoutState, TextViewPlugin, TextViewPrepaintState, html, markdown,
+@@ -9,9 +9,10 @@ pub use compat::{
  };
+ pub use frontmatter::FrontmatterPlugin;
  pub use gpui_base::text::{
--    MarkdownBlockParserFn, MarkdownBlockRenderFn, MarkdownExtensions, MarkdownNode,
--    MarkdownParseContext, MarkdownPlugin, SelectionFormat, TableData, TextViewState, markdown_ast,
-+    LinkFragment, LinkUnderline, MarkdownBlockParserFn, MarkdownBlockRenderFn, MarkdownExtensions,
-+    MarkdownNode, MarkdownParseContext, MarkdownPlugin, SelectionFormat, TableData, TextViewState,
-+    markdown_ast,
+-    InlineElement, InlineRenderContext, MarkdownBlockParserFn, MarkdownBlockRenderFn,
+-    MarkdownExtensions, MarkdownNode, MarkdownParseContext, MarkdownPlugin, RangeHighlight,
+-    RangeHighlightError, RenderedText, SelectionFormat, TableData, TextViewMotion, TextViewState,
++    InlineElement, InlineRenderContext, LinkFragment, LinkUnderline, MarkdownBlockParserFn,
++    MarkdownBlockRenderFn, MarkdownExtensions, MarkdownNode, MarkdownParseContext, MarkdownPlugin,
++    RangeHighlight, RangeHighlightError, RenderedText, SelectionFormat, TableData, TextViewMotion,
++    TextViewState,
+     markdown_ast,
  };
  pub use style::TextViewStyle;
- 

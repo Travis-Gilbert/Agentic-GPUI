@@ -1,14 +1,14 @@
-From 41d78525001d551124010a5766dd305c55e60e57 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Travis Gilbert <1travisgilbert@gmail.com>
 Date: Sat, 5 Sep 2026 04:50:34 -0400
-Subject: [PATCH] feat(input): forward platform input configuration
+Subject: [PATCH 07/18] feat(input): forward platform input configuration
 
 ---
  crates/base/src/input/base/state.rs | 80 ++++++++++++++++++++++++++++-
  1 file changed, 79 insertions(+), 1 deletion(-)
 
 diff --git a/crates/base/src/input/base/state.rs b/crates/base/src/input/base/state.rs
-index ab5397b3..9a1d831b 100644
+index b7085414..79699bb9 100644
 --- a/crates/base/src/input/base/state.rs
 +++ b/crates/base/src/input/base/state.rs
 @@ -2,7 +2,6 @@
@@ -20,14 +20,14 @@ index ab5397b3..9a1d831b 100644
      Action, App, AppContext, Bounds, ClipboardItem, Context, Edges, Entity, EntityInputHandler,
      EventEmitter, FocusHandle, Focusable, InteractiveElement as _, IntoElement, KeyBinding,
 @@ -10,6 +9,7 @@ use gpui::{
-     Pixels, Point, Render, ScrollHandle, ScrollWheelEvent, SharedString, Styled as _, Subscription,
+     Render, ScrollHandle, ScrollWheelEvent, SharedString, Styled as _, Subscription,
      UTF16Selection, Window, actions, div, point, prelude::FluentBuilder as _, px,
  };
 +use gpui::{TextAlign, TextInputConfiguration};
  use ropey::{Rope, RopeSlice};
  use serde::Deserialize;
  use std::borrow::Cow;
-@@ -320,6 +320,7 @@ pub struct InputBaseState<M: InputModeKind> {
+@@ -400,6 +400,7 @@ pub struct InputBaseState<M: InputModeKind> {
      pub(super) masked: bool,
      pub(super) clean_on_escape: bool,
      pub(super) submit_on_enter: bool,
@@ -35,7 +35,7 @@ index ab5397b3..9a1d831b 100644
      pub(super) show_whitespaces: bool,
      /// This flag tells the renderer to prefer the end of the current visual line.
      pub(crate) cursor_line_end_affinity: bool,
-@@ -637,6 +638,7 @@ impl<M: InputModeKind> InputBaseState<M> {
+@@ -734,6 +735,7 @@ impl<M: InputModeKind> InputBaseState<M> {
              masked: false,
              clean_on_escape: false,
              submit_on_enter: false,
@@ -43,7 +43,7 @@ index ab5397b3..9a1d831b 100644
              show_whitespaces: false,
              loading: false,
              pattern: None,
-@@ -1036,6 +1038,26 @@ impl<M: InputModeKind> InputBaseState<M> {
+@@ -1152,6 +1154,26 @@ impl<M: InputModeKind> InputBaseState<M> {
          cx.notify();
      }
  
@@ -70,7 +70,7 @@ index ab5397b3..9a1d831b 100644
      /// Set whether to show whitespace characters.
      #[doc(hidden)]
      pub fn show_whitespaces(mut self, show: bool) -> Self {
-@@ -2686,6 +2708,14 @@ impl<M: InputModeKind> InputBaseState<M> {
+@@ -3902,6 +3924,14 @@ impl<M: InputModeKind> InputBaseState<M> {
  }
  
  impl<M: InputModeKind> EntityInputHandler for InputBaseState<M> {
@@ -85,8 +85,8 @@ index ab5397b3..9a1d831b 100644
      fn text_for_range(
          &mut self,
          range_utf16: Range<usize>,
-@@ -3275,6 +3305,54 @@ mod tests {
-         }
+@@ -5278,6 +5308,54 @@ mod tests {
+         });
      }
  
 +    #[gpui::test]
@@ -140,6 +140,3 @@ index ab5397b3..9a1d831b 100644
      #[gpui::test]
      fn only_a_multi_line_input_paints_scrollbars(cx: &mut TestAppContext) {
          cx.update(crate::init);
--- 
-2.53.0
-

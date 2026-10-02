@@ -1,10 +1,22 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Travis Gilbert <1travisgilbert@gmail.com>
+Date: Sat, 5 Sep 2026 06:13:29 -0400
+Subject: [PATCH 12/18] fix(input): clear textarea styles on whole-text
+ replacement
+
+---
+ crates/base/src/input/base/kind.rs    | 4 ++++
+ crates/base/src/input/base/state.rs   | 1 +
+ crates/base/src/input/textarea/mod.rs | 4 ++++
+ 3 files changed, 9 insertions(+)
+
 diff --git a/crates/base/src/input/base/kind.rs b/crates/base/src/input/base/kind.rs
-index 393b49bd..6637e800 100644
+index 20b286e6..9f93e8ee 100644
 --- a/crates/base/src/input/base/kind.rs
 +++ b/crates/base/src/input/base/kind.rs
-@@ -185,6 +185,10 @@ pub trait InputModeKind: sealed::Sealed + Sized + 'static {
-     /// Drops decorations and hover state when the text is replaced wholesale.
-     fn reset_annotations(_state: &mut InputBaseState<Self>) {}
+@@ -212,6 +212,10 @@ pub trait InputModeKind: sealed::Sealed + Sized + 'static {
+         SyntaxContext::Code
+     }
  
 +    /// Drops presentation ranges after an authoritative whole-text replacement.
 +    /// Existing mode behavior is unchanged unless a mode opts into this hook.
@@ -14,11 +26,11 @@ index 393b49bd..6637e800 100644
      fn adjust_annotations(
          _state: &mut InputBaseState<Self>,
 diff --git a/crates/base/src/input/base/state.rs b/crates/base/src/input/base/state.rs
-index 9a1d831b..2c776da4 100644
+index 79699bb9..9e5e0031 100644
 --- a/crates/base/src/input/base/state.rs
 +++ b/crates/base/src/input/base/state.rs
-@@ -929,6 +929,7 @@ impl<M: InputModeKind> InputBaseState<M> {
-             this.undo_manager.pending_intent = Some(EditIntent::Atomic);
+@@ -1037,6 +1037,7 @@ impl<M: InputModeKind> InputBaseState<M> {
+             this.undo_manager.set_pending_intent(EditIntent::Atomic);
              let range = 0..this.text.chars().map(|c| c.len_utf16()).sum();
              this.replace_text_in_range_silent(Some(range), &text, window, cx);
 +            M::reset_document_presentation(this);
@@ -26,10 +38,10 @@ index 9a1d831b..2c776da4 100644
          });
      }
 diff --git a/crates/base/src/input/textarea/mod.rs b/crates/base/src/input/textarea/mod.rs
-index 371d33a2..79299b20 100644
+index 872b32ce..2ffcccb4 100644
 --- a/crates/base/src/input/textarea/mod.rs
 +++ b/crates/base/src/input/textarea/mod.rs
-@@ -50,6 +50,10 @@ impl InputModeKind for TextareaMode {
+@@ -71,6 +71,10 @@ impl InputModeKind for TextareaMode {
          state.extras.decorations.clear();
      }
  
