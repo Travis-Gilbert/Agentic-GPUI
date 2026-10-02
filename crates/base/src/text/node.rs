@@ -2172,6 +2172,11 @@ impl Paragraph {
             )
             .range_backgrounds(backgrounds)
             .reveal(reveal)
+            .link_with(
+                node_cx.link_fragment_decorator.clone(),
+                node_cx.offset + span.unwrap_or_default().start,
+            )
+            .link_underline(node_cx.link_underline.clone())
             .into_any_element();
         }
 
