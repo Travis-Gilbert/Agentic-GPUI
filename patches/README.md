@@ -33,6 +33,9 @@ What v0.7.0 changed underneath the series:
   id. Measured link fragments (patch 0015) give an `Inline` an id only when a
   fragment decorator is set, because the fragments' focus handles live in its
   element state. A fragment id is `link-{source offset}-{link}-{part}`.
+  v0.7.0 also added a text-only paragraph fast path that builds one cached
+  `Inline`; patch 0019 carries the decorator and underline onto it, which the
+  rebase could not see because the path did not exist on v0.6.0.
 - Upstream added an asynchronous web paste with a stale-target guard. Patch
   0017 keeps upstream's paste and carries only the grapheme-cluster
   boundaries, which still pass through upstream's atomic-token
