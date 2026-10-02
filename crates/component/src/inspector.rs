@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Write as _, rc::Rc, sync::OnceLock};
+use std::{cell::OnceCell, collections::HashMap, fmt::Write as _, rc::Rc, sync::OnceLock};
 
 use anyhow::Result;
 use gpui::{
@@ -51,14 +51,15 @@ pub(crate) fn init(cx: &mut App) {
         });
     });
 
-    cx.register_inspector_element(|window, cx| {
-        let div_inspector = cx.new(|cx| DivInspector::new(window, cx));
-        move |id, state: &DivInspectorState, window: &mut Window, cx: &mut App| {
-            div_inspector.update(cx, |this, cx| {
-                this.update_inspected_element(id, state.clone(), window, cx);
-                this.render(window, cx).into_any_element()
-            })
-        }
+    // The Theorem Zed fork registers the renderer itself rather than a
+    // per-window factory, so the inspector entity is created on first use.
+    let inspector_el = OnceCell::new();
+    cx.register_inspector_element(move |id, state: &DivInspectorState, window, cx| {
+        let el = inspector_el.get_or_init(|| cx.new(|cx| DivInspector::new(window, cx)));
+        el.update(cx, |this, cx| {
+            this.update_inspected_element(id, state.clone(), window, cx);
+            this.render(window, cx).into_any_element()
+        })
     });
 
     cx.set_inspector_renderer(Box::new(render_inspector));
