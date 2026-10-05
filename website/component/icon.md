@@ -195,6 +195,23 @@ Existing `IconNamed` implementations continue to provide asset paths. A
 data-backed type uses the conversion above without also implementing `IconNamed`.
 Binary-size savings depend on which resources are referenced and on build settings.
 
+### Owner-painted Image
+
+Use an image source when the original colored pixels are part of the presentation:
+
+```rust
+Icon::image(image_source).with_size(px(16.))
+```
+
+Image icons retain the same sizing and flex behavior and can be passed to
+`Button::icon`. Their colors are preserved; text color and SVG transformations
+apply only to vector icons. Calling `path` or `data` switches back to a vector
+icon. Image decoding, resource ownership and release remain with the
+caller/GPUI image cache. An explicit width and height outrank an icon size
+inherited from a parent Button, which preserves logical image bounds on scaled
+displays. Native menus show an in-memory `ImageSource::Image` and omit other
+image sources.
+
 ## Available Icons
 
 The `IconName` enum provides access to a curated set of icons. Here are some commonly used ones:

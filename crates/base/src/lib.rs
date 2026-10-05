@@ -13,6 +13,7 @@ pub mod async_util;
 mod auto_scroll;
 mod avatar;
 mod button;
+mod bounds_observer;
 mod calendar;
 mod checkbox;
 mod collapsible;
@@ -246,3 +247,5 @@ pub fn init(cx: &mut App) {
 
 #[cfg(feature = "test-support")]
 pub mod test_support;
+
+pub use bounds_observer::BoundsObserver;

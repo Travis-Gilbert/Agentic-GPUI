@@ -191,6 +191,7 @@ pub struct Button {
     /// The announced name, when the visible content is not it.
     accessibility_label: Option<SharedString>,
     children: Vec<AnyElement>,
+    bounds_observers: Vec<Box<dyn FnOnce(gpui::Bounds<gpui::Pixels>, &mut Window, &mut App)>>,
     disabled: bool,
     pub(crate) selected: bool,
     /// Held by the popover, menu or dropdown this button triggers, for as long
@@ -234,6 +235,16 @@ impl From<Button> for AnyElement {
 }
 
 impl Button {
+    /// Observe the actual control root after layout, including border and padding.
+    /// Infrastructure observers do not participate in label layout or input.
+    pub fn on_bounds(
+        mut self,
+        observe: impl FnOnce(gpui::Bounds<gpui::Pixels>, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.bounds_observers.push(Box::new(observe));
+        self
+    }
+
     pub fn new(id: impl Into<ElementId>) -> Self {
         let id = id.into();
 
@@ -244,6 +255,7 @@ impl Button {
             label: None,
             accessibility_label: None,
             children: Vec::new(),
+            bounds_observers: Vec::new(),
             disabled: false,
             selected: false,
             open: false,
@@ -764,7 +776,7 @@ impl RenderOnce for Button {
                 this.when(has_content, |this| this.justify_between())
                     .child(Caret::new(self.size).text_color(normal_style.fg.opacity(0.75)))
             });
-        root.role(self.role.resolve(|| {
+        let root = root.role(self.role.resolve(|| {
             if self.variant.is_link() {
                 Role::Link
             } else {
@@ -867,7 +879,17 @@ impl RenderOnce for Button {
         })
         .when(is_focused && self.focus_ring_enabled, |this| {
             this.focus_ring_style(window, cx)
-        })
+        });
+        if self.bounds_observers.is_empty() {
+            root.into_any_element()
+        } else {
+            gpui_base::BoundsObserver::new(root, move |bounds, window, cx| {
+                for observe in self.bounds_observers {
+                    observe(bounds, window, cx);
+                }
+            })
+            .into_any_element()
+        }
     }
 }
 
