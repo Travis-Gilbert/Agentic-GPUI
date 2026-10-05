@@ -1,7 +1,7 @@
 use crate::{ActiveTheme, Sizable, Size};
 use gpui::{
-    AnyElement, App, AppContext, Context, Entity, Hsla, IntoElement, Radians, Render, RenderOnce,
-    SharedString, StyleRefinement, Styled, Svg, Transformation, Window,
+    AnyElement, App, AppContext, Context, Entity, Hsla, ImageSource, IntoElement, Radians, Render,
+    RenderOnce, SharedString, StyleRefinement, Styled, Svg, Transformation, Window, img,
     prelude::FluentBuilder as _, svg,
 };
 use gpui_component_macros::icon_named;
@@ -50,6 +50,7 @@ impl RenderOnce for IconName {
 #[derive(IntoElement)]
 pub struct Icon {
     base: Svg,
+    image: Option<ImageSource>,
     style: StyleRefinement,
     path: SharedString,
     text_color: Option<Hsla>,
@@ -61,6 +62,7 @@ impl Default for Icon {
     fn default() -> Self {
         Self {
             base: svg().flex_none().size_4(),
+            image: None,
             style: StyleRefinement::default(),
             path: "".into(),
             text_color: None,
@@ -73,6 +75,7 @@ impl Default for Icon {
 impl Clone for Icon {
     fn clone(&self) -> Self {
         let mut this = Self::default().path(self.path.clone());
+        this.image = self.image.clone();
         this.style = self.style.clone();
         this.rotation = self.rotation;
         this.size = self.size;
@@ -86,6 +89,15 @@ impl Icon {
         icon.into()
     }
 
+    /// An owner-painted image icon. Original pixel colors are preserved;
+    /// text color and SVG transformations apply only to vector icons.
+    pub fn image(source: impl Into<ImageSource>) -> Self {
+        Self {
+            image: Some(source.into()),
+            ..Self::default()
+        }
+    }
+
     fn build(name: impl IconNamed) -> Self {
         Self::default().path(name.path())
     }
@@ -95,6 +107,7 @@ impl Icon {
     /// For example: `icons/foo.svg`
     pub fn path(mut self, path: impl Into<SharedString>) -> Self {
         self.path = path.into();
+        self.image = None;
         self
     }
 
@@ -150,6 +163,21 @@ impl RenderOnce for Icon {
         let text_size = window.text_style().font_size.to_pixels(window.rem_size());
         let has_base_size = self.style.size.width.is_some() || self.style.size.height.is_some();
 
+        if let Some(source) = self.image {
+            let mut image = img(source).flex_none();
+            *image.style() = self.style;
+            return image
+                .flex_shrink_0()
+                .when(!has_base_size, |this| this.size(text_size))
+                .when_some(self.size.filter(|_| !has_base_size), |this, size| match size {
+                    Size::Size(px) => this.size(px),
+                    Size::XSmall => this.size_3(),
+                    Size::Small => this.size_3p5(),
+                    Size::Medium => this.size_4(),
+                    Size::Large => this.size_6(),
+                })
+                .into_any_element();
+        }
         let mut base = self.base;
         *base.style() = self.style;
 
@@ -164,6 +192,7 @@ impl RenderOnce for Icon {
                 Size::Large => this.size_6(),
             })
             .path(self.path)
+            .into_any_element()
     }
 }
 
@@ -179,6 +208,9 @@ impl Render for Icon {
         let text_size = window.text_style().font_size.to_pixels(window.rem_size());
         let has_base_size = self.style.size.width.is_some() || self.style.size.height.is_some();
 
+        if self.image.is_some() {
+            return self.clone().render(window, cx).into_any_element();
+        }
         let mut base = svg().flex_none();
         *base.style() = self.style.clone();
 
@@ -196,5 +228,6 @@ impl Render for Icon {
             .when_some(self.rotation, |this, rotation| {
                 this.with_transformation(Transformation::rotate(rotation))
             })
+            .into_any_element()
     }
 }

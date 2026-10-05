@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use gpui::{
     AnyElement, App, ClickEvent, Div, ElementId, FocusHandle, InteractiveElement, Interactivity,
-    IntoElement, ParentElement, Refineable as _, RenderOnce, Role, SharedString, Stateful,
+    IntoElement, MouseButton, ParentElement, Refineable as _, RenderOnce, Role, SharedString, Stateful,
     StatefulInteractiveElement, StyleRefinement, Styled, Toggled, Window, div,
     prelude::FluentBuilder as _,
 };
@@ -55,6 +55,7 @@ pub struct Checkbox {
     accessibility_label: Option<SharedString>,
     tab_index: isize,
     tab_stop: bool,
+    focus_on_click: bool,
     provided_focus_handle: Option<FocusHandle>,
     role: RoleOverride,
 }
@@ -75,6 +76,7 @@ impl Checkbox {
             accessibility_label: None,
             tab_index: 0,
             tab_stop: true,
+            focus_on_click: true,
             provided_focus_handle: None,
             role: RoleOverride::Implicit,
         }
@@ -153,6 +155,13 @@ impl Checkbox {
     /// Sets whether this checkbox participates in keyboard focus traversal.
     pub fn tab_stop(mut self, tab_stop: bool) -> Self {
         self.tab_stop = tab_stop;
+        self
+    }
+
+    /// Whether pointer activation moves focus. The default is true.
+    /// Disabled controls never acquire pointer focus.
+    pub fn focus_on_click(mut self, focus_on_click: bool) -> Self {
+        self.focus_on_click = focus_on_click;
         self
     }
 
@@ -365,6 +374,7 @@ impl RenderOnce for Checkbox {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let focus_handle = self.focus_handle(window, cx);
         let disabled = self.disabled;
+        let focus_on_click = self.focus_on_click;
         let next_state = self.state.activated();
         let style = self.resolved_style();
         let on_change = self.on_change;
@@ -383,6 +393,9 @@ impl RenderOnce for Checkbox {
                         .tab_index(self.tab_index)
                         .tab_stop(self.tab_stop),
                 )
+            })
+            .on_mouse_down(MouseButton::Left, move |_, window, _| {
+                if disabled || !focus_on_click { window.prevent_default(); }
             })
             .when_some(
                 (!disabled).then_some(on_change).flatten(),

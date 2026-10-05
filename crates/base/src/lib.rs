@@ -13,6 +13,7 @@ pub mod async_util;
 mod auto_scroll;
 mod avatar;
 mod button;
+mod bounds_observer;
 mod calendar;
 mod checkbox;
 mod collapsible;
@@ -208,3 +209,5 @@ pub fn init(cx: &mut App) {
     tree::init(cx);
     text::init(cx);
 }
+
+pub use bounds_observer::BoundsObserver;

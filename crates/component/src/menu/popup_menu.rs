@@ -675,6 +675,25 @@ impl PopupMenu {
         self.submenu_with_icon(None, label, window, cx, f)
     }
 
+    /// A submenu whose trigger obeys the owning model's enabled state.
+    pub fn submenu_with_disabled(
+        self,
+        label: impl Into<SharedString>,
+        disabled: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        f: impl Fn(PopupMenu, &mut Window, &mut Context<Self>) -> PopupMenu + 'static,
+    ) -> Self {
+        let mut menu = self.submenu(label, window, cx, f);
+        if let Some(PopupMenuItem::Submenu {
+            disabled: state, ..
+        }) = menu.menu_items.last_mut()
+        {
+            *state = disabled;
+        }
+        menu
+    }
+
     /// Add a Submenu item with icon
     pub fn submenu_with_icon(
         mut self,
@@ -833,7 +852,7 @@ impl PopupMenu {
     fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
         match self.selected_index {
             Some(index) => {
-                let item = self.menu_items.get(index);
+                let item = self.menu_items.get(index).filter(|item| item.is_clickable());
                 match item {
                     Some(PopupMenuItem::Item {
                         handler, action, ..
@@ -906,7 +925,10 @@ impl PopupMenu {
     fn select_down(&mut self, _: &SelectDown, _: &mut Window, cx: &mut Context<Self>) {
         cx.stop_propagation();
         let Some(ix) = self.selected_index else {
-            self.set_selected_index(0, cx);
+            let first = self.clickable_menu_items().next().map(|(ix, _)| ix);
+            if let Some(first) = first {
+                self.set_selected_index(first, cx);
+            }
             return;
         };
 
@@ -920,7 +942,10 @@ impl PopupMenu {
             return;
         }
 
-        self.set_selected_index(0, cx);
+        let first = self.clickable_menu_items().next().map(|(ix, _)| ix);
+        if let Some(first) = first {
+            self.set_selected_index(first, cx);
+        }
     }
 
     fn select_left(&mut self, _: &SelectLeft, window: &mut Window, cx: &mut Context<Self>) {

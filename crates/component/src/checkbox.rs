@@ -6,8 +6,8 @@ use crate::{
 };
 use crate::{StyledExt as _, ThemeStyled as _};
 use gpui::{
-    AnyElement, App, ElementId, InteractiveElement, IntoElement, MouseButton, ParentElement,
-    RenderOnce, SharedString, StatefulInteractiveElement, StyleRefinement, Styled, Window, div,
+    AnyElement, App, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce,
+    SharedString, StatefulInteractiveElement, StyleRefinement, Styled, Window, div,
     prelude::FluentBuilder as _, px, relative, rems, svg,
 };
 use gpui_base::{CheckboxIndicator, spring};
@@ -23,10 +23,12 @@ pub struct Checkbox {
     label: Option<Text>,
     accessibility_label: Option<SharedString>,
     children: Vec<AnyElement>,
+    bounds_observers: Vec<Box<dyn FnOnce(gpui::Bounds<gpui::Pixels>, &mut Window, &mut App)>>,
     checked: bool,
     disabled: bool,
     size: Size,
     tab_stop: bool,
+    focus_on_click: bool,
     tab_index: isize,
     on_click: Option<Rc<dyn Fn(&bool, &mut Window, &mut App) + 'static>>,
     tooltip: ComponentTooltip,
@@ -35,6 +37,16 @@ pub struct Checkbox {
 }
 
 impl Checkbox {
+    /// Observe the actual control root after layout, including border and padding.
+    /// Infrastructure observers do not participate in label layout or input.
+    pub fn on_bounds(
+        mut self,
+        observe: impl FnOnce(gpui::Bounds<gpui::Pixels>, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.bounds_observers.push(Box::new(observe));
+        self
+    }
+
     /// Create a new Checkbox with the given id.
     pub fn new(id: impl Into<ElementId>) -> Self {
         let id = id.into();
@@ -45,11 +57,13 @@ impl Checkbox {
             label: None,
             accessibility_label: None,
             children: Vec::new(),
+            bounds_observers: Vec::new(),
             checked: false,
             disabled: false,
             size: Size::default(),
             on_click: None,
             tab_stop: true,
+            focus_on_click: false,
             tab_index: 0,
             tooltip: ComponentTooltip::default(),
             role: RoleOverride::default(),
@@ -99,6 +113,13 @@ impl Checkbox {
     /// Set the tab stop for the checkbox, default is true.
     pub fn tab_stop(mut self, tab_stop: bool) -> Self {
         self.tab_stop = tab_stop;
+        self
+    }
+
+    /// Whether pointer activation moves focus. Defaults to false for legacy
+    /// compatibility; enable it for ordinary native form interaction.
+    pub fn focus_on_click(mut self, focus_on_click: bool) -> Self {
+        self.focus_on_click = focus_on_click;
         self
     }
 
@@ -230,7 +251,8 @@ impl RenderOnce for Checkbox {
         let radius = cx.theme().radius.min(px(4.));
         let disabled_text_color = cx.theme().muted_foreground;
         let instance_style = self.style.clone();
-        base.role(self.role)
+        let root = base
+            .role(self.role)
             .checked(checked)
             .disabled(self.disabled)
             .styles(|styles| {
@@ -241,6 +263,7 @@ impl RenderOnce for Checkbox {
                 })
             })
             .tab_stop(self.tab_stop)
+            .focus_on_click(self.focus_on_click)
             .tab_index(self.tab_index)
             .track_focus(&focus_handle)
             .when_some(accessibility_label, |this, label| {
@@ -336,12 +359,17 @@ impl RenderOnce for Checkbox {
                         .children(children),
                 )
             })
-            .on_mouse_down(MouseButton::Left, |_, window, _| {
-                // Preserve the legacy Checkbox behavior: pointer presses do
-                // not move focus, including while disabled.
-                window.prevent_default();
+            .map(|this| self.tooltip.apply(this));
+        if self.bounds_observers.is_empty() {
+            root.into_any_element()
+        } else {
+            gpui_base::BoundsObserver::new(root, move |bounds, window, cx| {
+                for observe in self.bounds_observers {
+                    observe(bounds, window, cx);
+                }
             })
-            .map(|this| self.tooltip.apply(this))
+            .into_any_element()
+        }
     }
 }
 

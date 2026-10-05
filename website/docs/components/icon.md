@@ -74,6 +74,20 @@ Icon::new(Icon::empty())
     .path("icons/my-custom-icon.svg")
 ```
 
+### Owner-painted Image
+
+Use an image source when the original colored pixels are part of the presentation:
+
+```rust
+Icon::image(image_source).with_size(px(16.))
+```
+
+Image icons retain the same sizing and flex behavior and can be passed to
+`Button::icon`. Their colors are preserved; text color and SVG transformations
+apply only to vector icons. Calling `path` switches back to a vector icon.
+Image decoding, resource ownership and release remain with the caller/GPUI
+image cache.
+
 ## Available Icons
 
 The `IconName` enum provides access to a curated set of icons. Here are some commonly used ones:
@@ -253,3 +267,6 @@ Icon::empty()
 - Icons are flex-shrink-0 by default to prevent unwanted shrinking in flex layouts
 - All icon paths are relative to the assets bundle root
 - Icons from Lucide.dev are designed to work well at 16px and scale nicely to other sizes
+
+Image-backed icons retain explicit width and height when a parent Button supplies
+an inherited icon size. This preserves logical image bounds on scaled displays.

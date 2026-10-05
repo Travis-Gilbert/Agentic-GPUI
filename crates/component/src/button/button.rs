@@ -191,6 +191,7 @@ pub struct Button {
     /// The announced name, when the visible content is not it.
     accessibility_label: Option<SharedString>,
     children: Vec<AnyElement>,
+    bounds_observers: Vec<Box<dyn FnOnce(gpui::Bounds<gpui::Pixels>, &mut Window, &mut App)>>,
     disabled: bool,
     pub(crate) selected: bool,
     toggled: Option<bool>,
@@ -227,6 +228,16 @@ impl From<Button> for AnyElement {
 }
 
 impl Button {
+    /// Observe the actual control root after layout, including border and padding.
+    /// Infrastructure observers do not participate in label layout or input.
+    pub fn on_bounds(
+        mut self,
+        observe: impl FnOnce(gpui::Bounds<gpui::Pixels>, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.bounds_observers.push(Box::new(observe));
+        self
+    }
+
     pub fn new(id: impl Into<ElementId>) -> Self {
         let id = id.into();
 
@@ -237,6 +248,7 @@ impl Button {
             label: None,
             accessibility_label: None,
             children: Vec::new(),
+            bounds_observers: Vec::new(),
             disabled: false,
             selected: false,
             toggled: None,
@@ -693,105 +705,116 @@ impl RenderOnce for Button {
                 this.when(has_content, |this| this.justify_between())
                     .child(Caret::new(self.size).text_color(normal_style.fg.opacity(0.75)))
             });
-        root.role(self.role.resolve(|| {
-            if self.variant.is_link() {
-                Role::Link
-            } else {
-                Role::Button
-            }
-        }))
-        .selected(self.selected)
-        .disabled(disabled)
-        // Base layers semantic states over the builder chain, so the caller's
-        // own style is replayed inside each state to keep it the closest layer.
-        .styles(|styles| {
-            styles
-                .selected(|style| {
-                    style
-                        .bg(selected_style.bg)
-                        .border_color(selected_style.border)
-                        .text_color(selected_style.fg)
-                        .refine_style(&instance_style)
-                })
-                .disabled(|style| {
-                    style
-                        .bg(disabled_style.bg)
-                        .text_color(disabled_style.fg)
-                        .border_color(disabled_style.border)
-                        .shadow_none()
-                        .refine_style(&instance_style)
-                })
-        })
-        .when_some(accessibility_label, |this, label| {
-            this.accessibility_label(label)
-        })
-        .when_some(self.toggled, |this, toggled| {
-            this.aria_toggled(if toggled {
-                gpui::accesskit::Toggled::True
-            } else {
-                gpui::accesskit::Toggled::False
-            })
-        })
-        .track_focus(&focus_handle)
-        .tab_index(self.tab_index)
-        .tab_stop(self.tab_stop)
-        .child(content)
-        // Fade the whole button while loading, so every variant is dimmed by
-        // the same amount. Fading `bg`, `border` and `fg` one by one instead
-        // only shows up on variants that have a background to begin with:
-        // `Ghost`, `Link` and `Text` are transparent, so an alpha on their
-        // background changes nothing.
-        .when(loading && !disabled, |this| this.opacity(0.8))
-        .when(!disabled, |this| {
-            this.on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                if loading {
-                    cx.stop_propagation();
-                    return;
+        let root = root
+            .role(self.role.resolve(|| {
+                if self.variant.is_link() {
+                    Role::Link
+                } else {
+                    Role::Button
                 }
-
-                // Avoid focus on mouse down.
-                window.prevent_default();
-
-                // Pressing a button must not start the window-level text selection.
-                crate::global_state::GlobalState::suppress_text_selection(cx);
+            }))
+            .selected(self.selected)
+            .disabled(disabled)
+            // Base layers semantic states over the builder chain, so the caller's
+            // own style is replayed inside each state to keep it the closest layer.
+            .styles(|styles| {
+                styles
+                    .selected(|style| {
+                        style
+                            .bg(selected_style.bg)
+                            .border_color(selected_style.border)
+                            .text_color(selected_style.fg)
+                            .refine_style(&instance_style)
+                    })
+                    .disabled(|style| {
+                        style
+                            .bg(disabled_style.bg)
+                            .text_color(disabled_style.fg)
+                            .border_color(disabled_style.border)
+                            .shadow_none()
+                            .refine_style(&instance_style)
+                    })
             })
-        })
-        .when_some(self.on_click, |this, on_click| {
-            this.on_click(move |event, window, cx| {
-                if loading {
-                    cx.stop_propagation();
-                    return;
-                }
-
-                on_click(event, window, cx);
+            .when_some(accessibility_label, |this, label| {
+                this.accessibility_label(label)
             })
-        })
-        .when_some(self.on_hover.filter(|_| hoverable), |this, on_hover| {
-            this.on_hover(move |hovered, window, cx| {
-                on_hover(hovered, window, cx);
-            })
-        })
-        .map(|this| {
-            if let Some(builder) = self.tooltip_builder {
-                this.managed_tooltip(move |window, cx| builder(window, cx))
-            } else if let Some((tooltip, action)) = self.tooltip {
-                this.managed_tooltip(move |window, cx| {
-                    Tooltip::new(tooltip.clone())
-                        .when_some(action.clone(), |this, (action, context)| {
-                            this.action(
-                                action.boxed_clone().as_ref(),
-                                context.as_ref().map(|c| c.as_ref()),
-                            )
-                        })
-                        .build(window, cx)
+            .when_some(self.toggled, |this, toggled| {
+                this.aria_toggled(if toggled {
+                    gpui::accesskit::Toggled::True
+                } else {
+                    gpui::accesskit::Toggled::False
                 })
-            } else {
-                this
-            }
-        })
-        .when(is_focused && self.focus_ring_enabled, |this| {
-            this.focus_ring_style(window, cx)
-        })
+            })
+            .track_focus(&focus_handle)
+            .tab_index(self.tab_index)
+            .tab_stop(self.tab_stop)
+            .child(content)
+            // Fade the whole button while loading, so every variant is dimmed by
+            // the same amount. Fading `bg`, `border` and `fg` one by one instead
+            // only shows up on variants that have a background to begin with:
+            // `Ghost`, `Link` and `Text` are transparent, so an alpha on their
+            // background changes nothing.
+            .when(loading && !disabled, |this| this.opacity(0.8))
+            .when(!disabled, |this| {
+                this.on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                    if loading {
+                        cx.stop_propagation();
+                        return;
+                    }
+
+                    // Avoid focus on mouse down.
+                    window.prevent_default();
+
+                    // Pressing a button must not start the window-level text selection.
+                    crate::global_state::GlobalState::suppress_text_selection(cx);
+                })
+            })
+            .when_some(self.on_click, |this, on_click| {
+                this.on_click(move |event, window, cx| {
+                    if loading {
+                        cx.stop_propagation();
+                        return;
+                    }
+
+                    on_click(event, window, cx);
+                })
+            })
+            .when_some(self.on_hover.filter(|_| hoverable), |this, on_hover| {
+                this.on_hover(move |hovered, window, cx| {
+                    on_hover(hovered, window, cx);
+                })
+            })
+            .map(|this| {
+                if let Some(builder) = self.tooltip_builder {
+                    this.managed_tooltip(move |window, cx| builder(window, cx))
+                } else if let Some((tooltip, action)) = self.tooltip {
+                    this.managed_tooltip(move |window, cx| {
+                        Tooltip::new(tooltip.clone())
+                            .when_some(action.clone(), |this, (action, context)| {
+                                this.action(
+                                    action.boxed_clone().as_ref(),
+                                    context.as_ref().map(|c| c.as_ref()),
+                                )
+                            })
+                            .build(window, cx)
+                    })
+                } else {
+                    this
+                }
+            })
+            .when(is_focused && self.focus_ring_enabled, |this| {
+                this.focus_ring_style(window, cx)
+            });
+        if self.bounds_observers.is_empty() {
+            root.into_any_element()
+        } else {
+            gpui_base::BoundsObserver::new(root, move |bounds, window, cx| {
+                for observe in self.bounds_observers {
+                    observe(bounds, window, cx);
+                }
+            })
+            .into_any_element()
+        }
     }
 }
 

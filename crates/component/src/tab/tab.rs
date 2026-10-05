@@ -4,9 +4,9 @@ use crate::animation::{Lerp, ease_in_out_cubic};
 use crate::{ActiveTheme, Icon, IconName, Selectable, Sizable, Size, StyledExt, h_flex};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    Animation, AnimationExt as _, AnyElement, App, Background, ClickEvent, Edges, ElementId, Hsla,
-    InteractiveElement, IntoElement, ParentElement, Pixels, RenderOnce, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, px, relative,
+    Animation, AnimationExt as _, AnyElement, App, Background, ClickEvent, Edges, ElementId,
+    FocusHandle, Hsla, InteractiveElement, IntoElement, ParentElement, Pixels, RenderOnce,
+    SharedString, StatefulInteractiveElement, Styled, Window, div, px, relative,
 };
 
 /// Tab variants.
@@ -396,6 +396,8 @@ impl Default for TabStyle {
 #[derive(IntoElement)]
 pub struct Tab {
     ix: usize,
+    pub(super) key: Option<ElementId>,
+    pub(super) size_of_set: usize,
     base: gpui_base::Tab,
     pub(super) label: Option<SharedString>,
     aria_label: Option<SharedString>,
@@ -404,6 +406,7 @@ pub struct Tab {
     pub(super) tab_bar_prefix: Option<bool>,
     suffix: Option<AnyElement>,
     children: Vec<AnyElement>,
+    root_children: Vec<AnyElement>,
     variant: TabVariant,
     size: Size,
     pub(super) disabled: bool,
@@ -452,12 +455,15 @@ impl Default for Tab {
     fn default() -> Self {
         Self {
             ix: 0,
+            key: None,
+            size_of_set: 1,
             base: gpui_base::Tab::new(0usize),
             label: None,
             aria_label: None,
             icon: None,
             tab_bar_prefix: None,
             children: Vec::new(),
+            root_children: Vec::new(),
             disabled: false,
             selected: false,
             indicator_active: false,
@@ -477,6 +483,31 @@ impl Tab {
     /// Create a new tab with a label.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Stable identity, retained when tabs move or are reordered.
+    /// Without one, TabBar preserves its historical positional identity.
+    pub fn id(mut self, id: impl Into<ElementId>) -> Self {
+        self.key = Some(id.into());
+        self
+    }
+
+    /// Use the compound tab list's focus owner.
+    pub fn track_focus(mut self, handle: &FocusHandle) -> Self {
+        self.base = self.base.track_focus(handle);
+        self
+    }
+
+    /// Whether keyboard Tab traversal may enter this tab.
+    pub fn tab_stop(mut self, enabled: bool) -> Self {
+        self.base = self.base.tab_stop(enabled);
+        self
+    }
+
+    /// Attach infrastructure to the actual tab root, outside its label layout.
+    pub fn root_child(mut self, child: impl IntoElement) -> Self {
+        self.root_children.push(child.into_any_element());
+        self
     }
 
     /// Set label for the tab.
@@ -760,7 +791,8 @@ impl RenderOnce for Tab {
         };
 
         self.base
-            .id(self.ix)
+            .id(self.key.unwrap_or_else(|| self.ix.into()))
+            .set_position(self.ix + 1, self.size_of_set)
             .selected(self.selected)
             .disabled(self.disabled)
             .when_some(aria_label, |this, label| this.accessibility_label(label))
@@ -861,6 +893,7 @@ impl RenderOnce for Tab {
                 )
             })
             .child(inner_element)
+            .children(self.root_children)
             .when_some(self.suffix, |this, suffix| {
                 this.child(
                     div()
