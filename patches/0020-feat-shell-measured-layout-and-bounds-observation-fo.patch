@@ -1,0 +1,1133 @@
+From fd20e5c5466d41abcc36a42ddfc0dd9d7fd94f31 Mon Sep 17 00:00:00 2001
+From: Travis Gilbert <1travisgilbert@gmail.com>
+Date: Mon, 5 Oct 2026 14:24:26 -0400
+Subject: [PATCH] feat(shell): measured layout and bounds observation for
+ presented native controls
+
+Adds MeasuredLayout, which places children at host-measured bounds and clips
+each one, and BoundsObserver, a transparent element that reports its child's
+laid-out bounds during prepaint. Button and Checkbox gain on_bounds; Tab is
+addressable as a stateful element and exposes root_child; popup menus and
+tab bars carry the bounds hooks through. Theorem's IntelliJ presentation uses
+these to place Swing-backed controls and probe their geometry.
+
+Ported from 576089a9 onto the v0.7.0 series. v0.7.0 replaced Icon's path
+field with IconSource, so an owner-painted image is the IconSource::Image
+variant; native menus show an in-memory ImageSource::Image and omit other
+image sources. Docs moved with website/docs/components to website/component.
+---
+ crates/base/src/bounds_observer.rs      | 79 +++++++++++++++++++++++
+ crates/base/src/checkbox.rs             | 15 ++++-
+ crates/base/src/lib.rs                  |  3 +
+ crates/base/src/tabs.rs                 | 50 ++++++++++----
+ crates/component/src/button/button.rs   | 26 +++++++-
+ crates/component/src/checkbox.rs        | 44 ++++++++++---
+ crates/component/src/icon.rs            | 62 ++++++++++++++++--
+ crates/component/src/lib.rs             |  1 +
+ crates/component/src/measured_layout.rs | 67 +++++++++++++++++++
+ crates/component/src/menu/popup_menu.rs | 31 ++++++++-
+ crates/component/src/native_menu/mod.rs |  2 +
+ crates/component/src/tab/tab.rs         | 41 ++++++++++--
+ crates/component/src/tab/tab_bar.rs     | 86 ++++++++++++++++++++++++-
+ website/component/button.md             |  6 ++
+ website/component/checkbox.md           |  6 ++
+ website/component/icon.md               | 17 +++++
+ website/component/measured-layout.md    | 36 +++++++++++
+ 17 files changed, 536 insertions(+), 36 deletions(-)
+ create mode 100644 crates/base/src/bounds_observer.rs
+ create mode 100644 crates/component/src/measured_layout.rs
+ create mode 100644 website/component/measured-layout.md
+
+diff --git a/crates/base/src/bounds_observer.rs b/crates/base/src/bounds_observer.rs
+new file mode 100644
+index 00000000..d98a4040
+--- /dev/null
++++ b/crates/base/src/bounds_observer.rs
+@@ -0,0 +1,79 @@
++//! Observe the actual root allocation without inserting a layout or hit region.
++
++use gpui::{
++    AnyElement, App, Bounds, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement,
++    LayoutId, Pixels, Window,
++};
++
++/// A transparent element-phase adapter. Unlike an absolute child probe, its
++/// bounds include the observed root's border and padding. It delegates the
++/// same layout ID and preserves the child's focus, accessibility and painting.
++pub struct BoundsObserver {
++    child: AnyElement,
++    observe: Option<Box<dyn FnOnce(Bounds<Pixels>, &mut Window, &mut App)>>,
++}
++
++impl BoundsObserver {
++    pub fn new(
++        child: impl IntoElement,
++        observe: impl FnOnce(Bounds<Pixels>, &mut Window, &mut App) + 'static,
++    ) -> Self {
++        Self {
++            child: child.into_any_element(),
++            observe: Some(Box::new(observe)),
++        }
++    }
++}
++
++impl IntoElement for BoundsObserver {
++    type Element = Self;
++    fn into_element(self) -> Self {
++        self
++    }
++}
++
++impl Element for BoundsObserver {
++    type RequestLayoutState = ();
++    type PrepaintState = ();
++    fn id(&self) -> Option<ElementId> {
++        None
++    }
++    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
++        None
++    }
++    fn request_layout(
++        &mut self,
++        _: Option<&GlobalElementId>,
++        _: Option<&InspectorElementId>,
++        window: &mut Window,
++        cx: &mut App,
++    ) -> (LayoutId, ()) {
++        (self.child.request_layout(window, cx), ())
++    }
++    fn prepaint(
++        &mut self,
++        _: Option<&GlobalElementId>,
++        _: Option<&InspectorElementId>,
++        bounds: Bounds<Pixels>,
++        _: &mut (),
++        window: &mut Window,
++        cx: &mut App,
++    ) {
++        self.child.prepaint(window, cx);
++        if let Some(observe) = self.observe.take() {
++            observe(bounds, window, cx);
++        }
++    }
++    fn paint(
++        &mut self,
++        _: Option<&GlobalElementId>,
++        _: Option<&InspectorElementId>,
++        _: Bounds<Pixels>,
++        _: &mut (),
++        _: &mut (),
++        window: &mut Window,
++        cx: &mut App,
++    ) {
++        self.child.paint(window, cx);
++    }
++}
+diff --git a/crates/base/src/checkbox.rs b/crates/base/src/checkbox.rs
+index 670f2251..f5302f8d 100644
+--- a/crates/base/src/checkbox.rs
++++ b/crates/base/src/checkbox.rs
+@@ -2,7 +2,7 @@ use std::rc::Rc;
+ 
+ use gpui::{
+     AnyElement, App, ClickEvent, Div, ElementId, FocusHandle, InteractiveElement, Interactivity,
+-    IntoElement, ParentElement, Refineable as _, RenderOnce, Role, SharedString, Stateful,
++    IntoElement, MouseButton, ParentElement, Refineable as _, RenderOnce, Role, SharedString, Stateful,
+     StatefulInteractiveElement, StyleRefinement, Styled, Toggled, Window, div,
+     prelude::FluentBuilder as _,
+ };
+@@ -55,6 +55,7 @@ pub struct Checkbox {
+     accessibility_label: Option<SharedString>,
+     tab_index: isize,
+     tab_stop: bool,
++    focus_on_click: bool,
+     provided_focus_handle: Option<FocusHandle>,
+     role: RoleOverride,
+ }
+@@ -75,6 +76,7 @@ impl Checkbox {
+             accessibility_label: None,
+             tab_index: 0,
+             tab_stop: true,
++            focus_on_click: true,
+             provided_focus_handle: None,
+             role: RoleOverride::Implicit,
+         }
+@@ -156,6 +158,13 @@ impl Checkbox {
+         self
+     }
+ 
++    /// Whether pointer activation moves focus. The default is true.
++    /// Disabled controls never acquire pointer focus.
++    pub fn focus_on_click(mut self, focus_on_click: bool) -> Self {
++        self.focus_on_click = focus_on_click;
++        self
++    }
++
+     /// Uses a caller-owned focus handle instead of creating keyed state.
+     pub fn track_focus(mut self, focus_handle: &FocusHandle) -> Self {
+         self.provided_focus_handle = Some(focus_handle.clone());
+@@ -365,6 +374,7 @@ impl RenderOnce for Checkbox {
+     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+         let focus_handle = self.focus_handle(window, cx);
+         let disabled = self.disabled;
++        let focus_on_click = self.focus_on_click;
+         let next_state = self.state.activated();
+         let style = self.resolved_style();
+         let on_change = self.on_change;
+@@ -385,6 +395,9 @@ impl RenderOnce for Checkbox {
+                         .tab_stop(self.tab_stop),
+                 )
+             })
++            .on_mouse_down(MouseButton::Left, move |_, window, _| {
++                if disabled || !focus_on_click { window.prevent_default(); }
++            })
+             .when_some(
+                 (!disabled).then_some(on_change).flatten(),
+                 |this, on_change| {
+diff --git a/crates/base/src/lib.rs b/crates/base/src/lib.rs
+index 1978efc4..509b138e 100644
+--- a/crates/base/src/lib.rs
++++ b/crates/base/src/lib.rs
+@@ -13,6 +13,7 @@ pub mod async_util;
+ mod auto_scroll;
+ mod avatar;
+ mod button;
++mod bounds_observer;
+ mod calendar;
+ mod checkbox;
+ mod collapsible;
+@@ -246,3 +247,5 @@ pub fn init(cx: &mut App) {
+ 
+ #[cfg(feature = "test-support")]
+ pub mod test_support;
++
++pub use bounds_observer::BoundsObserver;
+diff --git a/crates/base/src/tabs.rs b/crates/base/src/tabs.rs
+index 782438c7..a7572916 100644
+--- a/crates/base/src/tabs.rs
++++ b/crates/base/src/tabs.rs
+@@ -1,8 +1,8 @@
+ use std::rc::Rc;
+ 
+ use gpui::{
+-    AnyElement, App, ClickEvent, Div, ElementId, InteractiveElement, Interactivity, IntoElement,
+-    MouseButton, ParentElement, Refineable as _, RenderOnce, Role, SharedString,
++    AnyElement, App, ClickEvent, Div, ElementId, FocusHandle, InteractiveElement, Interactivity,
++    IntoElement, MouseButton, ParentElement, Refineable as _, RenderOnce, Role, SharedString,
+     StatefulInteractiveElement, StyleRefinement, Styled, Window, div, prelude::FluentBuilder as _,
+     relative,
+ };
+@@ -12,13 +12,8 @@ use crate::{StateStyle, StyledExt as _, TestSupportExt as _};
+ 
+ type ClickHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+ 
+-/// An unstyled tab that owns pointer activation and accessibility behavior.
+-///
+-/// Tabs do not participate in keyboard focus by themselves. A compound tab
+-/// list may add keyboard navigation when that behavior is introduced.
+-// TODO: Add compound keyboard navigation with roving focus, arrow keys,
+-// Home/End, and Enter/Space activation before treating Tabs as a complete
+-// desktop tab-list primitive.
++/// An unstyled tab with pointer, Enter/Space, focus, and accessibility behavior.
++/// A compound tab list owns arrow navigation and supplies roving tab stops.
+ #[derive(IntoElement)]
+ pub struct Tab {
+     id: ElementId,
+@@ -32,6 +27,8 @@ pub struct Tab {
+     accessibility_label: Option<SharedString>,
+     position_in_set: Option<usize>,
+     size_of_set: Option<usize>,
++    provided_focus_handle: Option<FocusHandle>,
++    tab_stop: bool,
+ }
+ 
+ impl Tab {
+@@ -48,6 +45,8 @@ impl Tab {
+             accessibility_label: None,
+             position_in_set: None,
+             size_of_set: None,
++            provided_focus_handle: None,
++            tab_stop: true,
+         }
+     }
+ 
+@@ -62,6 +61,18 @@ impl Tab {
+         self
+     }
+ 
++    /// Use a compound control's stable focus handle.
++    pub fn track_focus(mut self, handle: &FocusHandle) -> Self {
++        self.provided_focus_handle = Some(handle.clone());
++        self
++    }
++
++    /// Whether Tab traversal may enter this tab.
++    pub fn tab_stop(mut self, enabled: bool) -> Self {
++        self.tab_stop = enabled;
++        self
++    }
++
+     pub fn disabled(mut self, disabled: bool) -> Self {
+         self.disabled = disabled;
+         self
+@@ -147,9 +158,20 @@ impl InteractiveElement for Tab {
+ impl StatefulInteractiveElement for Tab {}
+ 
+ impl RenderOnce for Tab {
+-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
++    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+         let disabled = self.disabled;
+         let style = self.resolved_style();
++        let focus = self
++            .provided_focus_handle
++            .clone()
++            .unwrap_or_else(|| {
++                window
++                    .use_keyed_state(self.id.clone(), cx, |_, cx| cx.focus_handle())
++                    .read(cx)
++                    .clone()
++            })
++            .tab_stop(self.tab_stop && !disabled);
++        let pointer_focus = focus.clone();
+ 
+         self.base
+             .id(self.id)
+@@ -166,11 +188,17 @@ impl RenderOnce for Tab {
+                 this.aria_label(label)
+             })
+             .aria_selected(self.selected)
++            .when(!disabled, |this| this.track_focus(&focus))
+             .when_some(self.position_in_set, |this, position| {
+                 this.aria_position_in_set(position)
+             })
+             .when_some(self.size_of_set, |this, size| this.aria_size_of_set(size))
+-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
++            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
++                if !disabled {
++                    pointer_focus.focus(window, cx);
++                }
++                cx.stop_propagation();
++            })
+             .when_some(
+                 (!disabled).then_some(self.on_click).flatten(),
+                 |this, on_click| {
+diff --git a/crates/component/src/button/button.rs b/crates/component/src/button/button.rs
+index 98658a4e..5791b596 100644
+--- a/crates/component/src/button/button.rs
++++ b/crates/component/src/button/button.rs
+@@ -191,6 +191,7 @@ pub struct Button {
+     /// The announced name, when the visible content is not it.
+     accessibility_label: Option<SharedString>,
+     children: Vec<AnyElement>,
++    bounds_observers: Vec<Box<dyn FnOnce(gpui::Bounds<gpui::Pixels>, &mut Window, &mut App)>>,
+     disabled: bool,
+     pub(crate) selected: bool,
+     /// Held by the popover, menu or dropdown this button triggers, for as long
+@@ -234,6 +235,16 @@ impl From<Button> for AnyElement {
+ }
+ 
+ impl Button {
++    /// Observe the actual control root after layout, including border and padding.
++    /// Infrastructure observers do not participate in label layout or input.
++    pub fn on_bounds(
++        mut self,
++        observe: impl FnOnce(gpui::Bounds<gpui::Pixels>, &mut Window, &mut App) + 'static,
++    ) -> Self {
++        self.bounds_observers.push(Box::new(observe));
++        self
++    }
++
+     pub fn new(id: impl Into<ElementId>) -> Self {
+         let id = id.into();
+ 
+@@ -244,6 +255,7 @@ impl Button {
+             label: None,
+             accessibility_label: None,
+             children: Vec::new(),
++            bounds_observers: Vec::new(),
+             disabled: false,
+             selected: false,
+             open: false,
+@@ -764,7 +776,7 @@ impl RenderOnce for Button {
+                 this.when(has_content, |this| this.justify_between())
+                     .child(Caret::new(self.size).text_color(normal_style.fg.opacity(0.75)))
+             });
+-        root.role(self.role.resolve(|| {
++        let root = root.role(self.role.resolve(|| {
+             if self.variant.is_link() {
+                 Role::Link
+             } else {
+@@ -867,7 +879,17 @@ impl RenderOnce for Button {
+         })
+         .when(is_focused && self.focus_ring_enabled, |this| {
+             this.focus_ring_style(window, cx)
+-        })
++        });
++        if self.bounds_observers.is_empty() {
++            root.into_any_element()
++        } else {
++            gpui_base::BoundsObserver::new(root, move |bounds, window, cx| {
++                for observe in self.bounds_observers {
++                    observe(bounds, window, cx);
++                }
++            })
++            .into_any_element()
++        }
+     }
+ }
+ 
+diff --git a/crates/component/src/checkbox.rs b/crates/component/src/checkbox.rs
+index 27af223f..bc4535ea 100644
+--- a/crates/component/src/checkbox.rs
++++ b/crates/component/src/checkbox.rs
+@@ -6,8 +6,8 @@ use crate::{
+ };
+ use crate::{StyledExt as _, ThemeStyled as _};
+ use gpui::{
+-    AnyElement, App, ElementId, InteractiveElement, IntoElement, MouseButton, ParentElement,
+-    RenderOnce, SharedString, StatefulInteractiveElement, StyleRefinement, Styled, Window, div,
++    AnyElement, App, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce,
++    SharedString, StatefulInteractiveElement, StyleRefinement, Styled, Window, div,
+     prelude::FluentBuilder as _, px, relative, rems, svg,
+ };
+ use gpui_base::{CheckboxIndicator, spring};
+@@ -23,10 +23,12 @@ pub struct Checkbox {
+     label: Option<Text>,
+     accessibility_label: Option<SharedString>,
+     children: Vec<AnyElement>,
++    bounds_observers: Vec<Box<dyn FnOnce(gpui::Bounds<gpui::Pixels>, &mut Window, &mut App)>>,
+     checked: bool,
+     disabled: bool,
+     size: Size,
+     tab_stop: bool,
++    focus_on_click: bool,
+     tab_index: isize,
+     on_click: Option<Rc<dyn Fn(&bool, &mut Window, &mut App) + 'static>>,
+     tooltip: ComponentTooltip,
+@@ -35,6 +37,16 @@ pub struct Checkbox {
+ }
+ 
+ impl Checkbox {
++    /// Observe the actual control root after layout, including border and padding.
++    /// Infrastructure observers do not participate in label layout or input.
++    pub fn on_bounds(
++        mut self,
++        observe: impl FnOnce(gpui::Bounds<gpui::Pixels>, &mut Window, &mut App) + 'static,
++    ) -> Self {
++        self.bounds_observers.push(Box::new(observe));
++        self
++    }
++
+     /// Create a new Checkbox with the given id.
+     pub fn new(id: impl Into<ElementId>) -> Self {
+         let id = id.into();
+@@ -45,11 +57,13 @@ impl Checkbox {
+             label: None,
+             accessibility_label: None,
+             children: Vec::new(),
++            bounds_observers: Vec::new(),
+             checked: false,
+             disabled: false,
+             size: Size::default(),
+             on_click: None,
+             tab_stop: true,
++            focus_on_click: false,
+             tab_index: 0,
+             tooltip: ComponentTooltip::default(),
+             role: RoleOverride::default(),
+@@ -110,6 +124,13 @@ impl Checkbox {
+         self
+     }
+ 
++    /// Whether pointer activation moves focus. Defaults to false for legacy
++    /// compatibility; enable it for ordinary native form interaction.
++    pub fn focus_on_click(mut self, focus_on_click: bool) -> Self {
++        self.focus_on_click = focus_on_click;
++        self
++    }
++
+     /// Set the tab index for the checkbox, default is 0.
+     pub fn tab_index(mut self, tab_index: isize) -> Self {
+         self.tab_index = tab_index;
+@@ -245,7 +266,8 @@ impl RenderOnce for Checkbox {
+         let radius = cx.theme().radius.min(px(4.));
+         let disabled_text_color = cx.theme().muted_foreground;
+         let instance_style = self.style.clone();
+-        base.role(self.role)
++        let root = base
++            .role(self.role)
+             .checked(checked)
+             .disabled(self.disabled)
+             .styles(|styles| {
+@@ -256,6 +278,7 @@ impl RenderOnce for Checkbox {
+                 })
+             })
+             .tab_stop(self.tab_stop)
++            .focus_on_click(self.focus_on_click)
+             .tab_index(self.tab_index)
+             .track_focus(&focus_handle)
+             .when_some(accessibility_label, |this, label| {
+@@ -346,12 +369,17 @@ impl RenderOnce for Checkbox {
+                         .children(children),
+                 )
+             })
+-            .on_mouse_down(MouseButton::Left, |_, window, _| {
+-                // Preserve the legacy Checkbox behavior: pointer presses do
+-                // not move focus, including while disabled.
+-                window.prevent_default();
++            .map(|this| self.tooltip.apply(this));
++        if self.bounds_observers.is_empty() {
++            root.into_any_element()
++        } else {
++            gpui_base::BoundsObserver::new(root, move |bounds, window, cx| {
++                for observe in self.bounds_observers {
++                    observe(bounds, window, cx);
++                }
+             })
+-            .map(|this| self.tooltip.apply(this))
++            .into_any_element()
++        }
+     }
+ }
+ 
+diff --git a/crates/component/src/icon.rs b/crates/component/src/icon.rs
+index 8b4c1697..e60b5490 100644
+--- a/crates/component/src/icon.rs
++++ b/crates/component/src/icon.rs
+@@ -2,9 +2,9 @@ use std::sync::Arc;
+ 
+ use crate::{ActiveTheme, Sizable, Size};
+ use gpui::{
+-    AnyElement, App, AppContext, Context, Entity, Hsla, IntoElement, Pixels, Radians, Render,
+-    RenderOnce, SharedString, StyleRefinement, Styled, Svg, Transformation, Window,
+-    prelude::FluentBuilder as _, svg,
++    AnyElement, App, AppContext, Context, Entity, Hsla, ImageSource, IntoElement, Pixels,
++    Radians, Render, RenderOnce, SharedString, StyleRefinement, Styled, Svg, Transformation,
++    Window, img, prelude::FluentBuilder as _, svg,
+ };
+ pub use gpui_kit_assets::IconNamed;
+ 
+@@ -78,6 +78,8 @@ impl IconNameExt for gpui_kit_assets::IconName {
+ pub(crate) enum IconSource {
+     Path(SharedString),
+     Data(Arc<[u8]>),
++    /// Owner-painted pixels, rendered as an image rather than a tinted SVG.
++    Image(ImageSource),
+ }
+ 
+ #[derive(Clone, IntoElement)]
+@@ -106,6 +108,15 @@ impl Icon {
+         icon.into()
+     }
+ 
++    /// An owner-painted image icon. Original pixel colors are preserved;
++    /// text color and transformations apply only to vector icons.
++    pub fn image(source: impl Into<ImageSource>) -> Self {
++        Self {
++            source: IconSource::Image(source.into()),
++            ..Self::default()
++        }
++    }
++
+     fn build(name: impl IconNamed) -> Self {
+         Self::default().path(name.path())
+     }
+@@ -172,6 +183,30 @@ impl Icon {
+         self
+     }
+ 
++    fn into_element(self, text_size: Pixels, fallback_color: Hsla) -> AnyElement {
++        let IconSource::Image(source) = self.source else {
++            return self.into_svg(text_size, fallback_color).into_any_element();
++        };
++        let has_base_size = self.style.size.width.is_some() || self.style.size.height.is_some();
++        img(source)
++            .map(|mut this| {
++                *this.style() = self.style;
++                this
++            })
++            .flex_shrink_0()
++            .when(!has_base_size, |this| this.size(text_size))
++            // An explicit image size outranks a size inherited from a parent
++            // Button, so logical image bounds survive scaled displays.
++            .when_some(self.size.filter(|_| !has_base_size), |this, size| match size {
++                Size::Size(px) => this.size(px),
++                Size::XSmall => this.size_3(),
++                Size::Small => this.size_3p5(),
++                Size::Medium => this.size_4(),
++                Size::Large => this.size_6(),
++            })
++            .into_any_element()
++    }
++
+     fn into_svg(self, text_size: Pixels, fallback_color: Hsla) -> Svg {
+         let text_color = self.text_color.unwrap_or(fallback_color);
+         let has_base_size = self.style.size.width.is_some() || self.style.size.height.is_some();
+@@ -194,6 +229,7 @@ impl Icon {
+             .map(|this| match self.source {
+                 IconSource::Path(path) => this.path(path),
+                 IconSource::Data(data) => this.data(&data),
++                IconSource::Image(_) => this,
+             })
+             .when_some(self.transformation, |this, transformation| {
+                 this.with_transformation(transformation)
+@@ -222,7 +258,7 @@ impl Sizable for Icon {
+ impl RenderOnce for Icon {
+     fn render(self, window: &mut Window, _cx: &mut App) -> impl IntoElement {
+         let text_size = window.text_style().font_size.to_pixels(window.rem_size());
+-        self.into_svg(text_size, window.text_style().color)
++        self.into_element(text_size, window.text_style().color)
+     }
+ }
+ 
+@@ -235,7 +271,7 @@ impl From<Icon> for AnyElement {
+ impl Render for Icon {
+     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+         let text_size = window.text_style().font_size.to_pixels(window.rem_size());
+-        self.clone().into_svg(text_size, cx.theme().foreground)
++        self.clone().into_element(text_size, cx.theme().foreground)
+     }
+ }
+ 
+@@ -298,4 +334,20 @@ mod tests {
+         let icon = icon.path("");
+         assert!(matches!(icon.source_ref(), IconSource::Path(path) if path.is_empty()));
+     }
++
++    #[test]
++    fn test_image_icon_keeps_its_source_until_a_vector_source_replaces_it() {
++        let image = Arc::new(gpui::Image::from_bytes(gpui::ImageFormat::Svg, SVG.to_vec()));
++        let icon = Icon::image(image.clone()).large();
++        let IconSource::Image(gpui::ImageSource::Image(kept)) = icon.source_ref() else {
++            panic!("an image icon must keep its image source");
++        };
++        assert!(Arc::ptr_eq(kept, &image));
++        assert_eq!(icon.clone().size, Some(Size::Large));
++
++        let icon = icon.path("icons/replacement.svg");
++        assert!(
++            matches!(icon.source_ref(), IconSource::Path(path) if path == "icons/replacement.svg")
++        );
++    }
+ }
+diff --git a/crates/component/src/lib.rs b/crates/component/src/lib.rs
+index 3b2f2b2a..c0390305 100644
+--- a/crates/component/src/lib.rs
++++ b/crates/component/src/lib.rs
+@@ -55,6 +55,7 @@ pub mod link;
+ pub mod list;
+ pub mod marker;
+ pub mod menu;
++pub mod measured_layout;
+ pub mod message;
+ pub mod message_scroller;
+ pub mod native_menu;
+diff --git a/crates/component/src/measured_layout.rs b/crates/component/src/measured_layout.rs
+new file mode 100644
+index 00000000..d8ab799e
+--- /dev/null
++++ b/crates/component/src/measured_layout.rs
+@@ -0,0 +1,67 @@
++//! Placement for geometry supplied by an external layout owner.
++//! This carries allocations; it does not recompute layout or own resize state.
++
++use gpui::{
++    AnyElement, App, Bounds, ElementId, InteractiveElement, IntoElement, ParentElement, Pixels,
++    RenderOnce, Styled, Window, div,
++};
++
++/// A passive, clipped container with parent-local logical-pixel allocations.
++/// Children are supplied back to front, with stable owner-derived identities.
++#[derive(IntoElement)]
++pub struct MeasuredLayout {
++    id: ElementId,
++    size: gpui::Size<Pixels>,
++    children: Vec<AnyElement>,
++}
++
++impl MeasuredLayout {
++    /// The external owner has already measured this container.
++    pub fn new(id: impl Into<ElementId>, size: gpui::Size<Pixels>) -> Self {
++        Self {
++            id: id.into(),
++            size,
++            children: Vec::new(),
++        }
++    }
++
++    /// Append an allocation in paint order. Zero-area children occupy no
++    /// paint or pointer region; they remain in the owner's description.
++    pub fn child(
++        mut self,
++        id: impl Into<ElementId>,
++        bounds: Bounds<Pixels>,
++        child: impl IntoElement,
++    ) -> Self {
++        if bounds.size.width > gpui::px(0.) && bounds.size.height > gpui::px(0.) {
++            self.children.push(
++                div()
++                    .id(id)
++                    .absolute()
++                    .left(bounds.origin.x)
++                    .top(bounds.origin.y)
++                    .w(bounds.size.width)
++                    .h(bounds.size.height)
++                    .overflow_hidden()
++                    .flex()
++                    .flex_col()
++                    .child(child)
++                    .into_any_element(),
++            );
++        }
++        self
++    }
++}
++
++impl RenderOnce for MeasuredLayout {
++    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
++        div()
++            .id(self.id)
++            .relative()
++            .w(self.size.width)
++            .h(self.size.height)
++            .flex_shrink_0()
++            .overflow_hidden()
++            .children(self.children)
++    }
++}
+diff --git a/crates/component/src/menu/popup_menu.rs b/crates/component/src/menu/popup_menu.rs
+index 5fd80ed4..4c98d613 100644
+--- a/crates/component/src/menu/popup_menu.rs
++++ b/crates/component/src/menu/popup_menu.rs
+@@ -701,6 +701,25 @@ impl PopupMenu {
+         self.submenu_with_icon(None, label, window, cx, f)
+     }
+ 
++    /// A submenu whose trigger obeys the owning model's enabled state.
++    pub fn submenu_with_disabled(
++        self,
++        label: impl Into<SharedString>,
++        disabled: bool,
++        window: &mut Window,
++        cx: &mut Context<Self>,
++        f: impl Fn(PopupMenu, &mut Window, &mut Context<Self>) -> PopupMenu + 'static,
++    ) -> Self {
++        let mut menu = self.submenu(label, window, cx, f);
++        if let Some(PopupMenuItem::Submenu {
++            disabled: state, ..
++        }) = menu.menu_items.last_mut()
++        {
++            *state = disabled;
++        }
++        menu
++    }
++
+     /// Add a Submenu item with icon
+     pub fn submenu_with_icon(
+         mut self,
+@@ -859,7 +878,7 @@ impl PopupMenu {
+     fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
+         match self.selected_index {
+             Some(index) => {
+-                let item = self.menu_items.get(index);
++                let item = self.menu_items.get(index).filter(|item| item.is_clickable());
+                 match item {
+                     Some(PopupMenuItem::Item {
+                         handler, action, ..
+@@ -932,7 +951,10 @@ impl PopupMenu {
+     fn select_down(&mut self, _: &SelectDown, _: &mut Window, cx: &mut Context<Self>) {
+         cx.stop_propagation();
+         let Some(ix) = self.selected_index else {
+-            self.set_selected_index(0, cx);
++            let first = self.clickable_menu_items().next().map(|(ix, _)| ix);
++            if let Some(first) = first {
++                self.set_selected_index(first, cx);
++            }
+             return;
+         };
+ 
+@@ -946,7 +968,10 @@ impl PopupMenu {
+             return;
+         }
+ 
+-        self.set_selected_index(0, cx);
++        let first = self.clickable_menu_items().next().map(|(ix, _)| ix);
++        if let Some(first) = first {
++            self.set_selected_index(first, cx);
++        }
+     }
+ 
+     fn select_left(&mut self, _: &SelectLeft, window: &mut Window, cx: &mut Context<Self>) {
+diff --git a/crates/component/src/native_menu/mod.rs b/crates/component/src/native_menu/mod.rs
+index 80049cbe..5794d283 100644
+--- a/crates/component/src/native_menu/mod.rs
++++ b/crates/component/src/native_menu/mod.rs
+@@ -236,6 +236,8 @@ pub(super) fn resolve_icon_image(
+                 bytes.to_vec(),
+             )));
+         }
++        IconSource::Image(gpui::ImageSource::Image(image)) => return Some(image.clone()),
++        IconSource::Image(_) => return None,
+     };
+     if path.is_empty() {
+         return None;
+diff --git a/crates/component/src/tab/tab.rs b/crates/component/src/tab/tab.rs
+index f66ac6e1..0d0be90b 100644
+--- a/crates/component/src/tab/tab.rs
++++ b/crates/component/src/tab/tab.rs
+@@ -4,9 +4,9 @@ use crate::animation::{Lerp, ease_in_out_cubic};
+ use crate::{ActiveTheme, Icon, IconName, Selectable, Sizable, Size, StyledExt, h_flex};
+ use gpui::prelude::FluentBuilder as _;
+ use gpui::{
+-    Animation, AnimationExt as _, AnyElement, App, Background, ClickEvent, Edges, ElementId, Hsla,
+-    InteractiveElement, IntoElement, ParentElement, Pixels, RenderOnce, SharedString,
+-    StatefulInteractiveElement, Styled, Window, div, px, relative,
++    Animation, AnimationExt as _, AnyElement, App, Background, ClickEvent, Edges, ElementId,
++    FocusHandle, Hsla, InteractiveElement, IntoElement, ParentElement, Pixels, RenderOnce,
++    SharedString, StatefulInteractiveElement, Styled, Window, div, px, relative,
+ };
+ 
+ /// Tab variants.
+@@ -396,6 +396,8 @@ impl Default for TabStyle {
+ #[derive(IntoElement)]
+ pub struct Tab {
+     ix: usize,
++    pub(super) key: Option<ElementId>,
++    pub(super) size_of_set: usize,
+     base: gpui_base::Tab,
+     pub(super) label: Option<SharedString>,
+     aria_label: Option<SharedString>,
+@@ -404,6 +406,7 @@ pub struct Tab {
+     pub(super) tab_bar_prefix: Option<bool>,
+     suffix: Option<AnyElement>,
+     children: Vec<AnyElement>,
++    root_children: Vec<AnyElement>,
+     variant: TabVariant,
+     size: Size,
+     pub(super) disabled: bool,
+@@ -452,12 +455,15 @@ impl Default for Tab {
+     fn default() -> Self {
+         Self {
+             ix: 0,
++            key: None,
++            size_of_set: 1,
+             base: gpui_base::Tab::new(0usize),
+             label: None,
+             aria_label: None,
+             icon: None,
+             tab_bar_prefix: None,
+             children: Vec::new(),
++            root_children: Vec::new(),
+             disabled: false,
+             selected: false,
+             indicator_active: false,
+@@ -479,6 +485,31 @@ impl Tab {
+         Self::default()
+     }
+ 
++    /// Stable identity, retained when tabs move or are reordered.
++    /// Without one, TabBar preserves its historical positional identity.
++    pub fn id(mut self, id: impl Into<ElementId>) -> Self {
++        self.key = Some(id.into());
++        self
++    }
++
++    /// Use the compound tab list's focus owner.
++    pub fn track_focus(mut self, handle: &FocusHandle) -> Self {
++        self.base = self.base.track_focus(handle);
++        self
++    }
++
++    /// Whether keyboard Tab traversal may enter this tab.
++    pub fn tab_stop(mut self, enabled: bool) -> Self {
++        self.base = self.base.tab_stop(enabled);
++        self
++    }
++
++    /// Attach infrastructure to the actual tab root, outside its label layout.
++    pub fn root_child(mut self, child: impl IntoElement) -> Self {
++        self.root_children.push(child.into_any_element());
++        self
++    }
++
+     /// Set label for the tab.
+     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
+         self.label = Some(label.into());
+@@ -760,7 +791,8 @@ impl RenderOnce for Tab {
+         };
+ 
+         self.base
+-            .id(self.ix)
++            .id(self.key.unwrap_or_else(|| self.ix.into()))
++            .set_position(self.ix + 1, self.size_of_set)
+             .selected(self.selected)
+             .disabled(self.disabled)
+             .when_some(aria_label, |this, label| this.accessibility_label(label))
+@@ -861,6 +893,7 @@ impl RenderOnce for Tab {
+                 )
+             })
+             .child(inner_element)
++            .children(self.root_children)
+             .when_some(self.suffix, |this, suffix| {
+                 this.child(
+                     div()
+diff --git a/crates/component/src/tab/tab_bar.rs b/crates/component/src/tab/tab_bar.rs
+index 3b3909b5..e521d46a 100644
+--- a/crates/component/src/tab/tab_bar.rs
++++ b/crates/component/src/tab/tab_bar.rs
+@@ -1,8 +1,8 @@
+ use std::{cell::RefCell, rc::Rc};
+ 
+ use gpui::{
+-    Anchor, AnyElement, App, Background, Bounds, Edges, ElementId, InteractiveElement, IntoElement,
+-    ParentElement, Pixels, RenderOnce, Role, ScrollHandle, SharedString,
++    Anchor, AnyElement, App, Background, Bounds, Edges, ElementId, FocusHandle, InteractiveElement,
++    IntoElement, ParentElement, Pixels, RenderOnce, Role, ScrollHandle, SharedString,
+     StatefulInteractiveElement as _, StyleRefinement, Styled, Window, div,
+     prelude::FluentBuilder as _, px,
+ };
+@@ -46,6 +46,7 @@ pub struct TabBar {
+     prefix: Option<AnyElement>,
+     suffix: Option<AnyElement>,
+     children: SmallVec<[Tab; 2]>,
++    root_children: Vec<AnyElement>,
+     last_empty_space: AnyElement,
+     selected_index: Option<usize>,
+     variant: TabVariant,
+@@ -64,6 +65,7 @@ impl TabBar {
+             base: gpui_base::Tabs::new(id).px(px(-1.)),
+             style: StyleRefinement::default(),
+             children: SmallVec::new(),
++            root_children: Vec::new(),
+             scroll_handle: None,
+             prefix: None,
+             suffix: None,
+@@ -154,6 +156,12 @@ impl TabBar {
+         self
+     }
+ 
++    /// Attach infrastructure to the collection root, outside the typed tabs.
++    pub fn root_child(mut self, child: impl IntoElement) -> Self {
++        self.root_children.push(child.into_any_element());
++        self
++    }
++
+     /// Set the selected index of the TabBar.
+     pub fn selected_index(mut self, index: usize) -> Self {
+         self.selected_index = Some(index);
+@@ -169,6 +177,7 @@ impl TabBar {
+     /// Set the on_click callback of the TabBar, the first parameter is the index of the clicked tab.
+     ///
+     /// When this is set, the children's on_click will be ignored.
++    /// Arrow keys and Home/End request selection through this same callback.
+     pub fn on_click<F>(mut self, on_click: F) -> Self
+     where
+         F: Fn(&usize, &mut Window, &mut App) + 'static,
+@@ -350,6 +359,13 @@ impl Styled for TabBar {
+     }
+ }
+ 
++impl InteractiveElement for TabBar {
++    fn interactivity(&mut self) -> &mut gpui::Interactivity {
++        self.base.interactivity()
++    }
++}
++impl gpui::StatefulInteractiveElement for TabBar {}
++
+ impl Sizable for TabBar {
+     fn with_size(mut self, size: impl Into<Size>) -> Self {
+         self.size = size.into();
+@@ -431,6 +447,38 @@ impl RenderOnce for TabBar {
+         let mut indicator_element = indicator.map(|(el, _)| el);
+         let indicator_ready = indicator_element.is_some();
+ 
++        // Keys belong to tabs rather than their positions. The same handles
++        // therefore survive insertion/reordering while retired tabs stop being
++        // described. No application selection is stored in these handles.
++        let focus: Rc<Vec<(bool, FocusHandle)>> = Rc::new(
++            self.children
++                .iter()
++                .enumerate()
++                .map(|(ix, tab)| {
++                    let key = tab.key.clone().unwrap_or_else(|| ix.into());
++                    let id = format!("tab-focus:{:?}:{:?}", self.id, key);
++                    let handle = window
++                        .use_keyed_state(id, cx, |_, cx| cx.focus_handle())
++                        .read(cx)
++                        .clone();
++                    (!tab.disabled, handle)
++                })
++                .collect(),
++        );
++        let entry = focus
++            .iter()
++            .position(|(enabled, handle)| *enabled && handle.is_focused(window))
++            .or_else(|| {
++                self.selected_index
++                    .filter(|ix| focus.get(*ix).is_some_and(|(enabled, _)| *enabled))
++            })
++            .or_else(|| {
++                self.children
++                    .iter()
++                    .position(|tab| tab.selected && !tab.disabled)
++            })
++            .or_else(|| focus.iter().position(|(enabled, _)| *enabled));
++
+         let has_suffix_or_menu = self.suffix.is_some() || self.menu;
+         let mut item_metas: Vec<(Option<SharedString>, Option<Icon>, bool)> = Vec::new();
+         let selected_index = self.selected_index;
+@@ -451,12 +499,45 @@ impl RenderOnce for TabBar {
+             tab.indicator_active = has_indicator;
+             tab.indicator_ready = indicator_ready;
+             tab.indicator_epoch = indicator_epoch;
++            tab.size_of_set = num_tabs;
++            let navigation_focus = focus.clone();
++            let navigation_callback = self.on_click.clone();
+             let mut tab = tab
++                .track_focus(&focus[ix].1)
++                .tab_stop(entry == Some(ix))
+                 .when_some(selected_index, |tab, selected_index| {
+                     tab.selected(selected_index == ix)
+                 })
+                 .when_some(self.on_click.clone(), move |tab, on_click| {
+                     tab.on_click(move |_, window, cx| on_click(&ix, window, cx))
++                })
++                .on_key_down(move |event, window, cx| {
++                    if event.keystroke.modifiers.modified() {
++                        return;
++                    }
++                    let enabled: Vec<usize> = navigation_focus
++                        .iter()
++                        .enumerate()
++                        .filter_map(|(ix, (enabled, _))| enabled.then_some(ix))
++                        .collect();
++                    let Some(at) = enabled.iter().position(|candidate| *candidate == ix) else {
++                        return;
++                    };
++                    let next = match event.keystroke.key.as_str() {
++                        "right" => enabled[(at + 1) % enabled.len()],
++                        "left" => enabled[(at + enabled.len() - 1) % enabled.len()],
++                        "home" => enabled[0],
++                        "end" => enabled[enabled.len() - 1],
++                        _ => return,
++                    };
++                    navigation_focus[next].1.focus(window, cx);
++                    if next != ix {
++                        if let Some(callback) = &navigation_callback {
++                            callback(&next, window, cx);
++                        }
++                    }
++                    window.prevent_default();
++                    cx.stop_propagation();
+                 });
+             // The wrapper below is the flex item the bar lays out, so a tab's
+             // own `flex_grow` / `flex_basis` (e.g. `flex_1()`) must size it.
+@@ -587,6 +668,7 @@ impl RenderOnce for TabBar {
+                 )
+             })
+             .when_some(self.suffix, |this, suffix| this.child(suffix))
++            .children(self.root_children)
+     }
+ }
+ 
+diff --git a/website/component/button.md b/website/component/button.md
+index bf6fded2..2c04cd18 100644
+--- a/website/component/button.md
++++ b/website/component/button.md
+@@ -371,3 +371,9 @@ Button::new("btn")
+ [ProgressCircle]: https://docs.rs/gpui-component/latest/gpui_component/progress/struct.ProgressCircle.html
+ [Icon]: https://docs.rs/gpui-component/latest/gpui_component/icon/struct.Icon.html
+ [IconName]: https://docs.rs/gpui-component/latest/gpui_component/icon/enum.IconName.html
++
++## Root geometry observation
++
++`on_bounds` observes the actual control root after layout, including border and
++padding. It composes multiple observers without changing label content, layout,
++focus or activation. See [Measured layout](./measured-layout.md).
+diff --git a/website/component/checkbox.md b/website/component/checkbox.md
+index cd3bdafb..8231ecc6 100644
+--- a/website/component/checkbox.md
++++ b/website/component/checkbox.md
+@@ -162,3 +162,9 @@ v_flex()
+ ```
+ 
+ [Checkbox]: https://docs.rs/gpui-component/latest/gpui_component/checkbox/struct.Checkbox.html
++
++## Root geometry observation
++
++`on_bounds` observes the actual control root after layout, including border and
++padding. It composes multiple observers without changing label content, layout,
++focus or activation. See [Measured layout](./measured-layout.md).
+diff --git a/website/component/icon.md b/website/component/icon.md
+index 383bd1ad..d92a6345 100644
+--- a/website/component/icon.md
++++ b/website/component/icon.md
+@@ -195,6 +195,23 @@ Existing `IconNamed` implementations continue to provide asset paths. A
+ data-backed type uses the conversion above without also implementing `IconNamed`.
+ Binary-size savings depend on which resources are referenced and on build settings.
+ 
++### Owner-painted Image
++
++Use an image source when the original colored pixels are part of the presentation:
++
++```rust
++Icon::image(image_source).with_size(px(16.))
++```
++
++Image icons retain the same sizing and flex behavior and can be passed to
++`Button::icon`. Their colors are preserved; text color and SVG transformations
++apply only to vector icons. Calling `path` or `data` switches back to a vector
++icon. Image decoding, resource ownership and release remain with the
++caller/GPUI image cache. An explicit width and height outrank an icon size
++inherited from a parent Button, which preserves logical image bounds on scaled
++displays. Native menus show an in-memory `ImageSource::Image` and omit other
++image sources.
++
+ ## Available Icons
+ 
+ The `IconName` enum provides access to a curated set of icons. Here are some commonly used ones:
+diff --git a/website/component/measured-layout.md b/website/component/measured-layout.md
+new file mode 100644
+index 00000000..ecca0759
+--- /dev/null
++++ b/website/component/measured-layout.md
+@@ -0,0 +1,36 @@
++---
++title: Measured layout
++description: Place child allocations computed by an external layout owner.
++---
++
++# Measured layout
++
++`MeasuredLayout` places explicit parent-local logical-pixel allocations in
++back-to-front order. It clips paint and pointer participation at the container
++and child boundaries. A zero-area allocation creates no paint or pointer target.
++Passive allocations do not claim pointer ownership. Interactive children must
++block covered pointer targets at their actual control root; use
++`block_mouse_except_scroll()` when ancestor wheel routing must remain available.
++This does not distinguish covered sibling scroll owners from ancestors. It owns no resize state and never computes preferred sizes or remote layout.
++
++```rust
++use gpui_kit::*;
++use gpui_kit::component::{button::Button, measured_layout::MeasuredLayout};
++
++MeasuredLayout::new("owner-layout", size(px(200.), px(100.)))
++    .child("existing-command", Bounds::new(point(px(40.), px(10.)), size(px(120.), px(80.))),
++        Button::new("command").label("Existing command").w(px(120.)).h(px(80.)))
++```
++
++The actual child control must consume its allocation too. Sizing a placement
++wrapper does not resize a child's intrinsic height or hit region. Use stable
++owner identities for both the allocation and control, and bind measured data to
++the owning frame/viewport revision. Painting must not call the remote evaluator.
++External geometry grants no custom paint, popup, focus or splitter behavior.
++
++`Button::on_bounds` and `Checkbox::on_bounds` observe the resolved native control
++root, including border and padding, without joining label content. Multiple
++observers compose. The Base `BoundsObserver` delegates an element's actual layout
++ID and render phases; it does not add another allocation or hit region. Consumers
++may use that observation for semantic diagnostics without moving activation to a
++separate wrapper.
+-- 
+2.53.0
+

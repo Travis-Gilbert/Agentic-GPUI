@@ -36,6 +36,11 @@ What v0.7.0 changed underneath the series:
   v0.7.0 also added a text-only paragraph fast path that builds one cached
   `Inline`; patch 0019 carries the decorator and underline onto it, which the
   rebase could not see because the path did not exist on v0.6.0.
+- Text-only `Icon` sources became `IconSource` (`Path`, `Data`). Patch 0020,
+  carried forward from the v0.6.0 branch after the rebase, adds measured
+  layout and bounds observation for Theorem's presented native controls and
+  expresses its owner-painted image icon as `IconSource::Image`. Native menus
+  show an in-memory `ImageSource::Image` and omit other image sources.
 - Upstream added an asynchronous web paste with a stale-target guard. Patch
   0017 keeps upstream's paste and carries only the grapheme-cluster
   boundaries, which still pass through upstream's atomic-token
