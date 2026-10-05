@@ -236,6 +236,8 @@ pub(super) fn resolve_icon_image(
                 bytes.to_vec(),
             )));
         }
+        IconSource::Image(gpui::ImageSource::Image(image)) => return Some(image.clone()),
+        IconSource::Image(_) => return None,
     };
     if path.is_empty() {
         return None;
