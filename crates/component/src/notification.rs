@@ -24,6 +24,11 @@ const NOTIFICATION_TRANSITION_DURATION: Duration = Duration::from_millis(400);
 const NOTIFICATION_EXIT_DURATION: Duration = Duration::from_millis(200);
 const NOTIFICATION_TRANSITION_OFFSET: Pixels = px(96.);
 const DEFAULT_NOTIFICATION_WIDTH: Pixels = px(382.);
+/// The narrowest a toast is drawn when the window cannot fit
+/// [`NotificationSettings::width`] between its margins. Below this the icon
+/// gutter and padding leave too little room for a line of text, so a window
+/// narrower than this plus the margins lets the toast overflow instead.
+const MIN_NOTIFICATION_WIDTH: Pixels = px(160.);
 const NOTIFICATION_ADVANCE_INTERVAL: Duration = Duration::from_millis(50);
 struct DismissRequest;
 
@@ -537,6 +542,9 @@ pub struct NotificationSettings {
     /// The maximum number of notifications to show at once, default: 10
     pub max_items: usize,
     /// The width of the notifications, default: 382px
+    ///
+    /// A window too narrow to fit this between the left and right margins
+    /// draws the notifications narrower, down to a 160px floor.
     pub width: Pixels,
     /// Where notifications are delivered, default: [`NotificationDelivery::InApp`]
     ///
@@ -978,8 +986,12 @@ impl Render for NotificationList {
     ) -> impl IntoElement {
         let size = window.viewport_size();
         let settings = &cx.theme().notification;
-        let (placement, margins, width) =
-            (settings.placement, settings.margins.clone(), settings.width);
+        let (placement, margins) = (settings.placement, settings.margins.clone());
+        // Keep the toast between both side margins in a narrow window, such as
+        // a 360px-wide reflow at 400% zoom; the configured width is a ceiling.
+        let width = settings
+            .width
+            .min((size.width - margins.left - margins.right).max(MIN_NOTIFICATION_WIDTH));
 
         let groups = self.grouped(cx);
         self.stacks
@@ -1015,6 +1027,7 @@ impl Render for NotificationList {
                 )
                 .placement(anchor)
                 .focus_handle(stack.focus_handle.clone())
+                .debug_selector(|| format!("notification-stack-{anchor:?}"))
                 .v_flex()
                 .w(width)
                 .max_h(size.height)
@@ -1258,6 +1271,39 @@ mod tests {
             .advance_clock(Duration::from_millis(1));
         cx.run_until_parked();
         assert!(ids(&list, cx).is_empty());
+    }
+
+    /// A 1440x900 window at 400% zoom lays out at 360x225, narrower than the
+    /// default toast width plus its margins.
+    #[gpui::test]
+    fn toast_fits_between_the_margins_of_a_narrow_window(cx: &mut TestAppContext) {
+        struct WindowRoot {
+            list: Entity<NotificationList>,
+        }
+
+        impl Render for WindowRoot {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().size_full().child(self.list.clone())
+            }
+        }
+
+        cx.update(|cx| cx.set_global(Theme::default()));
+        let (root, cx) = cx.add_window_view(|window, cx| WindowRoot {
+            list: cx.new(|cx| NotificationList::new(window, cx)),
+        });
+        cx.simulate_resize(gpui::size(px(360.), px(225.)));
+        let list = root.read_with(cx, |root, _| root.list.clone());
+        list.update_in(cx, |list, window, cx| {
+            list.push(Notification::info("narrow").autohide(false), window, cx);
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        let margins = NotificationSettings::default().margins;
+        let toast = cx
+            .debug_bounds("notification-stack-TopRight")
+            .expect("the toast stack is drawn");
+        assert_eq!(toast.left(), margins.left);
+        assert_eq!(toast.right(), px(360.) - margins.right);
     }
 
     #[gpui::test]
