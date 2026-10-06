@@ -36,6 +36,10 @@ What v0.7.0 changed underneath the series:
   v0.7.0 also added a text-only paragraph fast path that builds one cached
   `Inline`; patch 0019 carries the decorator and underline onto it, which the
   rebase could not see because the path did not exist on v0.6.0.
+- Notification stacks are drawn at the configured width with no viewport
+  bound, upstream as well. Patch 0020 clamps the drawn width to the viewport
+  less both side margins, with a 160px floor, so a 360px-wide window (400%
+  zoom) keeps its toast on screen.
 - Upstream added an asynchronous web paste with a stale-target guard. Patch
   0017 keeps upstream's paste and carries only the grapheme-cluster
   boundaries, which still pass through upstream's atomic-token
