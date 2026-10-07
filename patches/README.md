@@ -41,6 +41,10 @@ What v0.7.0 changed underneath the series:
   layout and bounds observation for Theorem's presented native controls and
   expresses its owner-painted image icon as `IconSource::Image`. Native menus
   show an in-memory `ImageSource::Image` and omit other image sources.
+- Notification stacks are drawn at the configured width with no viewport
+  bound, upstream as well. Patch 0021 clamps the drawn width to the viewport
+  less both side margins, with a 160px floor, so a 360px-wide window (400%
+  zoom) keeps its toast on screen.
 - Upstream added an asynchronous web paste with a stale-target guard. Patch
   0017 keeps upstream's paste and carries only the grapheme-cluster
   boundaries, which still pass through upstream's atomic-token

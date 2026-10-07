@@ -18,3 +18,4 @@
 0018-fix-fork-build-the-v0.7.0-rebase-against-the-Theorem.patch
 0019-fix-text-decorate-links-on-the-plain-paragraph-fast-.patch
 0020-feat-shell-measured-layout-and-bounds-observation-fo.patch
+0021-fix-notification-keep-a-toast-inside-a-window-narrow.patch
