@@ -3,7 +3,7 @@
 This hard fork tracks `longbridge/gpui-kit` tag `v0.7.0`. The files listed in
 `series` are applied in order and are never proposed upstream. The fork pins
 the entire GPUI family to one immutable revision of `Travis-Gilbert/zed`
-(`6d4d90754f7dde3e62afb6fe74a632c0b4660396`) in place of upstream's
+(`fbed33d116a8f50b76535b7d73164fed11465bec`) in place of upstream's
 `gpui-pre =0.3.7` crates.
 
 The replay workflow applies this series to `v0.7.0` for branch validation and
@@ -68,12 +68,32 @@ What the Theorem Zed source does not have, and how patch 0018 meets it:
   selection test reads its probe from the first painted frame; its eight
   replayed-frame assertions run unchanged.
 
-Verification on the rebased branch (rustc stable and 1.96.1 toolchains, the
-Theorem repository pin): `cargo check -p gpui-base -p gpui-component --lib`
+Historical verification of the original rebased branch before the retained
+control replay and current GPUI export pin (rustc stable and 1.96.1 toolchains): `cargo check -p gpui-base -p gpui-component --lib`
 native and `wasm32-unknown-unknown`; `cargo nextest run --locked -p gpui-base
 -p gpui-component --lib` 1804/1804; `cargo check -p gpui-component-story`,
 the workflow's second check, with no warnings. The workflow's Rust 1.90 replay has not run:
 GitHub Actions is disabled on this account.
+
+## Current native export and IntelliJ control continuation
+
+Patch 0020 replays the retained native-control source closure from commits
+`fd20e5c5` and `2a10431b522fef9e2ed44b2d56b4a269800b297b` onto the current
+lineage. It adds owner-measured layout, transparent root-bounds observation,
+owner-painted image icons, native checkbox metadata and tab focus/navigation.
+It does not authorize a replacement document authority or prove live IntelliJ.
+
+Patches 0021–0023 retain the three subsequent manifest/lock-only pin changes:
+retained capture, its macOS correction, then the submitted-frame IOSurface
+export. The final pin is `fbed33d116a8f50b76535b7d73164fed11465bec`. These pin
+patches leave registry package versions/checksums unchanged and keep one GPUI
+universe. They apply after 0020 because its source changes do not touch the
+manifest/lock. Existing Wasm feature declarations are preserved.
+
+Current candidate verification is recorded in `patches/WORLD-CONTROL-REPLAY.md`.
+The historical 1804/1804 result above is not a test result for this continuation.
+The owning native library check is in progress; current Wasm and full-suite
+verification and actual consumer/provider acceptance remain pending.
 
 ## History from the v0.6.0 series
 

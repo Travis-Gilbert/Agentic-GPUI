@@ -1,0 +1,271 @@
+From 7ea2a9bb89607fc069dad015c45f400da645cd72 Mon Sep 17 00:00:00 2001
+From: Travis Gilbert <1travisgilbert@gmail.com>
+Date: Wed, 7 Oct 2026 13:14:44 -0400
+Subject: [PATCH] chore(deps): align GPUI macOS capture fix
+
+---
+ Cargo.lock | 50 +++++++++++++++++++++++++-------------------------
+ Cargo.toml | 14 +++++++-------
+ 2 files changed, 32 insertions(+), 32 deletions(-)
+
+diff --git a/Cargo.lock b/Cargo.lock
+index f606d578..e566472c 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1433,7 +1433,7 @@ dependencies = [
+ [[package]]
+ name = "collections"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=a3785bc48b24f728dd7dbda2d5eee0a271fce596#a3785bc48b24f728dd7dbda2d5eee0a271fce596"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5#93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5"
+ dependencies = [
+  "gpui_util",
+  "indexmap",
+@@ -2298,7 +2298,7 @@ dependencies = [
+ [[package]]
+ name = "derive_refineable"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=a3785bc48b24f728dd7dbda2d5eee0a271fce596#a3785bc48b24f728dd7dbda2d5eee0a271fce596"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5#93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5"
+ dependencies = [
+  "proc-macro2",
+  "quote",
+@@ -3709,7 +3709,7 @@ dependencies = [
+ [[package]]
+ name = "gpui"
+ version = "0.2.2"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=a3785bc48b24f728dd7dbda2d5eee0a271fce596#a3785bc48b24f728dd7dbda2d5eee0a271fce596"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5#93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5"
+ dependencies = [
+  "accesskit",
+  "anyhow",
+@@ -4093,7 +4093,7 @@ dependencies = [
+ [[package]]
+ name = "gpui_apple"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=a3785bc48b24f728dd7dbda2d5eee0a271fce596#a3785bc48b24f728dd7dbda2d5eee0a271fce596"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5#93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5"
+ dependencies = [
+  "anyhow",
+  "block",
+@@ -4116,7 +4116,7 @@ dependencies = [
+ [[package]]
+ name = "gpui_linux"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=a3785bc48b24f728dd7dbda2d5eee0a271fce596#a3785bc48b24f728dd7dbda2d5eee0a271fce596"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5#93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5"
+ dependencies = [
+  "accesskit",
+  "accesskit_unix",
+@@ -4162,7 +4162,7 @@ dependencies = [
+ [[package]]
+ name = "gpui_macos"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=a3785bc48b24f728dd7dbda2d5eee0a271fce596#a3785bc48b24f728dd7dbda2d5eee0a271fce596"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5#93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5"
+ dependencies = [
+  "accesskit",
+  "accesskit_macos",
+@@ -4208,7 +4208,7 @@ dependencies = [
+ [[package]]
+ name = "gpui_macros"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=a3785bc48b24f728dd7dbda2d5eee0a271fce596#a3785bc48b24f728dd7dbda2d5eee0a271fce596"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5#93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5"
+ dependencies = [
+  "heck 0.5.0",
+  "proc-macro2",
+@@ -4219,7 +4219,7 @@ dependencies = [
+ [[package]]
+ name = "gpui_platform"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=a3785bc48b24f728dd7dbda2d5eee0a271fce596#a3785bc48b24f728dd7dbda2d5eee0a271fce596"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5#93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5"
+ dependencies = [
+  "console_error_panic_hook",
+  "gpui",
+@@ -4232,7 +4232,7 @@ dependencies = [
+ [[package]]
+ name = "gpui_shared_string"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=a3785bc48b24f728dd7dbda2d5eee0a271fce596#a3785bc48b24f728dd7dbda2d5eee0a271fce596"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5#93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5"
+ dependencies = [
+  "schemars",
+  "serde",
+@@ -4242,7 +4242,7 @@ dependencies = [
+ [[package]]
+ name = "gpui_util"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=a3785bc48b24f728dd7dbda2d5eee0a271fce596#a3785bc48b24f728dd7dbda2d5eee0a271fce596"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5#93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5"
+ dependencies = [
+  "anyhow",
+  "log",
+@@ -4252,7 +4252,7 @@ dependencies = [
+ [[package]]
+ name = "gpui_web"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=a3785bc48b24f728dd7dbda2d5eee0a271fce596#a3785bc48b24f728dd7dbda2d5eee0a271fce596"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5#93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5"
+ dependencies = [
+  "anyhow",
+  "async-channel",
+@@ -4277,7 +4277,7 @@ dependencies = [
+ [[package]]
+ name = "gpui_wgpu"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=a3785bc48b24f728dd7dbda2d5eee0a271fce596#a3785bc48b24f728dd7dbda2d5eee0a271fce596"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5#93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5"
+ dependencies = [
+  "anyhow",
+  "bytemuck",
+@@ -4303,7 +4303,7 @@ dependencies = [
+ [[package]]
+ name = "gpui_windows"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=a3785bc48b24f728dd7dbda2d5eee0a271fce596#a3785bc48b24f728dd7dbda2d5eee0a271fce596"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5#93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5"
+ dependencies = [
+  "accesskit",
+  "accesskit_windows",
+@@ -4666,7 +4666,7 @@ dependencies = [
+ [[package]]
+ name = "http_client"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=a3785bc48b24f728dd7dbda2d5eee0a271fce596#a3785bc48b24f728dd7dbda2d5eee0a271fce596"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5#93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5"
+ dependencies = [
+  "anyhow",
+  "async-compression",
+@@ -4686,7 +4686,7 @@ dependencies = [
+ [[package]]
+ name = "http_client_tls"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=a3785bc48b24f728dd7dbda2d5eee0a271fce596#a3785bc48b24f728dd7dbda2d5eee0a271fce596"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5#93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5"
+ dependencies = [
+  "log",
+  "rustls",
+@@ -6048,7 +6048,7 @@ dependencies = [
+ [[package]]
+ name = "media"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=a3785bc48b24f728dd7dbda2d5eee0a271fce596#a3785bc48b24f728dd7dbda2d5eee0a271fce596"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5#93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5"
+ dependencies = [
+  "anyhow",
+  "bindgen",
+@@ -7145,7 +7145,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
+ [[package]]
+ name = "perf"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=a3785bc48b24f728dd7dbda2d5eee0a271fce596#a3785bc48b24f728dd7dbda2d5eee0a271fce596"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5#93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5"
+ dependencies = [
+  "collections",
+  "serde",
+@@ -8367,7 +8367,7 @@ dependencies = [
+ [[package]]
+ name = "refineable"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=a3785bc48b24f728dd7dbda2d5eee0a271fce596#a3785bc48b24f728dd7dbda2d5eee0a271fce596"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5#93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5"
+ dependencies = [
+  "derive_refineable",
+ ]
+@@ -8434,7 +8434,7 @@ checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
+ [[package]]
+ name = "reqwest_client"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=a3785bc48b24f728dd7dbda2d5eee0a271fce596#a3785bc48b24f728dd7dbda2d5eee0a271fce596"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5#93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5"
+ dependencies = [
+  "anyhow",
+  "bytes",
+@@ -8865,7 +8865,7 @@ dependencies = [
+ [[package]]
+ name = "scheduler"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=a3785bc48b24f728dd7dbda2d5eee0a271fce596#a3785bc48b24f728dd7dbda2d5eee0a271fce596"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5#93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5"
+ dependencies = [
+  "async-task",
+  "backtrace",
+@@ -9587,7 +9587,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
+ [[package]]
+ name = "sum_tree"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=a3785bc48b24f728dd7dbda2d5eee0a271fce596#a3785bc48b24f728dd7dbda2d5eee0a271fce596"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5#93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5"
+ dependencies = [
+  "heapless",
+  "log",
+@@ -11136,7 +11136,7 @@ checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
+ [[package]]
+ name = "util_macros"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=a3785bc48b24f728dd7dbda2d5eee0a271fce596#a3785bc48b24f728dd7dbda2d5eee0a271fce596"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5#93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5"
+ dependencies = [
+  "perf",
+  "quote",
+@@ -13049,7 +13049,7 @@ checksum = "34b31d188d9d685a4f9c7b46d6e36631b07058d2cfe190267adce54dc230bf12"
+ [[package]]
+ name = "zlog"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=a3785bc48b24f728dd7dbda2d5eee0a271fce596#a3785bc48b24f728dd7dbda2d5eee0a271fce596"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5#93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5"
+ dependencies = [
+  "anyhow",
+  "chrono",
+@@ -13094,7 +13094,7 @@ dependencies = [
+ [[package]]
+ name = "ztracing"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=a3785bc48b24f728dd7dbda2d5eee0a271fce596#a3785bc48b24f728dd7dbda2d5eee0a271fce596"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5#93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5"
+ dependencies = [
+  "tracing",
+  "tracing-subscriber",
+@@ -13105,7 +13105,7 @@ dependencies = [
+ [[package]]
+ name = "ztracing_macro"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=a3785bc48b24f728dd7dbda2d5eee0a271fce596#a3785bc48b24f728dd7dbda2d5eee0a271fce596"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5#93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5"
+ 
+ [[package]]
+ name = "zune-core"
+diff --git a/Cargo.toml b/Cargo.toml
+index 31202b29..36cc09c2 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -58,12 +58,12 @@ gpui-wry = { path = "crates/webview", version = "0.7.0" }
+ gpui-component-shell = { path = "crates/component-shell", version = "0.7.0" }
+ story = { path = "crates/story" }
+ 
+-gpui = { git = "https://github.com/Travis-Gilbert/zed", rev = "a3785bc48b24f728dd7dbda2d5eee0a271fce596" }
+-gpui_platform = { git = "https://github.com/Travis-Gilbert/zed", rev = "a3785bc48b24f728dd7dbda2d5eee0a271fce596", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
+-gpui_web = { git = "https://github.com/Travis-Gilbert/zed", rev = "a3785bc48b24f728dd7dbda2d5eee0a271fce596" }
+-gpui_macros = { git = "https://github.com/Travis-Gilbert/zed", rev = "a3785bc48b24f728dd7dbda2d5eee0a271fce596" }
+-reqwest_client = { git = "https://github.com/Travis-Gilbert/zed", rev = "a3785bc48b24f728dd7dbda2d5eee0a271fce596" }
+-sum-tree = { package = "sum_tree", git = "https://github.com/Travis-Gilbert/zed", rev = "a3785bc48b24f728dd7dbda2d5eee0a271fce596" }
++gpui = { git = "https://github.com/Travis-Gilbert/zed", rev = "93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5" }
++gpui_platform = { git = "https://github.com/Travis-Gilbert/zed", rev = "93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
++gpui_web = { git = "https://github.com/Travis-Gilbert/zed", rev = "93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5" }
++gpui_macros = { git = "https://github.com/Travis-Gilbert/zed", rev = "93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5" }
++reqwest_client = { git = "https://github.com/Travis-Gilbert/zed", rev = "93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5" }
++sum-tree = { package = "sum_tree", git = "https://github.com/Travis-Gilbert/zed", rev = "93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5" }
+ reqwest = { package = "zed-reqwest", git = "https://github.com/zed-industries/reqwest.git", rev = "33bc764aa15ff7b200bf7c93bd96e24878d53e14", version = "0.12.15-zed", default-features = false, features = [
+     "charset",
+     "http2",
+@@ -176,4 +176,4 @@ ignored = ["log", "anyhow", "serde"]
+ [workspace.metadata.theorem-fork]
+ upstream = "https://github.com/longbridge/gpui-kit"
+ upstream_tag = "v0.6.0"
+-zed_rev = "a3785bc48b24f728dd7dbda2d5eee0a271fce596"
++zed_rev = "93ffaae7fa2fd5b419d6637bf5b4874e6bd1ddc5"
+-- 
+2.53.0
+
