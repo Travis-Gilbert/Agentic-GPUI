@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, ClickEvent, Div, ElementId, InteractiveElement, Interactivity, IntoElement,
-    MouseButton, ParentElement, Refineable as _, RenderOnce, Role, SharedString,
+    AnyElement, App, ClickEvent, Div, ElementId, FocusHandle, InteractiveElement, Interactivity,
+    IntoElement, MouseButton, ParentElement, Refineable as _, RenderOnce, Role, SharedString,
     StatefulInteractiveElement, StyleRefinement, Styled, Window, div, prelude::FluentBuilder as _,
     relative,
 };
@@ -12,13 +12,8 @@ use crate::{StateStyle, StyledExt as _, TestSupportExt as _};
 
 type ClickHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 
-/// An unstyled tab that owns pointer activation and accessibility behavior.
-///
-/// Tabs do not participate in keyboard focus by themselves. A compound tab
-/// list may add keyboard navigation when that behavior is introduced.
-// TODO: Add compound keyboard navigation with roving focus, arrow keys,
-// Home/End, and Enter/Space activation before treating Tabs as a complete
-// desktop tab-list primitive.
+/// An unstyled tab with pointer, Enter/Space, focus, and accessibility behavior.
+/// A compound tab list owns arrow navigation and supplies roving tab stops.
 #[derive(IntoElement)]
 pub struct Tab {
     id: ElementId,
@@ -32,6 +27,8 @@ pub struct Tab {
     accessibility_label: Option<SharedString>,
     position_in_set: Option<usize>,
     size_of_set: Option<usize>,
+    provided_focus_handle: Option<FocusHandle>,
+    tab_stop: bool,
 }
 
 impl Tab {
@@ -48,6 +45,8 @@ impl Tab {
             accessibility_label: None,
             position_in_set: None,
             size_of_set: None,
+            provided_focus_handle: None,
+            tab_stop: true,
         }
     }
 
@@ -59,6 +58,18 @@ impl Tab {
 
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
+        self
+    }
+
+    /// Use a compound control's stable focus handle.
+    pub fn track_focus(mut self, handle: &FocusHandle) -> Self {
+        self.provided_focus_handle = Some(handle.clone());
+        self
+    }
+
+    /// Whether Tab traversal may enter this tab.
+    pub fn tab_stop(mut self, enabled: bool) -> Self {
+        self.tab_stop = enabled;
         self
     }
 
@@ -147,9 +158,20 @@ impl InteractiveElement for Tab {
 impl StatefulInteractiveElement for Tab {}
 
 impl RenderOnce for Tab {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let disabled = self.disabled;
         let style = self.resolved_style();
+        let focus = self
+            .provided_focus_handle
+            .clone()
+            .unwrap_or_else(|| {
+                window
+                    .use_keyed_state(self.id.clone(), cx, |_, cx| cx.focus_handle())
+                    .read(cx)
+                    .clone()
+            })
+            .tab_stop(self.tab_stop && !disabled);
+        let pointer_focus = focus.clone();
 
         self.base
             .id(self.id)
@@ -166,11 +188,17 @@ impl RenderOnce for Tab {
                 this.aria_label(label)
             })
             .aria_selected(self.selected)
+            .when(!disabled, |this| this.track_focus(&focus))
             .when_some(self.position_in_set, |this, position| {
                 this.aria_position_in_set(position)
             })
             .when_some(self.size_of_set, |this, size| this.aria_size_of_set(size))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                if !disabled {
+                    pointer_focus.focus(window, cx);
+                }
+                cx.stop_propagation();
+            })
             .when_some(
                 (!disabled).then_some(self.on_click).flatten(),
                 |this, on_click| {

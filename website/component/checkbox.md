@@ -162,3 +162,9 @@ v_flex()
 ```
 
 [Checkbox]: https://docs.rs/gpui-component/latest/gpui_component/checkbox/struct.Checkbox.html
+
+## Root geometry observation
+
+`on_bounds` observes the actual control root after layout, including border and
+padding. It composes multiple observers without changing label content, layout,
+focus or activation. See [Measured layout](./measured-layout.md).

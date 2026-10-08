@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use crate::{ActiveTheme, Sizable, Size};
 use gpui::{
-    AnyElement, App, AppContext, Context, Entity, Hsla, IntoElement, Pixels, Radians, Render,
-    RenderOnce, SharedString, StyleRefinement, Styled, Svg, Transformation, Window,
-    prelude::FluentBuilder as _, svg,
+    AnyElement, App, AppContext, Context, Entity, Hsla, ImageSource, IntoElement, Pixels,
+    Radians, Render, RenderOnce, SharedString, StyleRefinement, Styled, Svg, Transformation,
+    Window, img, prelude::FluentBuilder as _, svg,
 };
 pub use gpui_kit_assets::IconNamed;
 
@@ -78,6 +78,8 @@ impl IconNameExt for gpui_kit_assets::IconName {
 pub(crate) enum IconSource {
     Path(SharedString),
     Data(Arc<[u8]>),
+    /// Owner-painted pixels, rendered as an image rather than a tinted SVG.
+    Image(ImageSource),
 }
 
 #[derive(Clone, IntoElement)]
@@ -104,6 +106,15 @@ impl Default for Icon {
 impl Icon {
     pub fn new(icon: impl Into<Icon>) -> Self {
         icon.into()
+    }
+
+    /// An owner-painted image icon. Original pixel colors are preserved;
+    /// text color and transformations apply only to vector icons.
+    pub fn image(source: impl Into<ImageSource>) -> Self {
+        Self {
+            source: IconSource::Image(source.into()),
+            ..Self::default()
+        }
     }
 
     fn build(name: impl IconNamed) -> Self {
@@ -172,6 +183,30 @@ impl Icon {
         self
     }
 
+    fn into_element(self, text_size: Pixels, fallback_color: Hsla) -> AnyElement {
+        let IconSource::Image(source) = self.source else {
+            return self.into_svg(text_size, fallback_color).into_any_element();
+        };
+        let has_base_size = self.style.size.width.is_some() || self.style.size.height.is_some();
+        img(source)
+            .map(|mut this| {
+                *this.style() = self.style;
+                this
+            })
+            .flex_shrink_0()
+            .when(!has_base_size, |this| this.size(text_size))
+            // An explicit image size outranks a size inherited from a parent
+            // Button, so logical image bounds survive scaled displays.
+            .when_some(self.size.filter(|_| !has_base_size), |this, size| match size {
+                Size::Size(px) => this.size(px),
+                Size::XSmall => this.size_3(),
+                Size::Small => this.size_3p5(),
+                Size::Medium => this.size_4(),
+                Size::Large => this.size_6(),
+            })
+            .into_any_element()
+    }
+
     fn into_svg(self, text_size: Pixels, fallback_color: Hsla) -> Svg {
         let text_color = self.text_color.unwrap_or(fallback_color);
         let has_base_size = self.style.size.width.is_some() || self.style.size.height.is_some();
@@ -194,6 +229,7 @@ impl Icon {
             .map(|this| match self.source {
                 IconSource::Path(path) => this.path(path),
                 IconSource::Data(data) => this.data(&data),
+                IconSource::Image(_) => this,
             })
             .when_some(self.transformation, |this, transformation| {
                 this.with_transformation(transformation)
@@ -222,7 +258,7 @@ impl Sizable for Icon {
 impl RenderOnce for Icon {
     fn render(self, window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let text_size = window.text_style().font_size.to_pixels(window.rem_size());
-        self.into_svg(text_size, window.text_style().color)
+        self.into_element(text_size, window.text_style().color)
     }
 }
 
@@ -235,7 +271,7 @@ impl From<Icon> for AnyElement {
 impl Render for Icon {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let text_size = window.text_style().font_size.to_pixels(window.rem_size());
-        self.clone().into_svg(text_size, cx.theme().foreground)
+        self.clone().into_element(text_size, cx.theme().foreground)
     }
 }
 
@@ -297,5 +333,21 @@ mod tests {
 
         let icon = icon.path("");
         assert!(matches!(icon.source_ref(), IconSource::Path(path) if path.is_empty()));
+    }
+
+    #[test]
+    fn test_image_icon_keeps_its_source_until_a_vector_source_replaces_it() {
+        let image = Arc::new(gpui::Image::from_bytes(gpui::ImageFormat::Svg, SVG.to_vec()));
+        let icon = Icon::image(image.clone()).large();
+        let IconSource::Image(gpui::ImageSource::Image(kept)) = icon.source_ref() else {
+            panic!("an image icon must keep its image source");
+        };
+        assert!(Arc::ptr_eq(kept, &image));
+        assert_eq!(icon.clone().size, Some(Size::Large));
+
+        let icon = icon.path("icons/replacement.svg");
+        assert!(
+            matches!(icon.source_ref(), IconSource::Path(path) if path == "icons/replacement.svg")
+        );
     }
 }

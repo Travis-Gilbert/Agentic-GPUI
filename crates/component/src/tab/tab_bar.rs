@@ -1,8 +1,8 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
-    Anchor, AnyElement, App, Background, Bounds, Edges, ElementId, InteractiveElement, IntoElement,
-    ParentElement, Pixels, RenderOnce, Role, ScrollHandle, SharedString,
+    Anchor, AnyElement, App, Background, Bounds, Edges, ElementId, FocusHandle, InteractiveElement,
+    IntoElement, ParentElement, Pixels, RenderOnce, Role, ScrollHandle, SharedString,
     StatefulInteractiveElement as _, StyleRefinement, Styled, Window, div,
     prelude::FluentBuilder as _, px,
 };
@@ -46,6 +46,7 @@ pub struct TabBar {
     prefix: Option<AnyElement>,
     suffix: Option<AnyElement>,
     children: SmallVec<[Tab; 2]>,
+    root_children: Vec<AnyElement>,
     last_empty_space: AnyElement,
     selected_index: Option<usize>,
     variant: TabVariant,
@@ -64,6 +65,7 @@ impl TabBar {
             base: gpui_base::Tabs::new(id).px(px(-1.)),
             style: StyleRefinement::default(),
             children: SmallVec::new(),
+            root_children: Vec::new(),
             scroll_handle: None,
             prefix: None,
             suffix: None,
@@ -154,6 +156,12 @@ impl TabBar {
         self
     }
 
+    /// Attach infrastructure to the collection root, outside the typed tabs.
+    pub fn root_child(mut self, child: impl IntoElement) -> Self {
+        self.root_children.push(child.into_any_element());
+        self
+    }
+
     /// Set the selected index of the TabBar.
     pub fn selected_index(mut self, index: usize) -> Self {
         self.selected_index = Some(index);
@@ -169,6 +177,7 @@ impl TabBar {
     /// Set the on_click callback of the TabBar, the first parameter is the index of the clicked tab.
     ///
     /// When this is set, the children's on_click will be ignored.
+    /// Arrow keys and Home/End request selection through this same callback.
     pub fn on_click<F>(mut self, on_click: F) -> Self
     where
         F: Fn(&usize, &mut Window, &mut App) + 'static,
@@ -350,6 +359,13 @@ impl Styled for TabBar {
     }
 }
 
+impl InteractiveElement for TabBar {
+    fn interactivity(&mut self) -> &mut gpui::Interactivity {
+        self.base.interactivity()
+    }
+}
+impl gpui::StatefulInteractiveElement for TabBar {}
+
 impl Sizable for TabBar {
     fn with_size(mut self, size: impl Into<Size>) -> Self {
         self.size = size.into();
@@ -431,6 +447,38 @@ impl RenderOnce for TabBar {
         let mut indicator_element = indicator.map(|(el, _)| el);
         let indicator_ready = indicator_element.is_some();
 
+        // Keys belong to tabs rather than their positions. The same handles
+        // therefore survive insertion/reordering while retired tabs stop being
+        // described. No application selection is stored in these handles.
+        let focus: Rc<Vec<(bool, FocusHandle)>> = Rc::new(
+            self.children
+                .iter()
+                .enumerate()
+                .map(|(ix, tab)| {
+                    let key = tab.key.clone().unwrap_or_else(|| ix.into());
+                    let id = format!("tab-focus:{:?}:{:?}", self.id, key);
+                    let handle = window
+                        .use_keyed_state(id, cx, |_, cx| cx.focus_handle())
+                        .read(cx)
+                        .clone();
+                    (!tab.disabled, handle)
+                })
+                .collect(),
+        );
+        let entry = focus
+            .iter()
+            .position(|(enabled, handle)| *enabled && handle.is_focused(window))
+            .or_else(|| {
+                self.selected_index
+                    .filter(|ix| focus.get(*ix).is_some_and(|(enabled, _)| *enabled))
+            })
+            .or_else(|| {
+                self.children
+                    .iter()
+                    .position(|tab| tab.selected && !tab.disabled)
+            })
+            .or_else(|| focus.iter().position(|(enabled, _)| *enabled));
+
         let has_suffix_or_menu = self.suffix.is_some() || self.menu;
         let mut item_metas: Vec<(Option<SharedString>, Option<Icon>, bool)> = Vec::new();
         let selected_index = self.selected_index;
@@ -451,12 +499,45 @@ impl RenderOnce for TabBar {
             tab.indicator_active = has_indicator;
             tab.indicator_ready = indicator_ready;
             tab.indicator_epoch = indicator_epoch;
+            tab.size_of_set = num_tabs;
+            let navigation_focus = focus.clone();
+            let navigation_callback = self.on_click.clone();
             let mut tab = tab
+                .track_focus(&focus[ix].1)
+                .tab_stop(entry == Some(ix))
                 .when_some(selected_index, |tab, selected_index| {
                     tab.selected(selected_index == ix)
                 })
                 .when_some(self.on_click.clone(), move |tab, on_click| {
                     tab.on_click(move |_, window, cx| on_click(&ix, window, cx))
+                })
+                .on_key_down(move |event, window, cx| {
+                    if event.keystroke.modifiers.modified() {
+                        return;
+                    }
+                    let enabled: Vec<usize> = navigation_focus
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(ix, (enabled, _))| enabled.then_some(ix))
+                        .collect();
+                    let Some(at) = enabled.iter().position(|candidate| *candidate == ix) else {
+                        return;
+                    };
+                    let next = match event.keystroke.key.as_str() {
+                        "right" => enabled[(at + 1) % enabled.len()],
+                        "left" => enabled[(at + enabled.len() - 1) % enabled.len()],
+                        "home" => enabled[0],
+                        "end" => enabled[enabled.len() - 1],
+                        _ => return,
+                    };
+                    navigation_focus[next].1.focus(window, cx);
+                    if next != ix {
+                        if let Some(callback) = &navigation_callback {
+                            callback(&next, window, cx);
+                        }
+                    }
+                    window.prevent_default();
+                    cx.stop_propagation();
                 });
             // The wrapper below is the flex item the bar lays out, so a tab's
             // own `flex_grow` / `flex_basis` (e.g. `flex_1()`) must size it.
@@ -587,6 +668,7 @@ impl RenderOnce for TabBar {
                 )
             })
             .when_some(self.suffix, |this, suffix| this.child(suffix))
+            .children(self.root_children)
     }
 }
 
