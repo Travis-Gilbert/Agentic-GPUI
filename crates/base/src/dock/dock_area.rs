@@ -100,6 +100,8 @@ pub struct DockArea {
     id: SharedString,
     version: Option<usize>,
     bounds: Bounds<Pixels>,
+    center_bounds: Option<Bounds<Pixels>>,
+    dock_bounds: HashMap<DockPlacement, Bounds<Pixels>>,
     this: WeakEntity<Self>,
 
     center: PaneTree,
@@ -113,7 +115,76 @@ pub struct DockArea {
     zoomed: Option<Zoomed>,
     focus_handle: FocusHandle,
     renderer: Rc<dyn DockAreaRenderer>,
+    composer: Option<DockAreaComposer>,
 }
+
+/// Application-owned composition of the already-rendered dock regions.
+///
+/// Elements are private and each `take_*` reader consumes its region at most
+/// once. A zoomed composition contains only the zoomed group; regular regions
+/// are absent until zoom is cleared.
+pub struct DockAreaCompositionContext {
+    center: Option<AnyElement>,
+    left: Option<AnyElement>,
+    right: Option<AnyElement>,
+    bottom: Option<AnyElement>,
+    zoomed_view: Option<AnyElement>,
+    zoomed: bool,
+    center_present: bool,
+    region_extents: HashMap<DockPlacement, Pixels>,
+    open_regions: HashSet<DockPlacement>,
+}
+
+impl DockAreaCompositionContext {
+    pub fn take_center(&mut self) -> Option<AnyElement> {
+        self.center.take()
+    }
+
+    pub fn take_left(&mut self) -> Option<AnyElement> {
+        self.left.take()
+    }
+
+    pub fn take_right(&mut self) -> Option<AnyElement> {
+        self.right.take()
+    }
+
+    pub fn take_bottom(&mut self) -> Option<AnyElement> {
+        self.bottom.take()
+    }
+
+    pub fn is_zoomed(&self) -> bool {
+        self.zoomed
+    }
+
+    /// The current fixed extent of a present side or bottom dock. Center has
+    /// no fixed extent, and zoomed compositions expose no ordinary regions.
+    pub fn region_extent(&self, placement: DockPlacement) -> Option<Pixels> {
+        if self.zoomed || placement == DockPlacement::Center {
+            return None;
+        }
+        self.region_extents.get(&placement).copied()
+    }
+
+    /// Whether a region is currently open. Center is open whenever it is
+    /// present; a zoomed composition has no ordinary open regions.
+    pub fn is_region_open(&self, placement: DockPlacement) -> bool {
+        if self.zoomed {
+            return false;
+        }
+        match placement {
+            DockPlacement::Center => self.center_present,
+            _ => self.open_regions.contains(&placement),
+        }
+    }
+
+    pub fn take_zoomed_view(&mut self) -> Option<AnyElement> {
+        self.zoomed_view.take()
+    }
+}
+
+/// The application composition hook for a [`DockArea`].
+pub type DockAreaComposer =
+    Rc<dyn Fn(DockAreaCompositionContext, &mut Window, &mut App) -> AnyElement>;
 
 impl DockArea {
     /// An empty area that draws nothing but its panels.
@@ -135,6 +206,8 @@ impl DockArea {
             id: id.into(),
             version,
             bounds: Bounds::default(),
+            center_bounds: None,
+            dock_bounds: HashMap::new(),
             this: cx.weak_entity(),
             center: PaneTree::new(RootKind::Split),
             docks: HashMap::new(),
@@ -145,6 +218,7 @@ impl DockArea {
             zoomed: None,
             focus_handle: cx.focus_handle(),
             renderer: Rc::new(BareDockArea),
+            composer: None,
         }
     }
 
@@ -154,6 +228,23 @@ impl DockArea {
     pub fn with_renderer(mut self, renderer: Rc<dyn DockAreaRenderer>) -> Self {
         self.renderer = renderer;
         self
+    }
+
+    /// Install an application-owned composition around the regions Base has
+    /// already rendered. Base continues to own each region's tree, entities,
+    /// focus, resize and toggle behavior.
+    pub fn with_composer(mut self, composer: DockAreaComposer) -> Self {
+        self.composer = Some(composer);
+        self
+    }
+
+    /// Replace the application composition on an existing area entity.
+    /// Install it during setup or restoration, never once per render.
+    pub fn set_composer(&mut self, composer: Option<DockAreaComposer>, cx: &mut Context<Self>) {
+        self.composer = composer;
+        self.center_bounds = None;
+        self.dock_bounds.clear();
+        cx.notify();
     }
 
     pub fn id(&self) -> SharedString {
@@ -1217,16 +1308,73 @@ impl DockArea {
             DockPlacement::Right => self.dock_size(DockPlacement::Left),
             _ => None,
         };
-        let sizing = DockSizing::new(placement)
+        let mut sizing = DockSizing::new(placement)
             .with_area_bounds(self.bounds)
             .with_opposite_dock_size(opposite.unwrap_or(px(0.)));
-        let size = sizing
-            .size_from_pointer(pointer)
-            .min(sizing.clamp(Pixels::MAX));
-
+        let custom_extent = if self.composer.is_some() {
+            self.center_bounds.map(|center| {
+                let left = self
+                    .measured_dock_extent(DockPlacement::Left)
+                    .unwrap_or(px(0.));
+                let right = self
+                    .measured_dock_extent(DockPlacement::Right)
+                    .unwrap_or(px(0.));
+                let bottom = self
+                    .measured_dock_extent(DockPlacement::Bottom)
+                    .unwrap_or(px(0.));
+                let opposite = match placement {
+                    DockPlacement::Left => right,
+                    DockPlacement::Right => left,
+                    _ => px(0.),
+                };
+                sizing = DockSizing::new(placement)
+                    .with_area_width(center.size.width + left + right)
+                    .with_area_height(center.size.height + bottom)
+                    .with_opposite_dock_size(opposite);
+                ()
+            })
+        } else {
+            None
+        };
         let Some(pane) = self.docks.get_mut(&placement) else {
             return;
         };
+        let current_size = pane.dock.live_size().unwrap_or(pane.dock.size());
+        let fallback_bounds = match placement {
+            DockPlacement::Left => Bounds {
+                origin: self.bounds.origin,
+                size: gpui::size(current_size, self.bounds.size.height),
+            },
+            DockPlacement::Right => Bounds {
+                origin: gpui::point(self.bounds.right() - current_size, self.bounds.top()),
+                size: gpui::size(current_size, self.bounds.size.height),
+            },
+            DockPlacement::Bottom => Bounds {
+                origin: gpui::point(self.bounds.left(), self.bounds.bottom() - current_size),
+                size: gpui::size(self.bounds.size.width, current_size),
+            },
+            DockPlacement::Center => return,
+        };
+        let region_bounds = self
+            .dock_bounds
+            .get(&placement)
+            .copied()
+            .unwrap_or(fallback_bounds);
+        // Preserve DockSizing's original absolute calculation without a
+        // composer. A custom shell may offset the dock from the area edge, so
+        // its calculation uses the measured region edge instead.
+        let requested_size = if custom_extent.is_none() {
+            sizing.size_from_pointer(pointer)
+        } else {
+            match placement {
+                DockPlacement::Left => pointer.x - region_bounds.left(),
+                DockPlacement::Right => region_bounds.right() - pointer.x,
+                DockPlacement::Bottom => region_bounds.bottom() - pointer.y,
+                DockPlacement::Center => return,
+            }
+        };
+        let size = requested_size.min(sizing.clamp(Pixels::MAX));
+
         let was_open = pane.dock.is_open();
         if placement == DockPlacement::Bottom && pane.dock.is_collapsible() && size < PANEL_MIN_SIZE
         {
@@ -1403,7 +1551,51 @@ impl DockArea {
         // chrome hook, so a renderer that draws nothing at all still gets a
         // dock that is the right shape.
         let chrome = self.renderer.render_dock(&dock, content, window, cx);
-        Some(dock_frame(&dock, size).child(chrome).into_any_element())
+        let area = self.this.clone();
+        Some(
+            dock_frame(&dock, size)
+                .on_prepaint(move |bounds, _, cx| {
+                    _ = area.update(cx, |area, _| {
+                        area.dock_bounds.insert(placement, bounds);
+                    });
+                })
+                .child(chrome)
+                .into_any_element(),
+        )
+    }
+
+    fn composition_region_metadata(
+        &self,
+    ) -> (HashMap<DockPlacement, Pixels>, HashSet<DockPlacement>) {
+        let mut extents = HashMap::new();
+        let mut open = HashSet::new();
+        for placement in [
+            DockPlacement::Left,
+            DockPlacement::Right,
+            DockPlacement::Bottom,
+        ] {
+            if let Some(pane) = self.docks.get(&placement) {
+                let dock = self.dock_context(placement, &pane.dock);
+                extents.insert(placement, dock_extent(&dock));
+                if dock.is_open() {
+                    open.insert(placement);
+                }
+            }
+        }
+        (extents, open)
+    }
+
+    fn measured_dock_extent(&self, placement: DockPlacement) -> Option<Pixels> {
+        let pane = self.docks.get(&placement)?;
+        if !pane.dock.is_open() && placement != DockPlacement::Bottom {
+            return Some(px(0.));
+        }
+        let bounds = self.dock_bounds.get(&placement)?;
+        Some(match placement {
+            DockPlacement::Left | DockPlacement::Right => bounds.size.width,
+            DockPlacement::Bottom => bounds.size.height,
+            DockPlacement::Center => return None,
+        })
     }
 
     fn dock_context(&self, placement: DockPlacement, dock: &Dock) -> DockContext {
@@ -1466,34 +1658,82 @@ impl Render for DockArea {
                 area.update(cx, |area, _| area.bounds = bounds);
             })
             .track_focus(&self.focus_handle)
-            .map(|frame| match self.zoomed_view() {
-                Some(view) => frame.child(view),
-                None => frame
-                    .when_some(
-                        self.render_dock(DockPlacement::Left, window, cx),
-                        ParentElement::child,
-                    )
-                    .child(
-                        renderer
-                            .center_frame(window, cx)
-                            // Same reason as the frame above: the centre is
-                            // whatever the side docks leave, in a column with
-                            // the bottom dock. Without this it is neither, and
-                            // shrinks to its content.
-                            .flex()
-                            .flex_1()
-                            .flex_col()
-                            .overflow_hidden()
-                            .child(self.render_node(self.center.root(), window, cx))
+            .map(|frame| {
+                if let Some(composer) = self.composer.clone() {
+                    let composition = match self.zoomed_view() {
+                        Some(view) => DockAreaCompositionContext {
+                            center: None,
+                            left: None,
+                            right: None,
+                            bottom: None,
+                            zoomed_view: Some(view.into_any_element()),
+                            zoomed: true,
+                            center_present: false,
+                            region_extents: HashMap::new(),
+                            open_regions: HashSet::new(),
+                        },
+                        None => {
+                            let (region_extents, open_regions) = self.composition_region_metadata();
+                            let area = self.this.clone();
+                            DockAreaCompositionContext {
+                                center: Some(
+                                    renderer
+                                        .center_frame(window, cx)
+                                        .flex()
+                                        .flex_1()
+                                        .flex_col()
+                                        .overflow_hidden()
+                                        .on_prepaint(move |bounds, _, cx| {
+                                            _ = area.update(cx, |area, _| {
+                                                area.center_bounds = Some(bounds);
+                                            });
+                                        })
+                                        .child(self.render_node(self.center.root(), window, cx))
+                                        .into_any_element(),
+                                ),
+                                left: self.render_dock(DockPlacement::Left, window, cx),
+                                right: self.render_dock(DockPlacement::Right, window, cx),
+                                bottom: self.render_dock(DockPlacement::Bottom, window, cx),
+                                zoomed_view: None,
+                                zoomed: false,
+                                center_present: true,
+                                region_extents,
+                                open_regions,
+                            }
+                        }
+                    };
+                    frame.child(composer(composition, window, cx))
+                } else {
+                    match self.zoomed_view() {
+                        Some(view) => frame.child(view),
+                        None => frame
                             .when_some(
-                                self.render_dock(DockPlacement::Bottom, window, cx),
+                                self.render_dock(DockPlacement::Left, window, cx),
+                                ParentElement::child,
+                            )
+                            .child(
+                                renderer
+                                    .center_frame(window, cx)
+                                    // Same reason as the frame above: the centre is
+                                    // whatever the side docks leave, in a column with
+                                    // the bottom dock. Without this it is neither, and
+                                    // shrinks to its content.
+                                    .flex()
+                                    .flex_1()
+                                    .flex_col()
+                                    .overflow_hidden()
+                                    .child(self.render_node(self.center.root(), window, cx))
+                                    .when_some(
+                                        self.render_dock(DockPlacement::Bottom, window, cx),
+                                        ParentElement::child,
+                                    ),
+                            )
+                            .when_some(
+                                self.render_dock(DockPlacement::Right, window, cx),
                                 ParentElement::child,
                             ),
-                    )
-                    .when_some(
-                        self.render_dock(DockPlacement::Right, window, cx),
-                        ParentElement::child,
-                    ),
+                    }
+                }
             })
     }
 }
@@ -3949,6 +4189,269 @@ mod tests {
             DockArea::new("test-dock", None, window, cx).with_renderer(skin)
         });
         (area, tab_bars, cx)
+    }
+
+    #[gpui::test]
+    fn custom_composition_keeps_region_state_and_tracks_inset_resize_geometry(
+        cx: &mut TestAppContext,
+    ) {
+        type Snapshot = (bool, [bool; 4], bool, Option<Pixels>, bool);
+        let snapshots: Rc<RefCell<Vec<Snapshot>>> = Rc::default();
+        let observed = snapshots.clone();
+        let composer: DockAreaComposer = Rc::new(move |mut parts, _, _| {
+            let zoomed = parts.is_zoomed();
+            let regions = [
+                parts.take_center(),
+                parts.take_left(),
+                parts.take_right(),
+                parts.take_bottom(),
+            ];
+            let presence = regions.each_ref().map(Option::is_some);
+            let zoom_view = parts.take_zoomed_view();
+            observed.borrow_mut().push((
+                zoomed,
+                presence,
+                zoom_view.is_some(),
+                parts.region_extent(DockPlacement::Bottom),
+                parts.is_region_open(DockPlacement::Center),
+            ));
+            let [center, left, right, bottom] = regions;
+            let main = div()
+                .flex()
+                .flex_1()
+                .flex_col()
+                .when_some(center, ParentElement::child)
+                .when_some(bottom, ParentElement::child);
+
+            div()
+                .id("custom-dock-composition")
+                .size_full()
+                .p(px(37.))
+                .flex()
+                .flex_row()
+                .when_some(left, ParentElement::child)
+                .child(main)
+                .when_some(right, ParentElement::child)
+                .when_some(zoom_view, ParentElement::child)
+                .into_any_element()
+        });
+        let (area, cx) = cx.add_window_view(|window, cx| {
+            DockArea::new("test-dock-composer", None, window, cx).with_composer(composer)
+        });
+
+        cx.update(|window, cx| {
+            area.update(cx, |area, cx| {
+                area.set_center(
+                    DockLayout::tabs().panel(TestPanel::new("Center", cx)),
+                    window,
+                    cx,
+                );
+                for (placement, name) in [
+                    (DockPlacement::Left, "Left"),
+                    (DockPlacement::Right, "Right"),
+                    (DockPlacement::Bottom, "Bottom"),
+                ] {
+                    area.set_dock(
+                        placement,
+                        DockLayout::tabs().panel(TestPanel::new(name, cx)),
+                        window,
+                        cx,
+                    );
+                }
+            });
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            snapshots.borrow().last().copied(),
+            Some((false, [true; 4], false, Some(px(200.)), true)),
+            "the composer receives all live regions and dock metadata"
+        );
+        let (left_bounds, right_bounds, bottom_bounds, initial_sizes, ids) = cx.read(|cx| {
+            let area = area.read(cx);
+            (
+                area.dock_bounds[&DockPlacement::Left],
+                area.dock_bounds[&DockPlacement::Right],
+                area.dock_bounds[&DockPlacement::Bottom],
+                [
+                    area.dock_size(DockPlacement::Left).unwrap(),
+                    area.dock_size(DockPlacement::Right).unwrap(),
+                    area.dock_size(DockPlacement::Bottom).unwrap(),
+                ],
+                area.container_entity_ids(),
+            )
+        });
+        let center_node = child_node(&area, 0, cx);
+        assert!(
+            left_bounds.left() >= px(37.),
+            "the left dock is actually laid out inside the custom shell inset"
+        );
+
+        cx.update(|window, cx| {
+            area.update(cx, |area, cx| {
+                area.resize_dock(
+                    DockPlacement::Left,
+                    gpui::point(left_bounds.right() + px(12.), left_bounds.top()),
+                    window,
+                    cx,
+                );
+                area.resize_dock(
+                    DockPlacement::Left,
+                    gpui::point(left_bounds.right() + px(20.), left_bounds.top()),
+                    window,
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+        let left_after_repeated_updates =
+            cx.read(|cx| area.read(cx).dock_size(DockPlacement::Left).unwrap());
+
+        cx.update(|window, cx| {
+            area.update(cx, |area, cx| {
+                area.resize_dock(
+                    DockPlacement::Right,
+                    gpui::point(right_bounds.left() - px(8.), right_bounds.top()),
+                    window,
+                    cx,
+                );
+                area.resize_dock(
+                    DockPlacement::Right,
+                    gpui::point(right_bounds.left() - px(16.), right_bounds.top()),
+                    window,
+                    cx,
+                );
+                area.resize_dock(
+                    DockPlacement::Bottom,
+                    gpui::point(bottom_bounds.left(), bottom_bounds.top() - px(9.)),
+                    window,
+                    cx,
+                );
+                area.resize_dock(
+                    DockPlacement::Bottom,
+                    gpui::point(bottom_bounds.left(), bottom_bounds.top() - px(18.)),
+                    window,
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+        let right_after_repeated_updates =
+            cx.read(|cx| area.read(cx).dock_size(DockPlacement::Right).unwrap());
+        let bottom_after_repeated_updates =
+            cx.read(|cx| area.read(cx).dock_size(DockPlacement::Bottom).unwrap());
+
+        cx.update(|window, cx| {
+            area.update(cx, |area, cx| {
+                area.toggle_dock(DockPlacement::Left, window, cx)
+            });
+        });
+        cx.run_until_parked();
+        assert!(!cx.read(|cx| area.read(cx).is_dock_open(DockPlacement::Left)));
+        assert_eq!(cx.read(|cx| area.read(cx).container_entity_ids()), ids);
+
+        let (center_width, right_bounds, right_size) = cx.read(|cx| {
+            let area = area.read(cx);
+            (
+                area.center_bounds.unwrap().size.width,
+                area.dock_bounds[&DockPlacement::Right],
+                area.dock_size(DockPlacement::Right).unwrap(),
+            )
+        });
+        let available_right_width = center_width + right_size;
+        let expected_max_right = available_right_width - crate::resizable::PANEL_MIN_SIZE;
+        cx.update(|window, cx| {
+            area.update(cx, |area, cx| {
+                area.resize_dock(
+                    DockPlacement::Right,
+                    gpui::point(right_bounds.left() - px(10_000.), right_bounds.top()),
+                    window,
+                    cx,
+                );
+                area.resize_dock(
+                    DockPlacement::Right,
+                    gpui::point(right_bounds.left() - px(20_000.), right_bounds.top()),
+                    window,
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+        let (right_after_clamp, center_after_clamp) = cx.read(|cx| {
+            let area = area.read(cx);
+            (
+                area.dock_size(DockPlacement::Right).unwrap(),
+                area.center_bounds.unwrap().size.width,
+            )
+        });
+        let (center_height, bottom_bounds, bottom_size) = cx.read(|cx| {
+            let area = area.read(cx);
+            (
+                area.center_bounds.unwrap().size.height,
+                area.dock_bounds[&DockPlacement::Bottom],
+                area.dock_size(DockPlacement::Bottom).unwrap(),
+            )
+        });
+        let expected_max_bottom = center_height + bottom_size - crate::resizable::PANEL_MIN_SIZE;
+        cx.update(|window, cx| {
+            area.update(cx, |area, cx| {
+                area.resize_dock(
+                    DockPlacement::Bottom,
+                    gpui::point(bottom_bounds.left(), bottom_bounds.bottom() - px(10_000.)),
+                    window,
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+        let (bottom_after_clamp, center_height_after_clamp) = cx.read(|cx| {
+            let area = area.read(cx);
+            (
+                area.dock_size(DockPlacement::Bottom).unwrap(),
+                area.center_bounds.unwrap().size.height,
+            )
+        });
+        cx.update(|window, cx| {
+            area.update(cx, |area, cx| area.set_zoomed_in(center_node, window, cx));
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            snapshots.borrow().last().copied(),
+            Some((true, [false; 4], true, None, false)),
+            "zoom composition receives the zoomed group and no ordinary regions"
+        );
+        assert_eq!(cx.read(|cx| area.read(cx).container_entity_ids()), ids);
+
+        cx.update(|window, cx| {
+            area.update(cx, |area, cx| area.set_zoomed_out(window, cx));
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            snapshots.borrow().last().copied(),
+            Some((false, [true; 4], false, Some(bottom_after_clamp), true)),
+            "the regular composition returns after zoom is cleared"
+        );
+        assert_eq!(
+            (
+                left_after_repeated_updates,
+                right_after_repeated_updates,
+                bottom_after_repeated_updates,
+                right_after_clamp,
+                center_after_clamp >= crate::resizable::PANEL_MIN_SIZE,
+                bottom_after_clamp,
+                center_height_after_clamp >= crate::resizable::PANEL_MIN_SIZE,
+            ),
+            (
+                initial_sizes[0] + px(20.),
+                initial_sizes[1] + px(16.),
+                initial_sizes[2] + px(18.),
+                expected_max_right,
+                true,
+                expected_max_bottom,
+                true,
+            ),
+            "resize updates use absolute rendered edges and keep the center above minimum"
+        );
     }
 
     fn zoom_signals(log: &Log) -> Vec<(&'static str, PanelSignal)> {
