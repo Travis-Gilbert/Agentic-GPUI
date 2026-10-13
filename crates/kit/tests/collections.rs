@@ -576,6 +576,9 @@ fn table_sort_icon_is_a_labelled_button_that_cycles_the_sort(cx: &mut TestAppCon
         assert!(window.try_find(("icon-sort", 1usize)).is_none());
         assert_eq!(table.read(cx).selected_col(), None);
 
+        // An unsorted column shows its icon while the header is hovered.
+        // Hover it rather than rely on where the test pointer starts.
+        window.hover(("col-header", 0usize), cx);
         for _ in 0..3 {
             window.click(("icon-sort", 0usize), cx);
         }

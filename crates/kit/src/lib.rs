@@ -18,6 +18,10 @@
 //! layers:
 //!
 //! ```no_run
+//! // The Theorem Zed GPUI macros expand to bare `gpui::` paths; this alias at
+//! // the crate root resolves them through the Kit.
+//! extern crate gpui_kit as gpui;
+//!
 //! use gpui_kit::*;
 //!
 //! actions!(hello, [Quit]);
@@ -39,8 +43,9 @@
 //! }
 //! ```
 //!
-//! Enable `gpui-fast` to select GPUI Fast for the core, platform, and enabled
-//! layers without changing imports. Upstream remains the default backend.
+//! This fork does not carry upstream's optional `gpui-fast` backend: every
+//! layer runs on the pinned Theorem Zed GPUI, so there is one GPUI type
+//! identity.
 //!
 //! See [`component`] for the same program with the styled component library.
 
@@ -48,7 +53,10 @@
 /// crate name `gpui`.
 ///
 /// GPUI's original macro spells its derive as `gpui::Action`, which does not
-/// resolve when GPUI is consumed solely through this facade.
+/// resolve when GPUI is consumed solely through this facade. With the Theorem
+/// Zed source the derive's own expansion still names `gpui::`, so a crate that
+/// reaches GPUI only through the Kit also declares `extern crate gpui_kit as
+/// gpui;` at its root.
 #[macro_export]
 macro_rules! actions {
     ($namespace:path, [ $( $(#[$attr:meta])* $name:ident),* $(,)? ]) => {
