@@ -1,17 +1,17 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From c113f44a2b8ed47ff1290fe0ab9046e556f9f3f8 Mon Sep 17 00:00:00 2001
 From: Travis Gilbert <1travisgilbert@gmail.com>
 Date: Thu, 3 Sep 2026 22:43:50 -0400
-Subject: [PATCH 06/18] fix(base): support Rust 1.90 atomics
+Subject: [PATCH 06/22] fix(base): support Rust 1.90 atomics
 
 ---
  crates/base/src/text_selection.rs | 2 +-
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/crates/base/src/text_selection.rs b/crates/base/src/text_selection.rs
-index a7719ddd..ab4fc763 100644
+index 2828822c..c3fd7c10 100644
 --- a/crates/base/src/text_selection.rs
 +++ b/crates/base/src/text_selection.rs
-@@ -31,7 +31,7 @@ impl TextSelectionScopeId {
+@@ -32,7 +32,7 @@ impl TextSelectionScopeId {
      pub fn new() -> Self {
          static NEXT_SCOPE_ID: AtomicU64 = AtomicU64::new(1);
          let value = NEXT_SCOPE_ID
@@ -20,3 +20,6 @@ index a7719ddd..ab4fc763 100644
                  value.checked_add(1)
              })
              .expect("text selection scope identifiers exhausted");
+-- 
+2.53.0
+

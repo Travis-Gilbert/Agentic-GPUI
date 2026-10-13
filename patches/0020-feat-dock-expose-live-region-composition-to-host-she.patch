@@ -1,7 +1,8 @@
-From ba67027edc5393c33c2271a864313799b798db01 Mon Sep 17 00:00:00 2001
+From 5cb29bd658f29c657e222912dcf0213f0cada255 Mon Sep 17 00:00:00 2001
 From: Travis Gilbert <1travisgilbert@gmail.com>
 Date: Mon, 12 Oct 2026 11:55:12 -0400
-Subject: [PATCH] feat(dock): expose live region composition to host shells
+Subject: [PATCH 20/22] feat(dock): expose live region composition to host
+ shells
 
 ---
  crates/base/src/dock/dock_area.rs | 565 ++++++++++++++++++++++++++++--
@@ -10,7 +11,7 @@ Subject: [PATCH] feat(dock): expose live region composition to host shells
  3 files changed, 544 insertions(+), 38 deletions(-)
 
 diff --git a/crates/base/src/dock/dock_area.rs b/crates/base/src/dock/dock_area.rs
-index acb7386..5741a0e 100644
+index f0718dca..4a1fc3b6 100644
 --- a/crates/base/src/dock/dock_area.rs
 +++ b/crates/base/src/dock/dock_area.rs
 @@ -100,6 +100,8 @@ pub struct DockArea {
@@ -141,7 +142,7 @@ index acb7386..5741a0e 100644
      pub fn id(&self) -> SharedString {
          self.id.clone()
      }
-@@ -1217,16 +1308,73 @@ impl DockArea {
+@@ -1313,16 +1404,73 @@ impl DockArea {
              DockPlacement::Right => self.dock_size(DockPlacement::Left),
              _ => None,
          };
@@ -220,7 +221,7 @@ index acb7386..5741a0e 100644
          let was_open = pane.dock.is_open();
          if placement == DockPlacement::Bottom && pane.dock.is_collapsible() && size < PANEL_MIN_SIZE
          {
-@@ -1403,7 +1551,51 @@ impl DockArea {
+@@ -1499,7 +1647,51 @@ impl DockArea {
          // chrome hook, so a renderer that draws nothing at all still gets a
          // dock that is the right shape.
          let chrome = self.renderer.render_dock(&dock, content, window, cx);
@@ -273,7 +274,7 @@ index acb7386..5741a0e 100644
      }
  
      fn dock_context(&self, placement: DockPlacement, dock: &Dock) -> DockContext {
-@@ -1466,34 +1658,82 @@ impl Render for DockArea {
+@@ -1562,34 +1754,82 @@ impl Render for DockArea {
                  area.update(cx, |area, _| area.bounds = bounds);
              })
              .track_focus(&self.focus_handle)
@@ -345,8 +346,7 @@ index acb7386..5741a0e 100644
 +                    match self.zoomed_view() {
 +                        Some(view) => frame.child(view),
 +                        None => frame
-                             .when_some(
--                                self.render_dock(DockPlacement::Bottom, window, cx),
++                            .when_some(
 +                                self.render_dock(DockPlacement::Left, window, cx),
 +                                ParentElement::child,
 +                            )
@@ -367,7 +367,8 @@ index acb7386..5741a0e 100644
 +                                        ParentElement::child,
 +                                    ),
 +                            )
-+                            .when_some(
+                             .when_some(
+-                                self.render_dock(DockPlacement::Bottom, window, cx),
 +                                self.render_dock(DockPlacement::Right, window, cx),
                                  ParentElement::child,
                              ),
@@ -381,7 +382,7 @@ index acb7386..5741a0e 100644
              })
      }
  }
-@@ -3951,6 +4191,269 @@ mod tests {
+@@ -4104,6 +4344,269 @@ mod tests {
          (area, tab_bars, cx)
      }
  
@@ -652,7 +653,7 @@ index acb7386..5741a0e 100644
          drain(log)
              .into_iter()
 diff --git a/crates/base/src/dock/mod.rs b/crates/base/src/dock/mod.rs
-index ea1636f..ccee4b2 100644
+index ea1636fe..ccee4b20 100644
 --- a/crates/base/src/dock/mod.rs
 +++ b/crates/base/src/dock/mod.rs
 @@ -179,7 +179,10 @@ mod tab_group;
@@ -668,7 +669,7 @@ index ea1636f..ccee4b2 100644
  pub use drag::{AnyDrag, DragPanel, DropIndicator, DropPlaceholderBounds, DropTarget};
  // `split_placement_at` stays internal for the same reason: where a drop lands
 diff --git a/crates/component/src/dock/mod.rs b/crates/component/src/dock/mod.rs
-index c136413..8db9e17 100644
+index c136413e..8db9e179 100644
 --- a/crates/component/src/dock/mod.rs
 +++ b/crates/component/src/dock/mod.rs
 @@ -46,12 +46,12 @@ pub use gpui_base::dock::PanelView as BasePanelView;

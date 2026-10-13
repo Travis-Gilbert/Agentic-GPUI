@@ -1,7 +1,7 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From e6001a817b83bfd724ed24dbb3652da4b4078084 Mon Sep 17 00:00:00 2001
 From: Travis Gilbert <1travisgilbert@gmail.com>
 Date: Sat, 5 Sep 2026 09:45:37 -0400
-Subject: [PATCH 13/18] feat(sidebar): expose retained row and toggle
+Subject: [PATCH 13/22] feat(sidebar): expose retained row and toggle
  decoration hooks
 
 ---
@@ -113,3 +113,6 @@ index a3254688..5690e634 100644
      }
  }
  
+-- 
+2.53.0
+

@@ -1,7 +1,7 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 8a43aaaa249382dc5a5540a610601a0632cb9ea6 Mon Sep 17 00:00:00 2001
 From: Travis Gilbert <1travisgilbert@gmail.com>
 Date: Sat, 5 Sep 2026 05:23:00 -0400
-Subject: [PATCH 09/18] fix(ci): recognize the capture name inside its own
+Subject: [PATCH 09/22] fix(ci): recognize the capture name inside its own
  patch pattern
 
 ---
@@ -21,3 +21,6 @@ index acadc026..9113402a 100644
  ]
  
  [default.extend-words]
+-- 
+2.53.0
+

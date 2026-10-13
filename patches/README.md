@@ -1,15 +1,92 @@
 # Theorem GPUI Kit patch series
 
-This hard fork tracks `longbridge/gpui-kit` tag `v0.7.0`. The files listed in
+This hard fork tracks `longbridge/gpui-kit` tag `v0.7.3`. The files listed in
 `series` are applied in order and are never proposed upstream. The fork pins
 the entire GPUI family to one immutable revision of `Travis-Gilbert/zed`
 (`6d4d90754f7dde3e62afb6fe74a632c0b4660396`) in place of upstream's
-`gpui-pre =0.3.7` crates.
+`gpui-pre =0.3.9` crates.
 
-The replay workflow applies this series to `v0.7.0` for branch validation and
+The replay workflow applies this series to `v0.7.3` for branch validation and
 to upstream `main` on its monthly schedule. A failed scheduled run is the
 signal to rebase the series. If upstream independently implements a patch, the
 patch is removed during that rebase.
+
+## The v0.7.3 rebase
+
+The 44 branch commits were rebased from `v0.7.0` onto `v0.7.3` with
+`git rebase --onto v0.7.3 v0.7.0`, and the series was regenerated with
+`git format-patch v0.7.3..HEAD -- . ':(exclude)patches'
+':(exclude).github/workflows/gpui-kit-patch-series.yml'` (the workflow is the
+fork's own file, and upstream has none to patch). The 22 entries replayed onto
+a clean `v0.7.3` export reproduce the branch tree byte for byte. No Theorem
+patch was dropped: upstream contains none of them. Upstream cut v0.7.2 and v0.7.3 from
+its `stable` branch and left out every change that breaks existing consumers
+(#3432 motion easing, #3415 `TabVariant::Folder`, #3402 pointer helpers, #3384
+`TestWindowExt`, #3302 `ResizeHandle::on_drag`, and the `gpui-wry` to
+`gpui-webview` rename), so the rebase met additions, not API moves.
+
+Conflicts the replay resolved, each keeping the Theorem intent on upstream's
+new code:
+
+- Accessible navigation labels (patch 0002) met the tooltip delay (#3376) and
+  tab scrolling (#3419): a button keeps both the configurable tooltip delay
+  and its own accessible name, and the tab bar keeps one import list.
+- The Zed source patch (0005) met #3375's GPUI Fast workspace entries and the
+  `IntoPlot` crate-path lookup, which now accepts `gpui-kit`, `gpui` or
+  `gpui-fast`.
+- Measured link fragments (0015) met #3371, #3373 and #3421: link targets keep
+  the text view's selection authority through the same stack the clamped
+  descendants use, and #3371's `link_underline` style default coexists with the
+  fragment underline override (solid keeps the parsed underline; dotted and
+  none replace it).
+- The v0.7.0 build patch met #3306, which points the hidden `gpui_kit::gpui`
+  at the Kit itself.
+
+What v0.7.3 needs that the Theorem Zed source does not have, and how the
+v0.7.3 build patch meets it:
+
+- GPUI Fast (#3375) is not carried. `gpui-fast-linux` requires `oo7 ^0.6`,
+  which cannot resolve beside the Zed fork's `oo7 =0.6.0-alpha`, and a second
+  engine would be a second GPUI type identity. Its dependencies and features
+  leave every manifest; its `cfg(feature = "gpui-fast")` sources stay
+  byte-identical and inert, declared through check-cfg.
+- `gpui::IndentAdjustment` does not exist, so `LineWrapper::wrap_line` takes
+  two arguments again; the Zed default is the same-indent wrap upstream asks
+  for.
+- `TextLayout` has no separate background and glyph passes. `Inline` keeps
+  #3439's order (backgrounds, then the selection, then the glyphs) by painting
+  the run backgrounds itself and handing the shaped text its runs without
+  them, so selected text stays readable over an opaque selection.
+- `FrameTiming` has no refresh interval, signal time or phases, so the fps
+  sampler's test frames omit them; criterion stays at 0.5, the version the
+  Zed source's `bench-support` links.
+- `#[derive(Action)]`, `actions!` and `#[gpui::test]` expand to bare `gpui::`
+  paths. Since #3306 a crate that both depends on `gpui` and glob-imports
+  `gpui_kit::*` is ambiguous (E0659), so the Kit-only consumers (the story,
+  tig, the recipe tests and the exports test) use the one line #3306
+  documents, `extern crate gpui_kit as gpui;`. The story crate no longer
+  depends on `gpui` directly, which supersedes the v0.7.0 note below.
+
+The Kit integration tests are held to the fork's contracts (patch 0022): the
+fork moves, selects and deletes by grapheme cluster (patch 0017), so the
+textarea and editing tests that #3256 wrote for code-point steps expect one
+step per cluster; and the Zed test window starts its pointer at the origin,
+so the table sort test hovers the header before it looks for the hover-only
+sort icon.
+
+Verification on the rebased branch (rustc 1.97.1 stable and 1.96.1, the
+Theorem repository pin): `cargo check --locked --workspace --all-targets`;
+`cargo check --locked -p gpui-base -p gpui-kit-assets -p gpui-component
+--target wasm32-unknown-unknown`; `cargo test --locked -p gpui-base -p
+gpui-component --lib` 1328 and 666 passed; `cargo test --locked -p gpui-kit
+--features "test-support component assets"` 350 integration tests and 2
+doctests passed, including the 16 Diff tests, and its Metal suite (`--test
+rendering`) passed 11 of 11, among them `selected_text_stays_over_an_opaque_selection`;
+`cargo test --locked -p gpui-kit-recipes` 6 passed (the tests on stable).
+`--all-features` stops only
+at `quickjs-jit-core`, the Shell's JIT engine, which needs nightly here as it
+did on v0.7.0. The workflow's Rust 1.90 replay has not run: GitHub Actions is
+disabled on this account.
 
 ## The v0.7.0 rebase
 

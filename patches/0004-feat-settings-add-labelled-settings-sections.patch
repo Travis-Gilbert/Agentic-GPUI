@@ -1,7 +1,7 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 2d491686802bfad95d1f7e7396a4098c742fda4e Mon Sep 17 00:00:00 2001
 From: Travis Gilbert <1travisgilbert@gmail.com>
 Date: Thu, 3 Sep 2026 21:37:03 -0400
-Subject: [PATCH 04/18] feat(settings): add labelled settings sections
+Subject: [PATCH 04/22] feat(settings): add labelled settings sections
 
 ---
  crates/component/src/setting/settings.rs   | 400 +++++++++++++++++----
@@ -552,10 +552,10 @@ index 4422d5f2..b771023b 100644
 +    }
 +}
 diff --git a/crates/story/src/gallery.rs b/crates/story/src/gallery.rs
-index d2b43ec5..1a2690cc 100644
+index 3dce29d9..afa4feba 100644
 --- a/crates/story/src/gallery.rs
 +++ b/crates/story/src/gallery.rs
-@@ -119,6 +119,7 @@ impl Gallery {
+@@ -120,6 +120,7 @@ impl Gallery {
                  StoryContainer::panel::<SelectStory>(window, cx),
                  StoryContainer::panel::<SeparatorStory>(window, cx),
                  StoryContainer::panel::<SettingsStory>(window, cx),
@@ -564,10 +564,10 @@ index d2b43ec5..1a2690cc 100644
                  StoryContainer::panel::<ShellStory>(window, cx),
                  StoryContainer::panel::<SheetStory>(window, cx),
 diff --git a/crates/story/src/stories/mod.rs b/crates/story/src/stories/mod.rs
-index 977ee8fe..727d1aa9 100644
+index 7be199fd..bff4c415 100644
 --- a/crates/story/src/stories/mod.rs
 +++ b/crates/story/src/stories/mod.rs
-@@ -135,7 +135,7 @@ pub use resizable_story::ResizableStory;
+@@ -138,7 +138,7 @@ pub use resizable_story::ResizableStory;
  pub use scrollbar_story::ScrollbarStory;
  pub use select_story::SelectStory;
  pub use separator_story::SeparatorStory;
@@ -671,3 +671,6 @@ index fbb607f6..62a3c768 100644
 +            )
 +    }
 +}
+-- 
+2.53.0
+

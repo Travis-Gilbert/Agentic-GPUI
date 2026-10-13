@@ -1,25 +1,25 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 7fb7ad0d3449e1dd51131c5656fc331ad5d94112 Mon Sep 17 00:00:00 2001
 From: Travis Gilbert <1travisgilbert@gmail.com>
 Date: Thu, 3 Sep 2026 21:36:50 -0400
-Subject: [PATCH 02/18] fix(a11y): replay accessible navigation labels and
+Subject: [PATCH 02/22] fix(a11y): replay accessible navigation labels and
  roles
 
 ---
- crates/component/locales/ui.yml        | 25 ++++++++++++++++++++
+ crates/component/locales/ui.yml        | 26 +++++++++++++++++++++
  crates/component/src/breadcrumb.rs     |  2 ++
  crates/component/src/button/button.rs  | 32 ++++++++++++++++----------
  crates/component/src/dock/tab_panel.rs |  3 ++-
  crates/component/src/sidebar/mod.rs    |  5 ++++
- crates/component/src/tab/tab_bar.rs    |  7 ++++--
+ crates/component/src/tab/tab_bar.rs    |  6 +++--
  6 files changed, 59 insertions(+), 15 deletions(-)
 
 diff --git a/crates/component/locales/ui.yml b/crates/component/locales/ui.yml
-index 2016977c..d8191d10 100644
+index 8ce38fe1..4746b6ed 100644
 --- a/crates/component/locales/ui.yml
 +++ b/crates/component/locales/ui.yml
-@@ -163,6 +163,18 @@ ComboBox:
-     zh-TW: "沒有結果"
-     it: "Nessun risultato"
+@@ -169,6 +169,18 @@ DropdownButton:
+     zh-HK: 更多選項
+     zh-TW: 更多選項
  Dock:
 +  PanelMenu:
 +    en: "Panel menu"
@@ -36,10 +36,11 @@ index 2016977c..d8191d10 100644
    Unnamed:
      en: Unnamed
      zh-CN: 未命名
-@@ -199,6 +211,19 @@ Dock:
+@@ -205,6 +217,20 @@ Dock:
      zh-HK: 展開
      zh-TW: 展開
      it: Espandi
++
 +Sidebar:
 +  Expand:
 +    en: "Expand sidebar"
@@ -70,10 +71,10 @@ index e831ce2f..66075506 100644
              .text_sm()
              .text_color(cx.theme().muted_foreground)
 diff --git a/crates/component/src/button/button.rs b/crates/component/src/button/button.rs
-index 2106e30f..98658a4e 100644
+index afc39d71..27c4a9aa 100644
 --- a/crates/component/src/button/button.rs
 +++ b/crates/component/src/button/button.rs
-@@ -389,6 +389,13 @@ impl Button {
+@@ -395,6 +395,13 @@ impl Button {
          self
      }
  
@@ -87,15 +88,15 @@ index 2106e30f..98658a4e 100644
      /// Set the icon of the button, if the Button have no label, the button well in Icon Button mode.
      pub fn icon(mut self, icon: impl Into<ButtonIcon>) -> Self {
          self.icon = Some(icon.into());
-@@ -600,6 +607,7 @@ impl RenderOnce for Button {
-         let selected = self.shows_selected_style();
+@@ -615,6 +622,7 @@ impl RenderOnce for Button {
          let loading = self.loading;
          let tooltip_placement = self.tooltip_placement;
+         let tooltip_show_delay = self.tooltip_show_delay;
 +        let accessibility_label = self.accessible_name();
          let hover_group = self.hover_group;
          let hover_group_held = self.hover_group_held;
          let mut base = self.base;
-@@ -720,12 +728,6 @@ impl RenderOnce for Button {
+@@ -743,12 +751,6 @@ impl RenderOnce for Button {
              .line_height(relative(1.25))
              .refine_style(&instance_style);
  
@@ -108,7 +109,7 @@ index 2106e30f..98658a4e 100644
          let content = h_flex()
              .id("label")
              .size_full()
-@@ -1357,19 +1359,25 @@ mod tests {
+@@ -1386,19 +1388,25 @@ mod tests {
      use crate::IconName;
      use gpui::{linear_color_stop, linear_gradient, px};
  
@@ -141,10 +142,10 @@ index 2106e30f..98658a4e 100644
              "an explicit name must win over the visible label"
          );
 diff --git a/crates/component/src/dock/tab_panel.rs b/crates/component/src/dock/tab_panel.rs
-index c97ba7cd..a63dc426 100644
+index 5ee68c2e..b3917d92 100644
 --- a/crates/component/src/dock/tab_panel.rs
 +++ b/crates/component/src/dock/tab_panel.rs
-@@ -330,6 +330,7 @@ impl TabGroupSkin {
+@@ -333,6 +333,7 @@ impl TabGroupSkin {
                      .icon(IconName::Ellipsis)
                      .xsmall()
                      .ghost()
@@ -152,8 +153,8 @@ index c97ba7cd..a63dc426 100644
                      .tab_stop(false)
                      .dropdown_menu(move |menu, window, cx| {
                          menu.when_some(panel.clone(), |menu, panel| {
-@@ -497,7 +498,7 @@ impl TabGroupSkin {
-                             .ix(ix)
+@@ -501,7 +502,7 @@ impl TabGroupSkin {
+                             .debug_selector(move || format!("{TAB_SELECTOR}-{ix}"))
                              .tab_bar_prefix(has_leading)
                              .map(|this| match handle.and_then(|handle| handle.tab_name(cx)) {
 -                                Some(tab_name) => this.child(tab_name),
@@ -185,22 +186,21 @@ index c9ac4722..a3254688 100644
      }
  }
 diff --git a/crates/component/src/tab/tab_bar.rs b/crates/component/src/tab/tab_bar.rs
-index 9db5debd..3b3909b5 100644
+index 634108ec..f5e420f9 100644
 --- a/crates/component/src/tab/tab_bar.rs
 +++ b/crates/component/src/tab/tab_bar.rs
-@@ -2,8 +2,9 @@ use std::{cell::RefCell, rc::Rc};
+@@ -2,8 +2,8 @@ use std::{cell::RefCell, rc::Rc};
  
  use gpui::{
-     Anchor, AnyElement, App, Background, Bounds, Edges, ElementId, InteractiveElement, IntoElement,
--    ParentElement, Pixels, RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement as _,
--    StyleRefinement, Styled, Window, div, prelude::FluentBuilder as _, px,
-+    ParentElement, Pixels, RenderOnce, Role, ScrollHandle, SharedString,
-+    StatefulInteractiveElement as _, StyleRefinement, Styled, Window, div,
-+    prelude::FluentBuilder as _, px,
+     Anchor, AnyElement, App, Background, Bounds, ClickEvent, Edges, ElementId, Entity, EntityId,
+-    InteractiveElement, IntoElement, ParentElement, Pixels, RenderOnce, ScrollHandle, SharedString,
+-    StatefulInteractiveElement as _, StyleRefinement, Styled, Window, div, point,
++    InteractiveElement, IntoElement, ParentElement, Pixels, RenderOnce, Role, ScrollHandle,
++    SharedString, StatefulInteractiveElement as _, StyleRefinement, Styled, Window, div, point,
+     prelude::FluentBuilder as _, px,
  };
  use gpui_base::spring;
- use rust_i18n::t;
-@@ -535,6 +536,7 @@ impl RenderOnce for TabBar {
+@@ -576,6 +576,7 @@ impl RenderOnce for TabBar {
                      .child(
                          h_flex()
                              .id("tabs-inner")
@@ -208,7 +208,7 @@ index 9db5debd..3b3909b5 100644
                              // Fill the bar so tabs can grow into the free space;
                              // as a scroll container it still shrinks below its content.
                              .flex_1()
-@@ -556,6 +558,7 @@ impl RenderOnce for TabBar {
+@@ -595,6 +596,7 @@ impl RenderOnce for TabBar {
                      Button::new("more")
                          .xsmall()
                          .ghost()
@@ -216,3 +216,6 @@ index 9db5debd..3b3909b5 100644
                          .dropdown_caret(true)
                          .dropdown_menu(move |mut this, _, _| {
                              this = this.scrollable(true);
+-- 
+2.53.0
+

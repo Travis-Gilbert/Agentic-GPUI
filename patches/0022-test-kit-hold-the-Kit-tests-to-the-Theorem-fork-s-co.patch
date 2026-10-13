@@ -1,0 +1,139 @@
+From 1f0e41363eeede769abca7176f7a9d1186dca1a8 Mon Sep 17 00:00:00 2001
+From: Travis Gilbert <1travisgilbert@gmail.com>
+Date: Tue, 13 Oct 2026 11:49:59 -0400
+Subject: [PATCH 22/22] test(kit): hold the Kit tests to the Theorem fork's
+ contracts
+
+The fork moves, selects and deletes by grapheme cluster, so the textarea
+and editing tests expect one step per cluster. The Theorem Zed test window
+starts its pointer at the origin, so the table sort test hovers the header
+before it looks for the icon. The kit docs show the extern alias the Zed
+macros need and drop the gpui-fast paragraph the fork does not carry.
+---
+ crates/kit/src/lib.rs              | 14 +++++++++++---
+ crates/kit/tests/collections.rs    |  3 +++
+ crates/kit/tests/input/editing.rs  | 11 ++++-------
+ crates/kit/tests/input/textarea.rs | 11 +++--------
+ 4 files changed, 21 insertions(+), 18 deletions(-)
+
+diff --git a/crates/kit/src/lib.rs b/crates/kit/src/lib.rs
+index ec603405..7812bbcb 100644
+--- a/crates/kit/src/lib.rs
++++ b/crates/kit/src/lib.rs
+@@ -18,6 +18,10 @@
+ //! layers:
+ //!
+ //! ```no_run
++//! // The Theorem Zed GPUI macros expand to bare `gpui::` paths; this alias at
++//! // the crate root resolves them through the Kit.
++//! extern crate gpui_kit as gpui;
++//!
+ //! use gpui_kit::*;
+ //!
+ //! actions!(hello, [Quit]);
+@@ -39,8 +43,9 @@
+ //! }
+ //! ```
+ //!
+-//! Enable `gpui-fast` to select GPUI Fast for the core, platform, and enabled
+-//! layers without changing imports. Upstream remains the default backend.
++//! This fork does not carry upstream's optional `gpui-fast` backend: every
++//! layer runs on the pinned Theorem Zed GPUI, so there is one GPUI type
++//! identity.
+ //!
+ //! See [`component`] for the same program with the styled component library.
+ 
+@@ -48,7 +53,10 @@
+ /// crate name `gpui`.
+ ///
+ /// GPUI's original macro spells its derive as `gpui::Action`, which does not
+-/// resolve when GPUI is consumed solely through this facade.
++/// resolve when GPUI is consumed solely through this facade. With the Theorem
++/// Zed source the derive's own expansion still names `gpui::`, so a crate that
++/// reaches GPUI only through the Kit also declares `extern crate gpui_kit as
++/// gpui;` at its root.
+ #[macro_export]
+ macro_rules! actions {
+     ($namespace:path, [ $( $(#[$attr:meta])* $name:ident),* $(,)? ]) => {
+diff --git a/crates/kit/tests/collections.rs b/crates/kit/tests/collections.rs
+index bf9867de..f05f8b79 100644
+--- a/crates/kit/tests/collections.rs
++++ b/crates/kit/tests/collections.rs
+@@ -576,6 +576,9 @@ fn table_sort_icon_is_a_labelled_button_that_cycles_the_sort(cx: &mut TestAppCon
+         assert!(window.try_find(("icon-sort", 1usize)).is_none());
+         assert_eq!(table.read(cx).selected_col(), None);
+ 
++        // An unsorted column shows its icon while the header is hovered.
++        // Hover it rather than rely on where the test pointer starts.
++        window.hover(("col-header", 0usize), cx);
+         for _ in 0..3 {
+             window.click(("icon-sort", 0usize), cx);
+         }
+diff --git a/crates/kit/tests/input/editing.rs b/crates/kit/tests/input/editing.rs
+index 564c2aea..061bf61c 100644
+--- a/crates/kit/tests/input/editing.rs
++++ b/crates/kit/tests/input/editing.rs
+@@ -507,11 +507,9 @@ fn clipboard_normalization_preserves_tabs_and_unicode_graphemes(cx: &mut TestApp
+         let end = value.len() - 1;
+         assert_edit(&input, value, end..end, end, cx);
+         window.press("left", cx);
+-        // Arrow selection advances by Unicode scalar, so select the woman,
+-        // joiner and laptop before replacing the complete pasted sequence.
+-        for _ in 0..3 {
+-            window.press("shift-left", cx);
+-        }
++        // The Theorem fork's arrow selection advances by grapheme cluster,
++        // so one step selects the whole woman-joiner-laptop sequence.
++        window.press("shift-left", cx);
+         assert_eq!(input.read(cx).selected_value(), "👩‍💻");
+         window.input("X", cx);
+         assert_eq!(
+@@ -520,8 +518,7 @@ fn clipboard_normalization_preserves_tabs_and_unicode_graphemes(cx: &mut TestApp
+         );
+         window.press("home", cx);
+         window.press("right", cx);
+-        // The base letter and combining accent are two scalar steps.
+-        window.press("shift-right", cx);
++        // The base letter and combining accent are one grapheme step.
+         window.press("shift-right", cx);
+         assert_eq!(input.read(cx).selected_value(), "e\u{301}");
+         window.press("delete", cx);
+diff --git a/crates/kit/tests/input/textarea.rs b/crates/kit/tests/input/textarea.rs
+index afc69a50..933375f5 100644
+--- a/crates/kit/tests/input/textarea.rs
++++ b/crates/kit/tests/input/textarea.rs
+@@ -773,7 +773,7 @@ fn page_navigation_preserves_column_and_clamps_at_document_boundaries(cx: &mut T
+ }
+ 
+ #[gpui_kit::test]
+-fn empty_document_navigation_and_forward_crlf_deletion_respect_scalar_boundaries(
++fn empty_document_navigation_and_forward_crlf_deletion_respect_grapheme_boundaries(
+     cx: &mut TestAppContext,
+ ) {
+     let (handle, _, text) = composer(cx, |state| state.rows(4));
+@@ -800,10 +800,8 @@ fn empty_document_navigation_and_forward_crlf_deletion_respect_scalar_boundaries
+         cx.write_to_clipboard(ClipboardItem::new_string("e\u{301}\r\n🦀".into()));
+         window.press("secondary-v", cx);
+         window.press(START, cx);
+-        // Text editing moves through Unicode scalar boundaries; CRLF is
+-        // deliberately one boundary. A combining mark remains its own scalar.
+-        window.press("right", cx);
+-        assert_eq!(text.read(cx).cursor(), 1);
++        // The Theorem fork moves and deletes by grapheme cluster: a base
++        // letter and its combining mark are one step, and so is CRLF.
+         window.press("right", cx);
+         assert_eq!(text.read(cx).cursor(), "e\u{301}".len());
+         window.press("shift-right", cx);
+@@ -815,9 +813,6 @@ fn empty_document_navigation_and_forward_crlf_deletion_respect_scalar_boundaries
+         window.press("delete", cx);
+         assert_eq!(text.read(cx).value(), "e\u{301}");
+         window.press("backspace", cx);
+-        assert_eq!(text.read(cx).value(), "e");
+-        assert_eq!(text.read(cx).cursor(), 1);
+-        window.press("backspace", cx);
+         assert_eq!(text.read(cx).value(), "");
+         assert_eq!(text.read(cx).cursor(), 0);
+     })
+-- 
+2.53.0
+

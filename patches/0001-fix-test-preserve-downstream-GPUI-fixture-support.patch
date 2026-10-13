@@ -1,7 +1,7 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 971869155d6564c43c50a01aea0259f946284fed Mon Sep 17 00:00:00 2001
 From: Travis Gilbert <1travisgilbert@gmail.com>
 Date: Thu, 3 Sep 2026 21:36:45 -0400
-Subject: [PATCH 01/18] fix(test): preserve downstream GPUI fixture support
+Subject: [PATCH 01/22] fix(test): preserve downstream GPUI fixture support
 
 ---
  crates/base/src/root.rs                    | 2 +-
@@ -58,3 +58,6 @@ index 4a857ee2..6ed4a007 100644
      let handle = HasWindowHandle::window_handle(window).ok()?;
      let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
          return None;
+-- 
+2.53.0
+

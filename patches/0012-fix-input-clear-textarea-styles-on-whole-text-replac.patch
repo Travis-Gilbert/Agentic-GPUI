@@ -1,7 +1,7 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From e93ef6b0899a4683aac355be9f060b7f32213c77 Mon Sep 17 00:00:00 2001
 From: Travis Gilbert <1travisgilbert@gmail.com>
 Date: Sat, 5 Sep 2026 06:13:29 -0400
-Subject: [PATCH 12/18] fix(input): clear textarea styles on whole-text
+Subject: [PATCH 12/22] fix(input): clear textarea styles on whole-text
  replacement
 
 ---
@@ -26,10 +26,10 @@ index 20b286e6..9f93e8ee 100644
      fn adjust_annotations(
          _state: &mut InputBaseState<Self>,
 diff --git a/crates/base/src/input/base/state.rs b/crates/base/src/input/base/state.rs
-index 79699bb9..9e5e0031 100644
+index 6431f1d5..4a9b6b17 100644
 --- a/crates/base/src/input/base/state.rs
 +++ b/crates/base/src/input/base/state.rs
-@@ -1037,6 +1037,7 @@ impl<M: InputModeKind> InputBaseState<M> {
+@@ -1142,6 +1142,7 @@ impl<M: InputModeKind> InputBaseState<M> {
              this.undo_manager.set_pending_intent(EditIntent::Atomic);
              let range = 0..this.text.chars().map(|c| c.len_utf16()).sum();
              this.replace_text_in_range_silent(Some(range), &text, window, cx);
@@ -38,10 +38,10 @@ index 79699bb9..9e5e0031 100644
          });
      }
 diff --git a/crates/base/src/input/textarea/mod.rs b/crates/base/src/input/textarea/mod.rs
-index 872b32ce..2ffcccb4 100644
+index 9f5132a5..75be7530 100644
 --- a/crates/base/src/input/textarea/mod.rs
 +++ b/crates/base/src/input/textarea/mod.rs
-@@ -71,6 +71,10 @@ impl InputModeKind for TextareaMode {
+@@ -79,6 +79,10 @@ impl InputModeKind for TextareaMode {
          state.extras.decorations.clear();
      }
  
@@ -52,3 +52,6 @@ index 872b32ce..2ffcccb4 100644
      fn adjust_annotations(
          state: &mut InputBaseState<Self>,
          range: &std::ops::Range<usize>,
+-- 
+2.53.0
+

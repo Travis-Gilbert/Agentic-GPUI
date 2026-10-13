@@ -1,7 +1,7 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From a0ace2dafb77e6851103caef0802d078ff313b73 Mon Sep 17 00:00:00 2001
 From: Travis Gilbert <1travisgilbert@gmail.com>
 Date: Sat, 5 Sep 2026 05:57:19 -0400
-Subject: [PATCH 10/18] feat(input): paint retained textarea presentation
+Subject: [PATCH 10/22] feat(input): paint retained textarea presentation
  styles
 
 ---
@@ -52,7 +52,7 @@ index e3965f09..a5127c9c 100644
          .into_iter()
          .filter_map(|mut decoration| {
 diff --git a/crates/base/src/input/editor/mod.rs b/crates/base/src/input/editor/mod.rs
-index 1ee09d0a..53d30d36 100644
+index 6850df71..e5bf1883 100644
 --- a/crates/base/src/input/editor/mod.rs
 +++ b/crates/base/src/input/editor/mod.rs
 @@ -5,7 +5,7 @@ use super::{EditorMode, InputBaseState, InputModeKind};
@@ -65,17 +65,17 @@ index 1ee09d0a..53d30d36 100644
  /// exposes them.
  pub type EditorState = InputBaseState<EditorMode>;
 diff --git a/crates/base/src/input/mod.rs b/crates/base/src/input/mod.rs
-index bb2ae494..e2703def 100644
+index 13f64102..66d5c15b 100644
 --- a/crates/base/src/input/mod.rs
 +++ b/crates/base/src/input/mod.rs
-@@ -120,4 +120,4 @@ pub use rope_ext::{InputEdit, Point, RopeExt, RopeLines};
+@@ -121,4 +121,4 @@ pub use rope_ext::{InputEdit, Point, RopeExt, RopeLines};
  pub use ropey::Rope;
  pub use search::{SearchMatcher, SearchSession};
  pub use state::*;
 -pub use textarea::{Textarea, TextareaState};
 +pub use textarea::{Textarea, TextareaExtras, TextareaState};
 diff --git a/crates/base/src/input/textarea/mod.rs b/crates/base/src/input/textarea/mod.rs
-index cf0e5cd7..5799beb1 100644
+index e3b8809c..9c8ca651 100644
 --- a/crates/base/src/input/textarea/mod.rs
 +++ b/crates/base/src/input/textarea/mod.rs
 @@ -1,6 +1,6 @@
@@ -87,7 +87,7 @@ index cf0e5cd7..5799beb1 100644
  
  /// State for editing ordinary multi-line text.
  ///
-@@ -49,3 +49,101 @@ impl RenderOnce for Textarea {
+@@ -57,3 +57,101 @@ impl RenderOnce for Textarea {
          self.state
      }
  }
@@ -189,3 +189,6 @@ index cf0e5cd7..5799beb1 100644
 +            .expect("textarea remains mounted");
 +    }
 +}
+-- 
+2.53.0
+

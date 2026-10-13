@@ -1,7 +1,7 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From abb0a4c905e26d2ffb4cf8b8808e84f262814e4e Mon Sep 17 00:00:00 2001
 From: Travis Gilbert <1travisgilbert@gmail.com>
 Date: Fri, 18 Sep 2026 15:32:56 -0400
-Subject: [PATCH 16/18] fix(input): choose the keymap at runtime, so the web
+Subject: [PATCH 16/22] fix(input): choose the keymap at runtime, so the web
  gets the right one
 
 Every keybinding in this repository was gated on
@@ -44,10 +44,10 @@ and every existing test keeps its current behavior.
  6 files changed, 155 insertions(+), 223 deletions(-)
 
 diff --git a/crates/base/src/input/base/state.rs b/crates/base/src/input/base/state.rs
-index 9e5e0031..665248c3 100644
+index 4a9b6b17..6d177b54 100644
 --- a/crates/base/src/input/base/state.rs
 +++ b/crates/base/src/input/base/state.rs
-@@ -130,25 +130,24 @@ pub enum InputEvent {
+@@ -134,25 +134,24 @@ pub enum InputEvent {
  pub(super) const CONTEXT: &str = "Input";
  
  pub(crate) fn init(cx: &mut App) {
@@ -87,7 +87,7 @@ index 9e5e0031..665248c3 100644
          KeyBinding::new(
              "enter",
              Enter {
-@@ -182,126 +181,97 @@ pub(crate) fn init(cx: &mut App) {
+@@ -186,126 +185,97 @@ pub(crate) fn init(cx: &mut App) {
          KeyBinding::new("pagedown", MovePageDown, Some(CONTEXT)),
          KeyBinding::new("tab", IndentInline, Some(CONTEXT)),
          KeyBinding::new("shift-tab", OutdentInline, Some(CONTEXT)),
@@ -318,7 +318,7 @@ index 0ea70b54..05c41c5c 100644
  }
  
 diff --git a/crates/base/src/text/state.rs b/crates/base/src/text/state.rs
-index 65295acc..6dfc50dc 100644
+index ab519639..6cbc134c 100644
 --- a/crates/base/src/text/state.rs
 +++ b/crates/base/src/text/state.rs
 @@ -47,15 +47,16 @@ const MAX_SYNC_FULL_REPLACE_BYTES: usize = 4 * 1024;
@@ -539,3 +539,6 @@ index cebb9a5b..b2e3a294 100644
      ]);
      cx.set_global(KeyBindingsInstalled);
  }
+-- 
+2.53.0
+

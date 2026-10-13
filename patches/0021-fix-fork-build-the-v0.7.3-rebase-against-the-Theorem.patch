@@ -1,0 +1,3749 @@
+From f17c3eb29d63266da7f7d1874751467f25b7de37 Mon Sep 17 00:00:00 2001
+From: Travis Gilbert <1travisgilbert@gmail.com>
+Date: Tue, 13 Oct 2026 11:21:35 -0400
+Subject: [PATCH 21/22] fix(fork): build the v0.7.3 rebase against the Theorem
+ Zed source
+
+Upstream v0.7.3 moves to gpui-pre 0.3.9 and adds an optional GPUI Fast
+backend. The fork keeps every GPUI family crate on the one pinned
+Travis-Gilbert/zed revision (6d4d9075), so:
+
+- GPUI Fast is not carried. gpui-fast-linux needs `oo7 ^0.6`, which cannot
+  resolve beside the Zed fork's `oo7 =0.6.0-alpha`, and a second engine
+  would be a second GPUI type identity. The gpui-fast dependencies and
+  features leave every manifest; the `cfg(feature = "gpui-fast")` sources
+  stay byte-identical and inert, declared through check-cfg.
+- The Zed source has no `IndentAdjustment`, so `LineWrapper::wrap_line`
+  takes two arguments again. Its default behaviour is the same-indent wrap
+  upstream asks for.
+- The Zed source has no separate background and glyph passes on
+  `TextLayout`. `Inline` keeps #3439's order (backgrounds, selection,
+  glyphs) by painting the run backgrounds itself and shaping the text
+  without them, so the shaped text paints only glyphs over the selection.
+- `FrameTiming` has no refresh interval, signal time or phases, so the fps
+  sampler's test frames omit them; criterion stays at 0.5, the version the
+  Zed source's bench-support links.
+- The Zed GPUI macros expand to bare `gpui::` paths. Since #3306,
+  `gpui_kit::gpui` is the Kit itself, so a crate that names `gpui`
+  directly and glob-imports the Kit is ambiguous (E0659). The Kit-only
+  consumers (the story, tig, the recipes tests and the exports test) use
+  the one line #3306 documents, `extern crate gpui_kit as gpui;`, instead
+  of a direct `gpui` dependency.
+- Three files the text merge left unformatted are formatted again.
+---
+ Cargo.lock                                    | 1780 ++++++++---------
+ Cargo.toml                                    |   20 +-
+ crates/assets/Cargo.toml                      |    6 +-
+ crates/base/Cargo.toml                        |   10 +-
+ crates/base/examples/native/Cargo.toml        |    6 -
+ crates/base/examples/wasm/Cargo.toml          |    5 -
+ .../input/editor/display_map/text_wrapper.rs  |    4 +-
+ crates/base/src/text/inline.rs                |  129 +-
+ crates/base/src/text/inline_flow.rs           |    2 +-
+ crates/component-shell/Cargo.toml             |    4 -
+ crates/component/Cargo.toml                   |    7 +-
+ crates/component/src/setting/settings.rs      |   26 +-
+ crates/component/src/sidebar/menu.rs          |    3 +-
+ crates/component/src/text/mod.rs              |    3 +-
+ crates/fps/Cargo.toml                         |    5 -
+ crates/fps/src/sampler.rs                     |    6 -
+ crates/kit/Cargo.toml                         |   12 +-
+ crates/kit/tests/exports.rs                   |    4 +
+ crates/shell/Cargo.toml                       |    4 -
+ crates/story-web/Cargo.toml                   |    3 -
+ crates/story/Cargo.toml                       |    3 -
+ crates/story/src/lib.rs                       |    4 +
+ crates/webview/Cargo.toml                     |    5 +-
+ examples/ai_recipes/Cargo.toml                |    3 -
+ examples/ai_recipes/tests/controlled_value.rs |    4 +
+ .../ai_recipes/tests/gpui_test_contract.rs    |    4 +
+ examples/ai_recipes/tests/settings.rs         |    4 +
+ examples/app_assets/Cargo.toml                |    3 -
+ examples/brush/Cargo.toml                     |    3 -
+ examples/dialog_overlay/Cargo.toml            |    3 -
+ examples/dock/Cargo.toml                      |    3 -
+ examples/editor/Cargo.toml                    |    3 -
+ examples/focus_trap/Cargo.toml                |    3 -
+ examples/fps_monitor/Cargo.toml               |    3 -
+ examples/hello_world/Cargo.toml               |    3 -
+ examples/html/Cargo.toml                      |    3 -
+ examples/input/Cargo.toml                     |    3 -
+ examples/large-text/Cargo.toml                |    3 -
+ examples/markdown/Cargo.toml                  |    3 -
+ examples/markdown_table/Cargo.toml            |    3 -
+ examples/sidebar/Cargo.toml                   |    3 -
+ examples/speech/Cargo.toml                    |    3 -
+ examples/stream-markdown/Cargo.toml           |    3 -
+ examples/system_monitor/Cargo.toml            |    3 -
+ examples/table_in_scrollable/Cargo.toml       |    3 -
+ examples/text_max_lines/Cargo.toml            |    3 -
+ examples/text_selection/Cargo.toml            |    3 -
+ examples/tig/Cargo.toml                       |    3 -
+ examples/tig/src/main.rs                      |    4 +
+ examples/tooltip_top_edge/Cargo.toml          |    3 -
+ examples/touch_selection/Cargo.toml           |    3 -
+ examples/webview/Cargo.toml                   |    1 -
+ examples/window_title/Cargo.toml              |    3 -
+ 53 files changed, 956 insertions(+), 1187 deletions(-)
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 2faaa06e..e0a85833 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -209,15 +209,6 @@ dependencies = [
+  "alloc-no-stdlib",
+ ]
+ 
+-[[package]]
+-name = "alloca"
+-version = "0.4.0"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "e5a7d05ea6aea7e9e64d25b9156ba2fee3fdd659e34e41063cd2fc7cd020d7f4"
+-dependencies = [
+- "cc",
+-]
+-
+ [[package]]
+ name = "allocator-api2"
+ version = "0.2.21"
+@@ -453,6 +444,18 @@ dependencies = [
+  "pin-project-lite",
+ ]
+ 
++[[package]]
++name = "async-compression"
++version = "0.4.50"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "ee19bd99b43e3691acbad4e840420a4881cea6c0b66a208125a824f8fd53f5a1"
++dependencies = [
++ "compression-codecs",
++ "compression-core",
++ "futures-io",
++ "pin-project-lite",
++]
++
+ [[package]]
+ name = "async-executor"
+ version = "1.14.0"
+@@ -1102,10 +1105,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
+ 
+ [[package]]
+-name = "c-enum"
+-version = "0.2.3"
++name = "bzip2"
++version = "0.6.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "cd17eb909a8c6a894926bfcc3400a4bb0e732f5a57d37b1f14e8b29e329bace8"
++checksum = "f3a53fac24f34a81bc9954b5d6cfce0c21e18ec6959f44f56e8e90e4bb7c346c"
++dependencies = [
++ "libbz2-rs-sys",
++]
+ 
+ [[package]]
+ name = "cairo-rs"
+@@ -1278,6 +1284,15 @@ version = "0.2.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527"
+ 
++[[package]]
++name = "cgl"
++version = "0.3.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "0ced0551234e87afee12411d535648dd89d2e7f34c78b753395567aff3d447ff"
++dependencies = [
++ "libc",
++]
++
+ [[package]]
+ name = "chacha20"
+ version = "0.10.2"
+@@ -1497,6 +1512,16 @@ dependencies = [
+  "unicode-width",
+ ]
+ 
++[[package]]
++name = "collections"
++version = "0.1.0"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=6d4d90754f7dde3e62afb6fe74a632c0b4660396#6d4d90754f7dde3e62afb6fe74a632c0b4660396"
++dependencies = [
++ "gpui_util",
++ "indexmap",
++ "rustc-hash 2.1.3",
++]
++
+ [[package]]
+ name = "color-lsp"
+ version = "0.2.0"
+@@ -1531,6 +1556,24 @@ dependencies = [
+  "memchr",
+ ]
+ 
++[[package]]
++name = "compression-codecs"
++version = "0.4.45"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "98fc98460ba0ad5317075d3632b8dfc45d0be8c4a49347c2a38272019717614a"
++dependencies = [
++ "bzip2",
++ "compression-core",
++ "flate2",
++ "memchr",
++]
++
++[[package]]
++name = "compression-core"
++version = "0.4.33"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "6e8ccc4ea9f6acc32d102c0f6d471d11d913ad15f20c04de743374861fa1d414"
++
+ [[package]]
+ name = "concurrent-queue"
+ version = "2.5.0"
+@@ -1723,6 +1766,19 @@ dependencies = [
+  "libc",
+ ]
+ 
++[[package]]
++name = "core-graphics2"
++version = "0.5.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "4416167a69126e617f8d0a214af0e3c1dbdeffcb100ddf72dcd1a1ac9893c146"
++dependencies = [
++ "bitflags 2.13.1",
++ "block",
++ "cfg-if",
++ "core-foundation 0.10.1",
++ "libc",
++]
++
+ [[package]]
+ name = "core-text"
+ version = "21.0.0"
+@@ -1735,6 +1791,20 @@ dependencies = [
+  "libc",
+ ]
+ 
++[[package]]
++name = "core-video"
++version = "0.5.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "139679cc63eb9504bdbe37e37874b0247136177655f0008588781e90863afa62"
++dependencies = [
++ "block",
++ "core-foundation 0.10.1",
++ "core-graphics2",
++ "io-surface",
++ "libc",
++ "metal",
++]
++
+ [[package]]
+ name = "core_maths"
+ version = "0.1.1"
+@@ -1989,24 +2059,25 @@ dependencies = [
+ 
+ [[package]]
+ name = "criterion"
+-version = "0.8.2"
++version = "0.5.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "950046b2aa2492f9a536f5f4f9a3de7b9e2476e575e05bd6c333371add4d98f3"
++checksum = "f2b12d017a929603d80db1831cd3a24082f8137ce19c69e6447f54f5fc8d692f"
+ dependencies = [
+- "alloca",
+  "anes",
+  "cast",
+  "ciborium",
+  "clap",
+  "criterion-plot",
+- "itertools 0.13.0",
++ "is-terminal",
++ "itertools 0.10.5",
+  "num-traits",
++ "once_cell",
+  "oorandom",
+- "page_size",
+  "plotters",
+  "rayon",
+  "regex",
+  "serde",
++ "serde_derive",
+  "serde_json",
+  "tinytemplate",
+  "walkdir",
+@@ -2014,12 +2085,12 @@ dependencies = [
+ 
+ [[package]]
+ name = "criterion-plot"
+-version = "0.8.2"
++version = "0.5.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "d8d80a2f4f5b554395e47b5d8305bc3d27813bacb73493eb1001e8f76dae29ea"
++checksum = "6b50826342786a51a89e2da3a28f1c32b06e387201bc2d19791f622c673706b1"
+ dependencies = [
+  "cast",
+- "itertools 0.13.0",
++ "itertools 0.10.5",
+ ]
+ 
+ [[package]]
+@@ -2369,6 +2440,17 @@ dependencies = [
+  "quote",
+  "rustc_version",
+  "syn 2.0.119",
++ "unicode-xid",
++]
++
++[[package]]
++name = "derive_refineable"
++version = "0.1.0"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=6d4d90754f7dde3e62afb6fe74a632c0b4660396#6d4d90754f7dde3e62afb6fe74a632c0b4660396"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn 2.0.119",
+ ]
+ 
+ [[package]]
+@@ -2414,34 +2496,13 @@ dependencies = [
+  "ctutils",
+ ]
+ 
+-[[package]]
+-name = "dirs"
+-version = "5.0.1"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "44c45a9d03d6676652bcb5e724c7e988de1acad23a711b5217ab9cbecbec2225"
+-dependencies = [
+- "dirs-sys 0.4.1",
+-]
+-
+ [[package]]
+ name = "dirs"
+ version = "6.0.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "c3e8aa94d75141228480295a7d0e7feb620b1a5ad9f12bc40be62411e38cce4e"
+ dependencies = [
+- "dirs-sys 0.5.0",
+-]
+-
+-[[package]]
+-name = "dirs-sys"
+-version = "0.4.1"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "520f05a5cbd335fae5a99ff7a6ab8627577660ee5cfd6a94a6a929b52ff0321c"
+-dependencies = [
+- "libc",
+- "option-ext",
+- "redox_users 0.4.6",
+- "windows-sys 0.48.0",
++ "dirs-sys",
+ ]
+ 
+ [[package]]
+@@ -2452,7 +2513,7 @@ checksum = "e01a3366d27ee9890022452ee61b2b63a67e6f13f58900b651ff5665f0bb1fab"
+ dependencies = [
+  "libc",
+  "option-ext",
+- "redox_users 0.5.2",
++ "redox_users",
+  "windows-sys 0.61.2",
+ ]
+ 
+@@ -2783,6 +2844,17 @@ version = "1.0.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
+ 
++[[package]]
++name = "erased-serde"
++version = "0.4.10"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d2add8a07dd6a8d93ff627029c51de145e12686fbc36ecb298ac22e74cf02dec"
++dependencies = [
++ "serde",
++ "serde_core",
++ "typeid",
++]
++
+ [[package]]
+ name = "errno"
+ version = "0.3.14"
+@@ -2960,6 +3032,9 @@ name = "fastrand"
+ version = "2.5.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
++dependencies = [
++ "getrandom 0.4.3",
++]
+ 
+ [[package]]
+ name = "fax"
+@@ -3090,6 +3165,7 @@ version = "0.12.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "5e139bc46ca777eb5efaf62df0ab8cc5fd400866427e56c68b22e414e53bd3be"
+ dependencies = [
++ "fastrand",
+  "futures-core",
+  "futures-sink",
+  "spin 0.9.9",
+@@ -3775,6 +3851,80 @@ dependencies = [
+  "bitflags 2.13.1",
+ ]
+ 
++[[package]]
++name = "gpui"
++version = "0.2.2"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=6d4d90754f7dde3e62afb6fe74a632c0b4660396#6d4d90754f7dde3e62afb6fe74a632c0b4660396"
++dependencies = [
++ "accesskit",
++ "anyhow",
++ "async-channel",
++ "async-task",
++ "backtrace",
++ "bindgen",
++ "bitflags 2.13.1",
++ "chrono",
++ "collections",
++ "core-video",
++ "criterion",
++ "ctor",
++ "derive_more 2.1.1",
++ "embed-resource",
++ "etagere",
++ "futures",
++ "futures-concurrency",
++ "getrandom 0.3.4",
++ "gpui_macros",
++ "gpui_shared_string",
++ "gpui_util",
++ "hdrhistogram",
++ "heapless",
++ "http_client",
++ "image",
++ "inventory",
++ "itertools 0.14.0",
++ "log",
++ "lyon",
++ "num_cpus",
++ "parking",
++ "parking_lot",
++ "pin-project",
++ "pollster 0.4.0",
++ "postage",
++ "profiling",
++ "proptest",
++ "rand 0.9.5",
++ "raw-window-handle",
++ "refineable",
++ "regex",
++ "resvg 0.46.0",
++ "scheduler",
++ "schemars",
++ "seahash",
++ "serde",
++ "serde_json",
++ "slotmap",
++ "smallvec",
++ "spin 0.10.1",
++ "strum",
++ "sum_tree",
++ "taffy",
++ "thiserror 2.0.20",
++ "tracing",
++ "ttf-parser",
++ "url",
++ "usvg 0.46.0",
++ "util_macros",
++ "uuid",
++ "waker-fn",
++ "web-time",
++ "wgpu",
++ "windows 0.62.2",
++ "zed-font-kit",
++ "zed-scap",
++ "ztracing",
++]
++
+ [[package]]
+ name = "gpui-base"
+ version = "0.7.3"
+@@ -3787,13 +3937,9 @@ dependencies = [
+  "criterion",
+  "data-url",
+  "futures",
+- "gpui-fast",
+- "gpui-fast-platform",
+- "gpui-pre",
+- "gpui-pre-macros",
+- "gpui-pre-platform",
+- "gpui-pre-reqwest-client",
+- "gpui-pre-sum-tree",
++ "gpui",
++ "gpui_macros",
++ "gpui_platform",
+  "html5ever 0.27.0",
+  "indoc",
+  "instant",
+@@ -3807,6 +3953,7 @@ dependencies = [
+  "objc2-foundation 0.3.2",
+  "raw-window-handle",
+  "regex",
++ "reqwest_client",
+  "ropey",
+  "rust_decimal",
+  "schemars",
+@@ -3814,6 +3961,7 @@ dependencies = [
+  "serde_json",
+  "smallvec",
+  "smol",
++ "sum_tree",
+  "tracing",
+  "unicode-linebreak",
+  "unicode-segmentation",
+@@ -3826,12 +3974,10 @@ name = "gpui-base-examples"
+ version = "0.7.3"
+ dependencies = [
+  "chrono",
++ "gpui",
+  "gpui-base",
+- "gpui-fast",
+- "gpui-fast-platform",
+- "gpui-pre",
+- "gpui-pre-platform",
+- "gpui-pre-reqwest-client",
++ "gpui_platform",
++ "reqwest_client",
+  "syntect",
+ ]
+ 
+@@ -3842,13 +3988,11 @@ dependencies = [
+  "chrono",
+  "console_error_panic_hook",
+  "console_log",
++ "gpui",
+  "gpui-base",
+- "gpui-fast",
+- "gpui-fast-platform",
+- "gpui-pre",
+- "gpui-pre-platform",
+- "gpui-pre-reqwest-client",
++ "gpui_platform",
+  "log",
++ "reqwest_client",
+  "syntect",
+  "tracing-wasm",
+  "wasm-bindgen",
+@@ -3864,13 +4008,11 @@ dependencies = [
+  "core-text",
+  "cpal",
+  "enum-iterator",
++ "gpui",
+  "gpui-base",
+  "gpui-component-macros",
+- "gpui-fast",
+  "gpui-kit-assets",
+- "gpui-pre",
+- "gpui-pre-macros",
+- "gpui-pre-sum-tree",
++ "gpui_macros",
+  "indoc",
+  "instant",
+  "itertools 0.13.0",
+@@ -3899,6 +4041,7 @@ dependencies = [
+  "similar",
+  "smallvec",
+  "smol",
++ "sum_tree",
+  "tracing",
+  "tree-sitter",
+  "tree-sitter-astro-next",
+@@ -3955,10 +4098,9 @@ dependencies = [
+ name = "gpui-component-shell"
+ version = "0.7.3"
+ dependencies = [
++ "gpui",
+  "gpui-base",
+  "gpui-component",
+- "gpui-fast",
+- "gpui-pre",
+  "gpui-shell",
+  "serde_json",
+ ]
+@@ -3972,17 +4114,17 @@ dependencies = [
+  "autocorrect",
+  "chrono",
+  "csv",
+- "dirs 6.0.0",
++ "dirs",
+  "fake",
+  "getrandom 0.2.17",
+  "gpui-fps",
+  "gpui-kit",
+- "gpui-pre-reqwest-client",
+  "gpui-shell",
+  "gtk",
+  "itertools 0.14.0",
+  "rand 0.8.8",
+  "regex",
++ "reqwest_client",
+  "rust-i18n",
+  "serde",
+  "serde_json",
+@@ -4008,369 +4150,48 @@ dependencies = [
+ ]
+ 
+ [[package]]
+-name = "gpui-fast"
+-version = "0.1.7"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "35cb4c01c92462871c34d560b4ef21b7287a355036afa1a1cafede9c13ce55a0"
++name = "gpui-fps"
++version = "0.7.3"
+ dependencies = [
+- "accesskit",
+- "anyhow",
+- "async-channel",
+- "async-task",
+- "backtrace",
+- "bitflags 2.13.1",
+- "chrono",
+- "criterion",
+- "ctor",
+- "derive_more 2.1.1",
+- "embed-resource",
+- "etagere",
+- "futures",
+- "futures-concurrency",
+- "getrandom 0.3.4",
+- "gpui-fast-macros",
+- "gpui-pre-bench-metrics",
+- "gpui-pre-collections",
+- "gpui-pre-http-client",
+- "gpui-pre-refineable",
+- "gpui-pre-scheduler",
+- "gpui-pre-shared-string",
+- "gpui-pre-sum-tree",
+- "gpui-pre-util",
+- "hdrhistogram",
+- "heapless",
+- "image",
+- "inventory",
+- "itertools 0.14.0",
++ "core-graphics 0.24.0",
++ "gpui",
+  "libc",
+- "log",
+- "lyon",
+- "num_cpus",
+  "objc2-core-foundation",
+- "objc2-core-video",
+- "parking",
+- "parking_lot",
+- "pin-project",
+- "pollster 0.4.0",
+- "postage",
+- "profiling",
+- "proptest",
+- "rand 0.9.5",
+- "raw-window-handle",
+- "regex",
+- "resvg 0.46.0",
+- "schemars",
+- "seahash",
+- "serde",
+- "serde_json",
+- "slotmap",
+- "smallvec",
+- "spin 0.10.1",
+- "strum",
+- "taffy 0.14.0",
+- "thiserror 2.0.20",
+- "ttf-parser",
+- "url",
+- "usvg 0.46.0",
++ "objc2-io-kit",
++ "sysinfo 0.37.2",
+  "uuid",
+- "waker-fn",
++ "wayland-client",
+  "web-time",
+- "windows 0.62.2",
+- "zed-scap",
++ "windows 0.58.0",
+ ]
+ 
+ [[package]]
+-name = "gpui-fast-apple"
+-version = "0.1.7"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "7430efcfe8fadf11c1b923bcc435a3b646566f77a8e386e0505a4827c3d08046"
++name = "gpui-kit"
++version = "0.7.3"
++dependencies = [
++ "chrono",
++ "gpui",
++ "gpui-base",
++ "gpui-component",
++ "gpui-kit-assets",
++ "gpui_macros",
++ "gpui_platform",
++ "gpui_web",
++ "lsp-types 0.97.0",
++]
++
++[[package]]
++name = "gpui-kit-assets"
++version = "0.7.3"
+ dependencies = [
+  "anyhow",
+- "async-task",
+- "block2 0.6.2",
+- "cbindgen",
+- "core-foundation 0.10.1",
+- "core-foundation-sys 0.8.7",
+- "core-graphics 0.24.0",
+- "core-text",
+- "derive_more 2.1.1",
+- "dispatch2",
+- "etagere",
+- "foreign-types",
+- "futures",
+- "gpui-fast",
+- "gpui-pre-collections",
+- "gpui-pre-util",
+- "image",
+- "libc",
+- "log",
+- "mach2 0.6.0",
+- "metal",
+- "objc2 0.6.4",
+- "objc2-core-foundation",
+- "objc2-core-text",
+- "objc2-core-video",
+- "objc2-foundation 0.3.2",
+- "objc2-metal 0.3.2",
+- "objc2-quartz-core 0.3.2",
+- "objc2-security",
+- "parking_lot",
+- "pathfinder_geometry",
+- "smallvec",
+- "thiserror 2.0.20",
+- "zed-font-kit",
+-]
+-
+-[[package]]
+-name = "gpui-fast-linux"
+-version = "0.1.7"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "43717a4d762a5d576ec70666d6908457711c70414472d875d2177ea632de577f"
+-dependencies = [
+- "accesskit",
+- "accesskit_unix",
+- "anyhow",
+- "as-raw-xcb-connection",
+- "ashpd",
+- "bytemuck",
+- "calloop",
+- "calloop-wayland-source",
+- "filedescriptor",
+- "futures",
+- "gpui-fast",
+- "gpui-fast-wgpu",
+- "gpui-pre-collections",
+- "gpui-pre-http-client",
+- "gpui-pre-util",
+- "libc",
+- "log",
+- "notify-rust",
+- "oo7",
+- "open",
+- "parking_lot",
+- "raw-window-handle",
+- "smallvec",
+- "smol",
+- "strum",
+- "url",
+- "uuid",
+- "wayland-backend",
+- "wayland-client",
+- "wayland-cursor",
+- "wayland-protocols",
+- "wayland-protocols-plasma",
+- "wayland-protocols-wlr",
+- "x11rb",
+- "xkbcommon",
+- "zed-scap",
+- "zed-xim",
+-]
+-
+-[[package]]
+-name = "gpui-fast-macos"
+-version = "0.1.7"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "6ade501d3f4f6d5e0fa546bf60d441fcf0965379a2cb93e1db953e3ce023db63"
+-dependencies = [
+- "accesskit",
+- "accesskit_macos",
+- "anyhow",
+- "block2 0.6.2",
+- "cocoa 0.26.0",
+- "core-foundation 0.10.1",
+- "core-foundation-sys 0.8.7",
+- "core-graphics 0.24.0",
+- "ctor",
+- "dispatch2",
+- "foreign-types",
+- "futures",
+- "gpui-fast",
+- "gpui-fast-apple",
+- "gpui-pre-collections",
+- "gpui-pre-scheduler",
+- "gpui-pre-util",
+- "image",
+- "itertools 0.14.0",
+- "log",
+- "objc",
+- "objc2 0.6.4",
+- "objc2-app-kit 0.3.2",
+- "objc2-core-video",
+- "objc2-foundation 0.3.2",
+- "objc2-user-notifications",
+- "parking_lot",
+- "raw-window-handle",
+- "semver",
+- "smallvec",
+- "strum",
+- "uuid",
+-]
+-
+-[[package]]
+-name = "gpui-fast-macros"
+-version = "0.1.7"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "07a2291699eb41f1cc9f956cbd359a16a397bab44d496cb44ad2b5900a935b9f"
+-dependencies = [
+- "heck 0.5.0",
+- "proc-macro2",
+- "quote",
+- "syn 2.0.119",
+-]
+-
+-[[package]]
+-name = "gpui-fast-platform"
+-version = "0.1.7"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "4367bf7c733230468d44823d356aef89b1586b391afaf7f9a280d1a6703ac02c"
+-dependencies = [
+- "anyhow",
+- "console_error_panic_hook",
+- "gpui-fast",
+- "gpui-fast-linux",
+- "gpui-fast-macos",
+- "gpui-fast-web",
+- "gpui-fast-wgpu",
+- "gpui-fast-windows",
+-]
+-
+-[[package]]
+-name = "gpui-fast-web"
+-version = "0.1.7"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "007dd7d6aea0c857037b8a655c824082de1124265c3da666186dcb5f09a63c99"
+-dependencies = [
+- "anyhow",
+- "async-channel",
+- "console_error_panic_hook",
+- "futures",
+- "gpui-fast",
+- "gpui-fast-wgpu",
+- "gpui-pre-http-client",
+- "gpui-pre-scheduler",
+- "js-sys",
+- "log",
+- "parking_lot",
+- "raw-window-handle",
+- "smallvec",
+- "unicode-properties",
+- "unicode-script",
+- "unicode-segmentation",
+- "uuid",
+- "wasm-bindgen",
+- "wasm-bindgen-futures",
+- "wasm_thread",
+- "web-sys",
+- "web-time",
+-]
+-
+-[[package]]
+-name = "gpui-fast-wgpu"
+-version = "0.1.7"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "d250af726008e598b78a603b340539c8df1734199680635df61556398114f7eb"
+-dependencies = [
+- "anyhow",
+- "bytemuck",
+- "cosmic-text",
+- "etagere",
+- "gpui-fast",
+- "gpui-pre-collections",
+- "gpui-pre-util",
+- "image",
+- "itertools 0.14.0",
+- "log",
+- "parking_lot",
+- "profiling",
+- "raw-window-handle",
+- "smallvec",
+- "swash",
+- "unicode-bidi",
+- "unicode-segmentation",
+- "web-sys",
+- "wgpu",
+- "zed-font-kit",
+-]
+-
+-[[package]]
+-name = "gpui-fast-windows"
+-version = "0.1.7"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "3ab29a2b4bc4aac7f18c470f7a055e7853dc3f4c2820d11fd54952a1c6923f52"
+-dependencies = [
+- "accesskit",
+- "accesskit_windows",
+- "anyhow",
+- "dunce",
+- "etagere",
+- "futures",
+- "gpui-fast",
+- "gpui-pre-collections",
+- "gpui-pre-scheduler",
+- "gpui-pre-util",
+- "image",
+- "itertools 0.14.0",
+- "log",
+- "parking_lot",
+- "rand 0.9.5",
+- "raw-window-handle",
+- "smallvec",
+- "uuid",
+- "windows 0.62.2",
+- "windows-core 0.62.2",
+- "windows-numerics 0.3.1",
+- "windows-registry 0.6.1",
+-]
+-
+-[[package]]
+-name = "gpui-fps"
+-version = "0.7.3"
+-dependencies = [
+- "core-graphics 0.24.0",
+- "gpui-fast",
+- "gpui-pre",
+- "libc",
+- "objc2-core-foundation",
+- "objc2-io-kit",
+- "sysinfo 0.37.2",
+- "uuid",
+- "wayland-client",
+- "web-time",
+- "windows 0.58.0",
+-]
+-
+-[[package]]
+-name = "gpui-kit"
+-version = "0.7.3"
+-dependencies = [
+- "chrono",
+- "gpui-base",
+- "gpui-component",
+- "gpui-fast",
+- "gpui-fast-platform",
+- "gpui-fast-web",
+- "gpui-kit-assets",
+- "gpui-pre",
+- "gpui-pre-macros",
+- "gpui-pre-platform",
+- "gpui-pre-web",
+- "lsp-types 0.97.0",
+-]
+-
+-[[package]]
+-name = "gpui-kit-assets"
+-version = "0.7.3"
+-dependencies = [
+- "anyhow",
+- "gpui-fast",
+- "gpui-fast-platform",
+- "gpui-pre",
+- "gpui-pre-platform",
+- "gpui-pre-reqwest",
++ "gpui",
++ "gpui_platform",
+  "log",
+  "rust-embed",
+  "wasm-bindgen",
+  "wasm-bindgen-futures",
++ "zed-reqwest",
+ ]
+ 
+ [[package]]
+@@ -4381,205 +4202,92 @@ dependencies = [
+ ]
+ 
+ [[package]]
+-name = "gpui-pre"
+-version = "0.3.9"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "34f61c1cfd36fc9c436af09308c963822ae27a45a84feb21a77ba5c9e051f1c0"
++name = "gpui-shell"
++version = "0.7.3"
+ dependencies = [
+- "accesskit",
+  "anyhow",
+  "async-channel",
+- "async-task",
+- "backtrace",
+- "bitflags 2.13.1",
++ "cap-std",
+  "chrono",
+- "criterion",
+- "ctor",
+- "derive_more 2.1.1",
+- "embed-resource",
+- "etagere",
+- "futures",
+- "futures-concurrency",
+- "getrandom 0.3.4",
+- "gpui-pre-bench-metrics",
+- "gpui-pre-collections",
+- "gpui-pre-http-client",
+- "gpui-pre-macros",
+- "gpui-pre-refineable",
+- "gpui-pre-scheduler",
+- "gpui-pre-shared-string",
+- "gpui-pre-sum-tree",
+- "gpui-pre-util",
+- "hdrhistogram",
+- "heapless",
++ "fs2",
++ "gpui",
++ "gpui-base",
++ "gpui-fps",
++ "gpui_platform",
+  "image",
+- "inventory",
+- "itertools 0.14.0",
++ "instant",
+  "libc",
+- "log",
+- "lyon",
+- "num_cpus",
+- "objc2-core-foundation",
+- "objc2-core-video",
+- "parking",
+- "parking_lot",
+- "pin-project",
+- "pollster 0.4.0",
+- "postage",
+- "profiling",
+- "proptest",
+- "rand 0.9.5",
+- "raw-window-handle",
+- "regex",
+- "resvg 0.46.0",
++ "quickjs-jit",
++ "quickjs-jit-runtime",
++ "quickjs-jit-stdlib",
+  "schemars",
+- "seahash",
++ "semver",
+  "serde",
+  "serde_json",
+- "slotmap",
++ "sha2 0.10.9",
+  "smallvec",
+- "spin 0.10.1",
+- "strum",
+- "taffy 0.13.0",
+- "thiserror 2.0.20",
+- "ttf-parser",
+- "url",
++ "smol",
++ "tracing",
++ "tungstenite",
+  "usvg 0.46.0",
+- "uuid",
+- "waker-fn",
+- "web-time",
+- "windows 0.62.2",
+- "zed-scap",
++ "wait-timeout",
++ "windows 0.58.0",
++ "zed-reqwest",
+ ]
+ 
+ [[package]]
+-name = "gpui-pre-apple"
+-version = "0.3.9"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "b52f58893fe1a0836464428dfad2b5eaf42c9c303a9638f4c2aced5a69072a15"
++name = "gpui-wry"
++version = "0.7.3"
+ dependencies = [
+  "anyhow",
+- "async-task",
+- "block2 0.6.2",
++ "gpui",
++ "lb-wry",
++]
++
++[[package]]
++name = "gpui_apple"
++version = "0.1.0"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=6d4d90754f7dde3e62afb6fe74a632c0b4660396#6d4d90754f7dde3e62afb6fe74a632c0b4660396"
++dependencies = [
++ "anyhow",
++ "block",
+  "cbindgen",
++ "cocoa 0.26.0",
++ "collections",
+  "core-foundation 0.10.1",
+- "core-foundation-sys 0.8.7",
+- "core-graphics 0.24.0",
+- "core-text",
++ "core-video",
+  "derive_more 2.1.1",
+- "dispatch2",
+  "etagere",
+  "foreign-types",
+- "futures",
+- "gpui-pre",
+- "gpui-pre-collections",
+- "gpui-pre-util",
++ "gpui",
+  "image",
+- "libc",
+  "log",
+- "mach2 0.6.0",
+  "metal",
+- "objc2 0.6.4",
+- "objc2-core-foundation",
+- "objc2-core-text",
+- "objc2-core-video",
+- "objc2-foundation 0.3.2",
+- "objc2-metal 0.3.2",
+- "objc2-quartz-core 0.3.2",
+- "objc2-security",
+- "parking_lot",
+- "pathfinder_geometry",
+- "smallvec",
+- "thiserror 2.0.20",
+- "zed-font-kit",
+-]
+-
+-[[package]]
+-name = "gpui-pre-bench-metrics"
+-version = "0.3.9"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "d414e8afe95269832269715fa11818aa45135d2e0bf61a9e2966add7b1326cee"
+-dependencies = [
+- "anyhow",
+- "criterion",
+- "libc",
+- "perf-event2",
+-]
+-
+-[[package]]
+-name = "gpui-pre-collections"
+-version = "0.3.9"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "920c2f5b2f1a7813114d89f4841f26f6060d9c35d7c8a852a4205d1a767a7ce0"
+-dependencies = [
+- "gpui-pre-util",
+- "indexmap",
+- "rustc-hash 2.1.3",
+-]
+-
+-[[package]]
+-name = "gpui-pre-derive-refineable"
+-version = "0.3.9"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "947395f26228296c0c79fb889d3687b205e552c25bbcdece216fb2394ea9bcd1"
+-dependencies = [
+- "proc-macro2",
+- "quote",
+- "syn 2.0.119",
+-]
+-
+-[[package]]
+-name = "gpui-pre-http-client"
+-version = "0.3.9"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "c56cdaa3f1a271162b7fede1d4557879eedb056e293cedbb82743600650b755e"
+-dependencies = [
+- "anyhow",
+- "bytes",
+- "futures",
+- "http",
+- "http-body",
+- "log",
++ "objc",
+  "parking_lot",
+- "serde",
+- "serde_json",
+- "serde_urlencoded",
+- "url",
+-]
+-
+-[[package]]
+-name = "gpui-pre-http-client-tls"
+-version = "0.3.9"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "b7616a90ec92c9832bbc80ddab34e10fdf8d23520d5cbb0b432b73e4e9f6c812"
+-dependencies = [
+- "log",
+- "rustls",
+- "rustls-platform-verifier",
+- "webpki-roots 1.0.9",
+ ]
+ 
+ [[package]]
+-name = "gpui-pre-linux"
+-version = "0.3.9"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "e28213c3fde6f13e91ba0b74b90cbaadec9373e36a031eda98561d31059870f3"
++name = "gpui_linux"
++version = "0.1.0"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=6d4d90754f7dde3e62afb6fe74a632c0b4660396#6d4d90754f7dde3e62afb6fe74a632c0b4660396"
+ dependencies = [
+  "accesskit",
+  "accesskit_unix",
+  "anyhow",
+  "as-raw-xcb-connection",
+  "ashpd",
++ "bitflags 2.13.1",
+  "bytemuck",
+  "calloop",
+  "calloop-wayland-source",
++ "collections",
+  "filedescriptor",
+  "futures",
+- "gpui-pre",
+- "gpui-pre-collections",
+- "gpui-pre-http-client",
+- "gpui-pre-util",
+- "gpui-pre-wgpu",
++ "gpui",
++ "gpui_util",
++ "gpui_wgpu",
++ "http_client",
+  "libc",
+  "log",
+  "notify-rust",
+@@ -4598,6 +4306,7 @@ dependencies = [
+  "wayland-protocols",
+  "wayland-protocols-plasma",
+  "wayland-protocols-wlr",
++ "x11-clipboard",
+  "x11rb",
+  "xkbcommon",
+  "zed-scap",
+@@ -4605,174 +4314,79 @@ dependencies = [
+ ]
+ 
+ [[package]]
+-name = "gpui-pre-macos"
+-version = "0.3.9"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "c7c988b7e49775cc8542dbe48d5a10e073d8e898a023ef3ff3d24f33363e9863"
++name = "gpui_macos"
++version = "0.1.0"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=6d4d90754f7dde3e62afb6fe74a632c0b4660396#6d4d90754f7dde3e62afb6fe74a632c0b4660396"
+ dependencies = [
+  "accesskit",
+  "accesskit_macos",
+  "anyhow",
++ "async-task",
++ "block",
+  "block2 0.6.2",
+  "cocoa 0.26.0",
++ "collections",
+  "core-foundation 0.10.1",
+  "core-foundation-sys 0.8.7",
+  "core-graphics 0.24.0",
++ "core-text",
+  "ctor",
+  "dispatch2",
+  "foreign-types",
+  "futures",
+- "gpui-pre",
+- "gpui-pre-apple",
+- "gpui-pre-collections",
+- "gpui-pre-scheduler",
+- "gpui-pre-util",
++ "gpui",
++ "gpui_apple",
++ "gpui_util",
+  "image",
+  "itertools 0.14.0",
++ "libc",
+  "log",
++ "mach2 0.5.0",
++ "media",
++ "metal",
+  "objc",
+  "objc2 0.6.4",
+  "objc2-app-kit 0.3.2",
+- "objc2-core-video",
+  "objc2-foundation 0.3.2",
+  "objc2-user-notifications",
+  "parking_lot",
++ "pathfinder_geometry",
+  "raw-window-handle",
+  "semver",
+  "smallvec",
+  "strum",
+  "uuid",
++ "zed-font-kit",
+ ]
+ 
+ [[package]]
+-name = "gpui-pre-macros"
+-version = "0.3.9"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "0bb80dac5e1f6b8cde1d2740389e77dfc0071bfcc81fba5526d5dc90f68171cc"
++name = "gpui_macros"
++version = "0.1.0"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=6d4d90754f7dde3e62afb6fe74a632c0b4660396#6d4d90754f7dde3e62afb6fe74a632c0b4660396"
+ dependencies = [
+  "heck 0.5.0",
+- "proc-macro-crate 3.5.0",
+  "proc-macro2",
+  "quote",
+- "syn 2.0.119",
+-]
+-
+-[[package]]
+-name = "gpui-pre-platform"
+-version = "0.3.9"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "bbdbdac421178313fed8929fe95b42634a266a735079fcf03ff231bc2ccb2c5e"
+-dependencies = [
+- "anyhow",
+- "console_error_panic_hook",
+- "gpui-pre",
+- "gpui-pre-linux",
+- "gpui-pre-macos",
+- "gpui-pre-web",
+- "gpui-pre-wgpu",
+- "gpui-pre-windows",
+-]
+-
+-[[package]]
+-name = "gpui-pre-refineable"
+-version = "0.3.9"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "237703b3b219d11adb50dd33bb0fcca3d34fc001623b3143e72cb051d0fb3777"
+-dependencies = [
+- "gpui-pre-derive-refineable",
+-]
+-
+-[[package]]
+-name = "gpui-pre-reqwest"
+-version = "0.12.15"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "05be23908e707966824f8c51a609904b7f30739e8d915e120a53c1b995ba964c"
+-dependencies = [
+- "base64",
+- "bytes",
+- "encoding_rs",
+- "futures-channel",
+- "futures-core",
+- "futures-util",
+- "h2",
+- "http",
+- "http-body",
+- "http-body-util",
+- "hyper",
+- "hyper-rustls",
+- "hyper-util",
+- "ipnet",
+- "js-sys",
+- "log",
+- "mime",
+- "mime_guess",
+- "once_cell",
+- "percent-encoding",
+- "pin-project-lite",
+- "quinn",
+- "rustls",
+- "rustls-native-certs",
+- "rustls-pemfile",
+- "rustls-pki-types",
+- "serde",
+- "serde_json",
+- "serde_urlencoded",
+- "sync_wrapper",
+- "system-configuration",
+- "tokio",
+- "tokio-rustls",
+- "tokio-socks",
+- "tokio-util",
+- "tower 0.5.3",
+- "tower-service",
+- "url",
+- "wasm-bindgen",
+- "wasm-bindgen-futures",
+- "wasm-streams",
+- "web-sys",
+- "windows-registry 0.4.0",
+-]
+-
+-[[package]]
+-name = "gpui-pre-reqwest-client"
+-version = "0.3.9"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "92c2e70dc8550d60324b1eb3f3d08b4ccf20a8b577a9a42732dd3bafb2363bc0"
+-dependencies = [
+- "anyhow",
+- "bytes",
+- "futures",
+- "gpui-pre-http-client",
+- "gpui-pre-http-client-tls",
+- "gpui-pre-reqwest",
+- "gpui-pre-util",
+- "log",
+- "regex",
+- "tokio",
++ "syn 2.0.119",
+ ]
+ 
+ [[package]]
+-name = "gpui-pre-scheduler"
+-version = "0.3.9"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "83f342555282a59ed8dd58dd7e0a920524fa8ef6aa8c8f30e2edb7019a8f72cb"
++name = "gpui_platform"
++version = "0.1.0"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=6d4d90754f7dde3e62afb6fe74a632c0b4660396#6d4d90754f7dde3e62afb6fe74a632c0b4660396"
+ dependencies = [
+- "async-task",
+- "backtrace",
+- "chrono",
+- "flume 0.12.0",
+- "futures",
+- "parking_lot",
+- "rand 0.9.5",
+- "wasm_thread",
+- "web-time",
++ "console_error_panic_hook",
++ "gpui",
++ "gpui_linux",
++ "gpui_macos",
++ "gpui_web",
++ "gpui_windows",
+ ]
+ 
+ [[package]]
+-name = "gpui-pre-shared-string"
+-version = "0.3.9"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "71f488bf4780735f6b2dad24f8db1e3d9e2593de0ec298e3574c788f571b81c4"
++name = "gpui_shared_string"
++version = "0.1.0"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=6d4d90754f7dde3e62afb6fe74a632c0b4660396#6d4d90754f7dde3e62afb6fe74a632c0b4660396"
+ dependencies = [
+  "schemars",
+  "serde",
+@@ -4780,22 +4394,9 @@ dependencies = [
+ ]
+ 
+ [[package]]
+-name = "gpui-pre-sum-tree"
+-version = "0.3.9"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "aadb3bd3da22617e2158b1842f5a9c29c1626c926ad0686163ced1a009963ff3"
+-dependencies = [
+- "gpui-pre-ztracing",
+- "heapless",
+- "rayon",
+- "tracing",
+-]
+-
+-[[package]]
+-name = "gpui-pre-util"
+-version = "0.3.9"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "a04ec9abd7a87ac05a221f4629403831c44c17123bc33cb5d271a6303259b340"
++name = "gpui_util"
++version = "0.1.0"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=6d4d90754f7dde3e62afb6fe74a632c0b4660396#6d4d90754f7dde3e62afb6fe74a632c0b4660396"
+ dependencies = [
+  "anyhow",
+  "log",
+@@ -4803,27 +4404,22 @@ dependencies = [
+ ]
+ 
+ [[package]]
+-name = "gpui-pre-web"
+-version = "0.3.9"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "aedd55b99dc77e28df8202b0ea868aa5c90fda4aefff539ea21087d7c2ff4bfb"
++name = "gpui_web"
++version = "0.1.0"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=6d4d90754f7dde3e62afb6fe74a632c0b4660396#6d4d90754f7dde3e62afb6fe74a632c0b4660396"
+ dependencies = [
+  "anyhow",
+  "async-channel",
+  "console_error_panic_hook",
+  "futures",
+- "gpui-pre",
+- "gpui-pre-http-client",
+- "gpui-pre-scheduler",
+- "gpui-pre-wgpu",
++ "gpui",
++ "gpui_wgpu",
++ "http_client",
+  "js-sys",
+  "log",
+  "parking_lot",
+  "raw-window-handle",
+- "smallvec",
+- "unicode-properties",
+- "unicode-script",
+- "unicode-segmentation",
++ "scheduler",
+  "uuid",
+  "wasm-bindgen",
+  "wasm-bindgen-futures",
+@@ -4833,19 +4429,17 @@ dependencies = [
+ ]
+ 
+ [[package]]
+-name = "gpui-pre-wgpu"
+-version = "0.3.9"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "5b1cdb26c1503bf9662ee8fbc5ab0b44b2deeee4b5c12dc67491ba6fb5fc544b"
++name = "gpui_wgpu"
++version = "0.1.0"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=6d4d90754f7dde3e62afb6fe74a632c0b4660396#6d4d90754f7dde3e62afb6fe74a632c0b4660396"
+ dependencies = [
+  "anyhow",
+  "bytemuck",
++ "collections",
+  "cosmic-text",
+  "etagere",
+- "gpui-pre",
+- "gpui-pre-collections",
+- "gpui-pre-util",
+- "image",
++ "gpui",
++ "gpui_util",
+  "itertools 0.14.0",
+  "log",
+  "parking_lot",
+@@ -4861,21 +4455,19 @@ dependencies = [
+ ]
+ 
+ [[package]]
+-name = "gpui-pre-windows"
+-version = "0.3.9"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "513d4f0fc7d596d3bdef2a73a524ffb83dabc95bf484f2855a698e7f431290a9"
++name = "gpui_windows"
++version = "0.1.0"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=6d4d90754f7dde3e62afb6fe74a632c0b4660396#6d4d90754f7dde3e62afb6fe74a632c0b4660396"
+ dependencies = [
+  "accesskit",
+  "accesskit_windows",
+  "anyhow",
++ "collections",
+  "dunce",
+  "etagere",
+  "futures",
+- "gpui-pre",
+- "gpui-pre-collections",
+- "gpui-pre-scheduler",
+- "gpui-pre-util",
++ "gpui",
++ "gpui_util",
+  "image",
+  "itertools 0.14.0",
+  "log",
+@@ -4890,68 +4482,6 @@ dependencies = [
+  "windows-registry 0.6.1",
+ ]
+ 
+-[[package]]
+-name = "gpui-pre-ztracing"
+-version = "0.3.9"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "f17bfd6bd1f77ba5c58181fa6f82fc7a63015a1c58bef94a76e5acb9f8e42572"
+-dependencies = [
+- "gpui-pre-ztracing-macro",
+- "tracing",
+-]
+-
+-[[package]]
+-name = "gpui-pre-ztracing-macro"
+-version = "0.3.9"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "4b0d73e1bc02eef886a5947f41b8512708792e9e5d3053d181843311a487f96f"
+-
+-[[package]]
+-name = "gpui-shell"
+-version = "0.7.3"
+-dependencies = [
+- "anyhow",
+- "async-channel",
+- "cap-std",
+- "chrono",
+- "fs2",
+- "gpui-base",
+- "gpui-fast",
+- "gpui-fast-platform",
+- "gpui-fps",
+- "gpui-pre",
+- "gpui-pre-platform",
+- "gpui-pre-reqwest",
+- "image",
+- "instant",
+- "libc",
+- "quickjs-jit",
+- "quickjs-jit-runtime",
+- "quickjs-jit-stdlib",
+- "schemars",
+- "semver",
+- "serde",
+- "serde_json",
+- "sha2 0.10.9",
+- "smallvec",
+- "smol",
+- "tracing",
+- "tungstenite",
+- "usvg 0.46.0",
+- "wait-timeout",
+- "windows 0.58.0",
+-]
+-
+-[[package]]
+-name = "gpui-wry"
+-version = "0.7.3"
+-dependencies = [
+- "anyhow",
+- "gpui-fast",
+- "gpui-pre",
+- "lb-wry",
+-]
+-
+ [[package]]
+ name = "granit-parser"
+ version = "0.0.7"
+@@ -5287,6 +4817,37 @@ dependencies = [
+  "pin-project-lite",
+ ]
+ 
++[[package]]
++name = "http_client"
++version = "0.1.0"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=6d4d90754f7dde3e62afb6fe74a632c0b4660396#6d4d90754f7dde3e62afb6fe74a632c0b4660396"
++dependencies = [
++ "anyhow",
++ "async-compression",
++ "bytes",
++ "derive_more 2.1.1",
++ "futures",
++ "http",
++ "http-body",
++ "log",
++ "parking_lot",
++ "serde",
++ "serde_json",
++ "serde_urlencoded",
++ "url",
++]
++
++[[package]]
++name = "http_client_tls"
++version = "0.1.0"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=6d4d90754f7dde3e62afb6fe74a632c0b4660396#6d4d90754f7dde3e62afb6fe74a632c0b4660396"
++dependencies = [
++ "log",
++ "rustls",
++ "rustls-platform-verifier",
++ "webpki-roots 1.0.9",
++]
++
+ [[package]]
+ name = "httparse"
+ version = "1.10.1"
+@@ -5685,6 +5246,18 @@ version = "3.0.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "2f0fb0570afe1fed943c5c3d4102d5358592d8625fda6a0007fdbe65a92fba96"
+ 
++[[package]]
++name = "io-surface"
++version = "0.16.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "554b8c5d64ec09a3a520fe58e4d48a73e00ff32899cdcbe32a4877afd4968b8e"
++dependencies = [
++ "cgl",
++ "core-foundation 0.10.1",
++ "core-foundation-sys 0.8.7",
++ "leaky-cow",
++]
++
+ [[package]]
+ name = "ipnet"
+ version = "2.12.1"
+@@ -5700,6 +5273,17 @@ dependencies = [
+  "once_cell",
+ ]
+ 
++[[package]]
++name = "is-terminal"
++version = "0.4.17"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
++dependencies = [
++ "hermit-abi",
++ "libc",
++ "windows-sys 0.52.0",
++]
++
+ [[package]]
+ name = "is-wsl"
+ version = "0.4.0"
+@@ -5716,6 +5300,15 @@ version = "1.70.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
+ 
++[[package]]
++name = "itertools"
++version = "0.10.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "b0fd2260e829bddf4cb6ea802289de2f86d6a7a690192fbe91b3f46e0f2c8473"
++dependencies = [
++ "either",
++]
++
+ [[package]]
+ name = "itertools"
+ version = "0.11.0"
+@@ -5962,7 +5555,7 @@ dependencies = [
+  "block2 0.6.2",
+  "cookie",
+  "crossbeam-channel",
+- "dirs 6.0.0",
++ "dirs",
+  "dpi",
+  "dunce",
+  "flume 0.11.1",
+@@ -5998,12 +5591,33 @@ dependencies = [
+  "x11-dl",
+ ]
+ 
++[[package]]
++name = "leak"
++version = "0.1.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "bd100e01f1154f2908dfa7d02219aeab25d0b9c7fa955164192e3245255a0c73"
++
++[[package]]
++name = "leaky-cow"
++version = "0.1.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "40a8225d44241fd324a8af2806ba635fc7c8a7e9a7de4d5cf3ef54e71f5926fc"
++dependencies = [
++ "leak",
++]
++
+ [[package]]
+ name = "lebe"
+ version = "0.5.3"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "7a79a3332a6609480d7d0c9eab957bca6b455b91bb84e66d19f5ff66294b85b8"
+ 
++[[package]]
++name = "libbz2-rs-sys"
++version = "0.2.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "34b357333733e8260735ba5894eb928c02ecc69c78715f01a8019e7fa7f2db4c"
++
+ [[package]]
+ name = "libc"
+ version = "0.2.189"
+@@ -6329,6 +5943,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
+ dependencies = [
+  "serde_core",
++ "value-bag",
+ ]
+ 
+ [[package]]
+@@ -6464,9 +6079,12 @@ dependencies = [
+ 
+ [[package]]
+ name = "mach2"
+-version = "0.6.0"
++version = "0.5.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "dae608c151f68243f2b000364e1f7b186d9c29845f7d2d85bd31b9ad77ad552b"
++checksum = "6a1b95cd5421ec55b445b5ae102f5ea0e768de1f82bd3001e11f426c269c3aea"
++dependencies = [
++ "libc",
++]
+ 
+ [[package]]
+ name = "malloc_buf"
+@@ -6596,6 +6214,20 @@ dependencies = [
+  "digest 0.11.3",
+ ]
+ 
++[[package]]
++name = "media"
++version = "0.1.0"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=6d4d90754f7dde3e62afb6fe74a632c0b4660396#6d4d90754f7dde3e62afb6fe74a632c0b4660396"
++dependencies = [
++ "anyhow",
++ "bindgen",
++ "core-foundation 0.10.1",
++ "core-video",
++ "foreign-types",
++ "metal",
++ "objc",
++]
++
+ [[package]]
+ name = "memchr"
+ version = "2.8.3"
+@@ -6922,6 +6554,15 @@ dependencies = [
+  "winapi",
+ ]
+ 
++[[package]]
++name = "nu-ansi-term"
++version = "0.50.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
++dependencies = [
++ "windows-sys 0.59.0",
++]
++
+ [[package]]
+ name = "num"
+ version = "0.4.3"
+@@ -7247,6 +6888,16 @@ dependencies = [
+  "objc2-foundation 0.3.2",
+ ]
+ 
++[[package]]
++name = "objc2-core-location"
++version = "0.3.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "ca347214e24bc973fc025fd0d36ebb179ff30536ed1f80252706db19ee452009"
++dependencies = [
++ "objc2 0.6.4",
++ "objc2-foundation 0.3.2",
++]
++
+ [[package]]
+ name = "objc2-core-text"
+ version = "0.3.2"
+@@ -7270,7 +6921,6 @@ dependencies = [
+  "objc2-core-foundation",
+  "objc2-core-graphics",
+  "objc2-io-surface",
+- "objc2-metal 0.3.2",
+ ]
+ 
+ [[package]]
+@@ -7384,15 +7034,6 @@ dependencies = [
+  "objc2-metal 0.3.2",
+ ]
+ 
+-[[package]]
+-name = "objc2-security"
+-version = "0.3.2"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "709fe137109bd1e8b5a99390f77a7d8b2961dafc1a1c5db8f2e60329ad6d895a"
+-dependencies = [
+- "objc2-core-foundation",
+-]
+-
+ [[package]]
+ name = "objc2-speech"
+ version = "0.3.2"
+@@ -7426,6 +7067,7 @@ dependencies = [
+  "bitflags 2.13.1",
+  "block2 0.6.2",
+  "objc2 0.6.4",
++ "objc2-core-location",
+  "objc2-foundation 0.3.2",
+ ]
+ 
+@@ -7519,9 +7161,9 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
+ 
+ [[package]]
+ name = "oo7"
+-version = "0.6.0"
++version = "0.6.0-alpha"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "78f2bfed90f1618b4b48dcad9307f25e14ae894e2949642c87c351601d62cebd"
++checksum = "dc26d063a0f3c0f47e393ea1649209aa96147ef435b8ca2752112d4ca10117c6"
+ dependencies = [
+  "aes 0.8.4",
+  "ashpd",
+@@ -7535,7 +7177,7 @@ dependencies = [
+  "endi",
+  "futures-lite",
+  "futures-util",
+- "getrandom 0.4.3",
++ "getrandom 0.3.4",
+  "hkdf 0.12.4",
+  "hmac 0.12.1",
+  "md-5 0.10.6",
+@@ -7652,16 +7294,6 @@ dependencies = [
+  "sha2 0.11.0",
+ ]
+ 
+-[[package]]
+-name = "page_size"
+-version = "0.6.0"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "30d5b2194ed13191c1999ae0704b7839fb18384fa22e49b57eeaa97d79ce40da"
+-dependencies = [
+- "libc",
+- "winapi",
+-]
+-
+ [[package]]
+ name = "pango"
+ version = "0.18.3"
+@@ -7782,38 +7414,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
+ 
+ [[package]]
+-name = "perf-event-data"
+-version = "0.1.8"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "575828d9d7d205188048eb1508560607a03d21eafdbba47b8cade1736c1c28e1"
+-dependencies = [
+- "bitflags 2.13.1",
+- "c-enum",
+- "perf-event-open-sys2",
+-]
+-
+-[[package]]
+-name = "perf-event-open-sys2"
+-version = "5.0.6"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "d9c25955321465255e437600b54296983fab1feac2cd0c38958adeb26dbae49e"
+-dependencies = [
+- "libc",
+- "memoffset",
+-]
+-
+-[[package]]
+-name = "perf-event2"
+-version = "0.7.4"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "0939b8fad77dfaeb29ebbd35faaeaadbf833167f30975f1b8993bbba09ea0a0f"
++name = "perf"
++version = "0.1.0"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=6d4d90754f7dde3e62afb6fe74a632c0b4660396#6d4d90754f7dde3e62afb6fe74a632c0b4660396"
+ dependencies = [
+- "bitflags 2.13.1",
+- "c-enum",
+- "libc",
+- "memmap2",
+- "perf-event-data",
+- "perf-event-open-sys2",
++ "collections",
++ "serde",
++ "serde_json",
+ ]
+ 
+ [[package]]
+@@ -8270,6 +7877,8 @@ checksum = "af3fb618632874fb76937c2361a7f22afd393c982a2165595407edc75b06d3c1"
+ dependencies = [
+  "atomic",
+  "crossbeam-queue",
++ "futures",
++ "log",
+  "parking_lot",
+  "pin-project",
+  "pollster 0.2.5",
+@@ -8448,9 +8057,8 @@ dependencies = [
+ 
+ [[package]]
+ name = "proptest"
+-version = "1.11.0"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "4b45fcc2344c680f5025fe57779faef368840d0bd1f42f216291f0dc4ace4744"
++version = "1.10.0"
++source = "git+https://github.com/proptest-rs/proptest?rev=3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b#3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b"
+ dependencies = [
+  "bit-set 0.8.0",
+  "bit-vec 0.8.0",
+@@ -8469,8 +8077,7 @@ dependencies = [
+ [[package]]
+ name = "proptest-macro"
+ version = "0.5.0"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "efaa288b896cb2b345da7b7f2110ab19e51565b83495b56fcec98a62f8b1f33e"
++source = "git+https://github.com/proptest-rs/proptest?rev=3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b#3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b"
+ dependencies = [
+  "convert_case 0.11.0",
+  "proc-macro2",
+@@ -8997,17 +8604,6 @@ dependencies = [
+  "bitflags 2.13.1",
+ ]
+ 
+-[[package]]
+-name = "redox_users"
+-version = "0.4.6"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "ba009ff324d1fc1b900bd1fdb31564febe58a8ccc8a6fdbb93b543d33b13ca43"
+-dependencies = [
+- "getrandom 0.2.17",
+- "libredox",
+- "thiserror 1.0.69",
+-]
+-
+ [[package]]
+ name = "redox_users"
+ version = "0.5.2"
+@@ -9039,6 +8635,14 @@ dependencies = [
+  "syn 3.0.4",
+ ]
+ 
++[[package]]
++name = "refineable"
++version = "0.1.0"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=6d4d90754f7dde3e62afb6fe74a632c0b4660396#6d4d90754f7dde3e62afb6fe74a632c0b4660396"
++dependencies = [
++ "derive_refineable",
++]
++
+ [[package]]
+ name = "regalloc2"
+ version = "0.11.2"
+@@ -9098,6 +8702,23 @@ version = "1.1.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
+ 
++[[package]]
++name = "reqwest_client"
++version = "0.1.0"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=6d4d90754f7dde3e62afb6fe74a632c0b4660396#6d4d90754f7dde3e62afb6fe74a632c0b4660396"
++dependencies = [
++ "anyhow",
++ "bytes",
++ "futures",
++ "gpui_util",
++ "http_client",
++ "http_client_tls",
++ "log",
++ "regex",
++ "tokio",
++ "zed-reqwest",
++]
++
+ [[package]]
+ name = "resvg"
+ version = "0.45.1"
+@@ -9512,6 +9133,22 @@ dependencies = [
+  "windows-sys 0.61.2",
+ ]
+ 
++[[package]]
++name = "scheduler"
++version = "0.1.0"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=6d4d90754f7dde3e62afb6fe74a632c0b4660396#6d4d90754f7dde3e62afb6fe74a632c0b4660396"
++dependencies = [
++ "async-task",
++ "backtrace",
++ "chrono",
++ "flume 0.12.0",
++ "futures",
++ "parking_lot",
++ "rand 0.9.5",
++ "wasm_thread",
++ "web-time",
++]
++
+ [[package]]
+ name = "schemars"
+ version = "1.2.2"
+@@ -9720,6 +9357,15 @@ dependencies = [
+  "syn 3.0.4",
+ ]
+ 
++[[package]]
++name = "serde_fmt"
++version = "1.1.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "6e497af288b3b95d067a23a4f749f2861121ffcb2f6d8379310dcda040c345ed"
++dependencies = [
++ "serde_core",
++]
++
+ [[package]]
+ name = "serde_json"
+ version = "1.0.151"
+@@ -9873,7 +9519,7 @@ version = "3.1.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "32824fab5e16e6c4d86dc1ba84489390419a39f97699852b66480bb87d297ed8"
+ dependencies = [
+- "dirs 6.0.0",
++ "dirs",
+ ]
+ 
+ [[package]]
+@@ -10057,6 +9703,7 @@ version = "0.3.6"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "4aaa7368fcf4852a4c2dd92df0cace6a71f2091ca0a23391ce7f3a31833f1523"
+ dependencies = [
++ "borsh",
+  "serde_core",
+ ]
+ 
+@@ -10233,6 +9880,97 @@ version = "2.6.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
+ 
++[[package]]
++name = "sum_tree"
++version = "0.1.0"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=6d4d90754f7dde3e62afb6fe74a632c0b4660396#6d4d90754f7dde3e62afb6fe74a632c0b4660396"
++dependencies = [
++ "heapless",
++ "log",
++ "rayon",
++ "tracing",
++ "ztracing",
++]
++
++[[package]]
++name = "sval"
++version = "2.22.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "b81b254da21fe1fcc4e3a74fe39b46e25e3a863078f8b71c954d47f84889dbc6"
++
++[[package]]
++name = "sval_buffer"
++version = "2.22.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "50be352d2822ffafb59e3e2ddac9d5ee60f2eeadbb7b5a2a951b9f3651e87a6f"
++dependencies = [
++ "sval",
++ "sval_ref",
++ "zerocopy",
++]
++
++[[package]]
++name = "sval_dynamic"
++version = "2.22.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "b048ca293b998d9a45659159f94a64063791e74cdc670164943dbb434405573d"
++dependencies = [
++ "sval",
++]
++
++[[package]]
++name = "sval_fmt"
++version = "2.22.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "e6b5888e40f80568733217f27b7317b845f463400ced36c424b1a804730e53b2"
++dependencies = [
++ "itoa",
++ "ryu",
++ "sval",
++]
++
++[[package]]
++name = "sval_json"
++version = "2.22.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "e17664d6bb6b74947afaab9d7c991caa9bf5638d4dee16fcbef637f440796049"
++dependencies = [
++ "itoa",
++ "ryu",
++ "sval",
++]
++
++[[package]]
++name = "sval_nested"
++version = "2.22.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "07c059969ca5ca163ea7fef6c9661758973d17691aba92abdcf5c428f4ec122c"
++dependencies = [
++ "sval",
++ "sval_buffer",
++ "sval_ref",
++]
++
++[[package]]
++name = "sval_ref"
++version = "2.22.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "42d6b29ff568c85c87561807f51d2adfff4b6016c6363133f7cd1652a12548f3"
++dependencies = [
++ "sval",
++]
++
++[[package]]
++name = "sval_serde"
++version = "2.22.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8f33ec9edc42b12764d5c90ca0a1d84189c6bde81ed27507f1e661c6e4e05853"
++dependencies = [
++ "serde_core",
++ "sval",
++ "sval_nested",
++]
++
+ [[package]]
+ name = "svg_fmt"
+ version = "0.4.5"
+@@ -10380,12 +10118,12 @@ dependencies = [
+ 
+ [[package]]
+ name = "system-configuration"
+-version = "0.6.1"
++version = "0.8.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "3c879d448e9d986b661742763247d3693ed13609438cf3d006f51f5368a5ba6b"
++checksum = "501336eb7ba9e417300a6a0fa985721065467aa83a6dcf0422a8e43e4c0328fa"
+ dependencies = [
+  "bitflags 2.13.1",
+- "core-foundation 0.9.4",
++ "core-foundation 0.10.1",
+  "system-configuration-sys",
+ ]
+ 
+@@ -10445,18 +10183,6 @@ dependencies = [
+  "smallvec",
+ ]
+ 
+-[[package]]
+-name = "taffy"
+-version = "0.14.0"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "639627c87f43b9181c811f40a6296409e093a17bc761214cba3c15df74f86b99"
+-dependencies = [
+- "arrayvec",
+- "serde",
+- "slotmap",
+- "smallvec",
+-]
+-
+ [[package]]
+ name = "tao-core-video-sys"
+ version = "0.2.0"
+@@ -10542,7 +10268,7 @@ version = "0.7.3"
+ dependencies = [
+  "anyhow",
+  "gpui-kit",
+- "gpui-pre-reqwest-client",
++ "reqwest_client",
+ ]
+ 
+ [[package]]
+@@ -11013,6 +10739,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
+ dependencies = [
+  "once_cell",
++ "valuable",
++]
++
++[[package]]
++name = "tracing-log"
++version = "0.2.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "ee855f1f400bd0e5c02d150ae5de3840039a3f54b025156404e34c23c03f47c3"
++dependencies = [
++ "log",
++ "once_cell",
++ "tracing-core",
+ ]
+ 
+ [[package]]
+@@ -11022,12 +10760,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "cb7f578e5945fb242538965c2d0b04418d38ec25c79d160cd279bf0731c8d319"
+ dependencies = [
+  "matchers",
++ "nu-ansi-term",
+  "once_cell",
+  "regex-automata",
+  "sharded-slab",
++ "smallvec",
+  "thread_local",
+  "tracing",
+  "tracing-core",
++ "tracing-log",
+ ]
+ 
+ [[package]]
+@@ -11458,6 +11199,12 @@ dependencies = [
+  "webpki-roots 0.26.11",
+ ]
+ 
++[[package]]
++name = "typeid"
++version = "1.0.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "bc7d623258602320d5c55d1bc22793b57daff0ec7efc270ea7d55ce1d5f5471c"
++
+ [[package]]
+ name = "typenum"
+ version = "1.20.1"
+@@ -11559,6 +11306,12 @@ version = "0.2.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
+ 
++[[package]]
++name = "unicode-xid"
++version = "0.2.6"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
++
+ [[package]]
+ name = "unindent"
+ version = "0.2.4"
+@@ -11682,6 +11435,16 @@ version = "0.2.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
+ 
++[[package]]
++name = "util_macros"
++version = "0.1.0"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=6d4d90754f7dde3e62afb6fe74a632c0b4660396#6d4d90754f7dde3e62afb6fe74a632c0b4660396"
++dependencies = [
++ "perf",
++ "quote",
++ "syn 2.0.119",
++]
++
+ [[package]]
+ name = "uuid"
+ version = "1.26.0"
+@@ -11706,6 +11469,48 @@ dependencies = [
+  "wasm-bindgen",
+ ]
+ 
++[[package]]
++name = "valuable"
++version = "0.1.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
++
++[[package]]
++name = "value-bag"
++version = "1.14.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "2799ffb329a792ecfd902b71306c8a815a6ef1c0470fa9953a6aa4d4cecbe511"
++dependencies = [
++ "value-bag-serde1",
++ "value-bag-sval2",
++]
++
++[[package]]
++name = "value-bag-serde1"
++version = "1.14.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "0941feceafbe7a8f59ea1096d45b97002884a41306315ad797b3684b63a81d8c"
++dependencies = [
++ "erased-serde",
++ "serde_core",
++ "serde_fmt",
++]
++
++[[package]]
++name = "value-bag-sval2"
++version = "1.14.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "839752af8179287d27eb2b94164641b1ede9e60ab7424163388dc21ebd0508cd"
++dependencies = [
++ "sval",
++ "sval_buffer",
++ "sval_dynamic",
++ "sval_fmt",
++ "sval_json",
++ "sval_ref",
++ "sval_serde",
++]
++
+ [[package]]
+ name = "value-trait"
+ version = "0.12.2"
+@@ -11883,8 +11688,7 @@ dependencies = [
+ [[package]]
+ name = "wasm_thread"
+ version = "0.3.3"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "b7516db7f32decdadb1c3b8deb1b7d78b9df7606c5cc2f6241737c2ab3a0258e"
++source = "git+https://github.com/zed-industries/wasm_thread?rev=0cf96c7708dfb97ccf3da50347e25edcf75d6937#0cf96c7708dfb97ccf3da50347e25edcf75d6937"
+ dependencies = [
+  "futures",
+  "js-sys",
+@@ -12690,15 +12494,6 @@ dependencies = [
+  "windows-targets 0.42.2",
+ ]
+ 
+-[[package]]
+-name = "windows-sys"
+-version = "0.48.0"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "677d2418bec65e3338edb076e806bc1ec15693c5d0104683f2efe857f61056a9"
+-dependencies = [
+- "windows-targets 0.48.5",
+-]
+-
+ [[package]]
+ name = "windows-sys"
+ version = "0.52.0"
+@@ -12750,21 +12545,6 @@ dependencies = [
+  "windows_x86_64_msvc 0.42.2",
+ ]
+ 
+-[[package]]
+-name = "windows-targets"
+-version = "0.48.5"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "9a2fa6e2155d7247be68c096456083145c183cbbbc2764150dda45a87197940c"
+-dependencies = [
+- "windows_aarch64_gnullvm 0.48.5",
+- "windows_aarch64_msvc 0.48.5",
+- "windows_i686_gnu 0.48.5",
+- "windows_i686_msvc 0.48.5",
+- "windows_x86_64_gnu 0.48.5",
+- "windows_x86_64_gnullvm 0.48.5",
+- "windows_x86_64_msvc 0.48.5",
+-]
+-
+ [[package]]
+ name = "windows-targets"
+ version = "0.52.6"
+@@ -12831,12 +12611,6 @@ version = "0.42.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "597a5118570b68bc08d8d59125332c54f1ba9d9adeedeef5b99b02ba2b0698f8"
+ 
+-[[package]]
+-name = "windows_aarch64_gnullvm"
+-version = "0.48.5"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "2b38e32f0abccf9987a4e3079dfb67dcd799fb61361e53e2882c3cbaf0d905d8"
+-
+ [[package]]
+ name = "windows_aarch64_gnullvm"
+ version = "0.52.6"
+@@ -12855,12 +12629,6 @@ version = "0.42.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "e08e8864a60f06ef0d0ff4ba04124db8b0fb3be5776a5cd47641e942e58c4d43"
+ 
+-[[package]]
+-name = "windows_aarch64_msvc"
+-version = "0.48.5"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "dc35310971f3b2dbbf3f0690a219f40e2d9afcf64f9ab7cc1be722937c26b4bc"
+-
+ [[package]]
+ name = "windows_aarch64_msvc"
+ version = "0.52.6"
+@@ -12879,12 +12647,6 @@ version = "0.42.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "c61d927d8da41da96a81f029489353e68739737d3beca43145c8afec9a31a84f"
+ 
+-[[package]]
+-name = "windows_i686_gnu"
+-version = "0.48.5"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "a75915e7def60c94dcef72200b9a8e58e5091744960da64ec734a6c6e9b3743e"
+-
+ [[package]]
+ name = "windows_i686_gnu"
+ version = "0.52.6"
+@@ -12915,12 +12677,6 @@ version = "0.42.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "44d840b6ec649f480a41c8d80f9c65108b92d89345dd94027bfe06ac444d1060"
+ 
+-[[package]]
+-name = "windows_i686_msvc"
+-version = "0.48.5"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "8f55c233f70c4b27f66c523580f78f1004e8b5a8b659e05a4eb49d4166cca406"
+-
+ [[package]]
+ name = "windows_i686_msvc"
+ version = "0.52.6"
+@@ -12939,12 +12695,6 @@ version = "0.42.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "8de912b8b8feb55c064867cf047dda097f92d51efad5b491dfb98f6bbb70cb36"
+ 
+-[[package]]
+-name = "windows_x86_64_gnu"
+-version = "0.48.5"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "53d40abd2583d23e4718fddf1ebec84dbff8381c07cae67ff7768bbf19c6718e"
+-
+ [[package]]
+ name = "windows_x86_64_gnu"
+ version = "0.52.6"
+@@ -12963,12 +12713,6 @@ version = "0.42.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "26d41b46a36d453748aedef1486d5c7a85db22e56aff34643984ea85514e94a3"
+ 
+-[[package]]
+-name = "windows_x86_64_gnullvm"
+-version = "0.48.5"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "0b7b52767868a23d5bab768e390dc5f5c55825b6d30b86c844ff2dc7414044cc"
+-
+ [[package]]
+ name = "windows_x86_64_gnullvm"
+ version = "0.52.6"
+@@ -12987,12 +12731,6 @@ version = "0.42.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "9aec5da331524158c6d1a4ac0ab1541149c0b9505fde06423b02f5ef0106b9f0"
+ 
+-[[package]]
+-name = "windows_x86_64_msvc"
+-version = "0.48.5"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "ed94fce61571a4006852b7389a063ab983c02eb1bb37b47f8272ce92d06d9538"
+-
+ [[package]]
+ name = "windows_x86_64_msvc"
+ version = "0.52.6"
+@@ -13094,6 +12832,16 @@ dependencies = [
+  "pkg-config",
+ ]
+ 
++[[package]]
++name = "x11-clipboard"
++version = "0.9.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "662d74b3d77e396b8e5beb00b9cad6a9eccf40b2ef68cc858784b14c41d535a3"
++dependencies = [
++ "libc",
++ "x11rb",
++]
++
+ [[package]]
+ name = "x11-dl"
+ version = "2.21.0"
+@@ -13157,17 +12905,15 @@ checksum = "163b33ed8786455e2fa5d72f554057ce3f3182425434f756cd39c99839d88e23"
+ [[package]]
+ name = "xim-ctext"
+ version = "0.3.0"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "2ac61a7062c40f3c37b6e82eeeef835d5cc7824b632a72784a89b3963c33284c"
++source = "git+https://github.com/zed-industries/xim-rs.git?rev=16f35a2c881b815a2b6cdfd6687988e84f8447d8#16f35a2c881b815a2b6cdfd6687988e84f8447d8"
+ dependencies = [
+  "encoding_rs",
+ ]
+ 
+ [[package]]
+ name = "xim-parser"
+-version = "0.2.2"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "5dcee45f89572d5a65180af3a84e7ddb24f5ea690a6d3aa9de231281544dd7b7"
++version = "0.2.1"
++source = "git+https://github.com/zed-industries/xim-rs.git?rev=16f35a2c881b815a2b6cdfd6687988e84f8447d8#16f35a2c881b815a2b6cdfd6687988e84f8447d8"
+ dependencies = [
+  "bitflags 2.13.1",
+ ]
+@@ -13368,15 +13114,14 @@ dependencies = [
+ [[package]]
+ name = "zed-font-kit"
+ version = "0.14.1-zed"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "a3898e450f36f852edda72e3f985c34426042c4951790b23b107f93394f9bff5"
++source = "git+https://github.com/zed-industries/font-kit?rev=94b0f28166665e8fd2f53ff6d268a14955c82269#94b0f28166665e8fd2f53ff6d268a14955c82269"
+ dependencies = [
+  "bitflags 2.13.1",
+  "byteorder",
+  "core-foundation 0.10.1",
+  "core-graphics 0.24.0",
+  "core-text",
+- "dirs 5.0.1",
++ "dirs",
+  "dwrote",
+  "float-ord",
+  "freetype-sys",
+@@ -13390,11 +13135,60 @@ dependencies = [
+  "yeslogic-fontconfig-sys",
+ ]
+ 
++[[package]]
++name = "zed-reqwest"
++version = "0.12.15-zed"
++source = "git+https://github.com/zed-industries/reqwest.git?rev=33bc764aa15ff7b200bf7c93bd96e24878d53e14#33bc764aa15ff7b200bf7c93bd96e24878d53e14"
++dependencies = [
++ "base64",
++ "bytes",
++ "encoding_rs",
++ "futures-channel",
++ "futures-core",
++ "futures-util",
++ "h2",
++ "http",
++ "http-body",
++ "http-body-util",
++ "hyper",
++ "hyper-rustls",
++ "hyper-util",
++ "ipnet",
++ "js-sys",
++ "log",
++ "mime",
++ "mime_guess",
++ "once_cell",
++ "percent-encoding",
++ "pin-project-lite",
++ "quinn",
++ "rustls",
++ "rustls-native-certs",
++ "rustls-pemfile",
++ "rustls-pki-types",
++ "serde",
++ "serde_json",
++ "serde_urlencoded",
++ "sync_wrapper",
++ "system-configuration",
++ "tokio",
++ "tokio-rustls",
++ "tokio-socks",
++ "tokio-util",
++ "tower 0.5.3",
++ "tower-service",
++ "url",
++ "wasm-bindgen",
++ "wasm-bindgen-futures",
++ "wasm-streams",
++ "web-sys",
++ "windows-registry 0.4.0",
++]
++
+ [[package]]
+ name = "zed-scap"
+ version = "0.0.8-zed"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "b6b338d705ae33a43ca00287c11129303a7a0aa57b101b72a1c08c863f698ac8"
++source = "git+https://github.com/zed-industries/scap?rev=4afea48c3b002197176fb19cd0f9b180dd36eaac#4afea48c3b002197176fb19cd0f9b180dd36eaac"
+ dependencies = [
+  "anyhow",
+  "cocoa 0.25.0",
+@@ -13415,8 +13209,7 @@ dependencies = [
+ [[package]]
+ name = "zed-xim"
+ version = "0.4.0-zed"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "0c0b46ed118eba34d9ba53d94ddc0b665e0e06a2cf874cfa2dd5dec278148642"
++source = "git+https://github.com/zed-industries/xim-rs.git?rev=16f35a2c881b815a2b6cdfd6687988e84f8447d8#16f35a2c881b815a2b6cdfd6687988e84f8447d8"
+ dependencies = [
+  "ahash",
+  "hashbrown 0.14.5",
+@@ -13532,6 +13325,17 @@ version = "0.6.7"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "34b31d188d9d685a4f9c7b46d6e36631b07058d2cfe190267adce54dc230bf12"
+ 
++[[package]]
++name = "zlog"
++version = "0.1.0"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=6d4d90754f7dde3e62afb6fe74a632c0b4660396#6d4d90754f7dde3e62afb6fe74a632c0b4660396"
++dependencies = [
++ "anyhow",
++ "chrono",
++ "collections",
++ "log",
++]
++
+ [[package]]
+ name = "zmij"
+ version = "1.0.23"
+@@ -13566,6 +13370,22 @@ dependencies = [
+  "pkg-config",
+ ]
+ 
++[[package]]
++name = "ztracing"
++version = "0.1.0"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=6d4d90754f7dde3e62afb6fe74a632c0b4660396#6d4d90754f7dde3e62afb6fe74a632c0b4660396"
++dependencies = [
++ "tracing",
++ "tracing-subscriber",
++ "zlog",
++ "ztracing_macro",
++]
++
++[[package]]
++name = "ztracing_macro"
++version = "0.1.0"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=6d4d90754f7dde3e62afb6fe74a632c0b4660396#6d4d90754f7dde3e62afb6fe74a632c0b4660396"
++
+ [[package]]
+ name = "zune-core"
+ version = "0.4.12"
+diff --git a/Cargo.toml b/Cargo.toml
+index 10810ed5..0aa3c413 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -62,16 +62,14 @@ story = { path = "crates/story" }
+ 
+ # GPUI comes from Theorem's pinned Zed fork rather than upstream's `gpui-pre-*`
+ # snapshots, so every GPUI family crate resolves from one immutable revision and
+-# Theorem keeps a single GPUI type identity.
++# Theorem keeps a single GPUI type identity. Upstream's optional GPUI Fast
++# backend (`gpui-fast-*` 0.1.7) is not carried: it cannot resolve beside this
++# source (its `oo7 ^0.6` excludes the Zed fork's `oo7 =0.6.0-alpha`), and a
++# second engine would be a second GPUI type identity. Its `cfg(feature =
++# "gpui-fast")` code stays inert, declared below so it raises no warning.
+ gpui = { git = "https://github.com/Travis-Gilbert/zed", rev = "6d4d90754f7dde3e62afb6fe74a632c0b4660396" }
+ gpui_platform = { git = "https://github.com/Travis-Gilbert/zed", rev = "6d4d90754f7dde3e62afb6fe74a632c0b4660396", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
+ gpui_web = { git = "https://github.com/Travis-Gilbert/zed", rev = "6d4d90754f7dde3e62afb6fe74a632c0b4660396" }
+-# Fast is optional; existing crates select it through their gpui-fast feature.
+-# Explicit package fields make Cargo use these dependency keys as Rust crate names;
+-# the packages declare the same library names as the pre backend.
+-gpui-fast = { package = "gpui-fast", version = "0.1.7", features = ["windows-manifest-provided-by-host"] }
+-gpui-fast-platform = { package = "gpui-fast-platform", version = "0.1.7", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
+-gpui-fast-web = { package = "gpui-fast-web", version = "0.1.7" }
+ gpui_macros = { git = "https://github.com/Travis-Gilbert/zed", rev = "6d4d90754f7dde3e62afb6fe74a632c0b4660396" }
+ reqwest_client = { git = "https://github.com/Travis-Gilbert/zed", rev = "6d4d90754f7dde3e62afb6fe74a632c0b4660396" }
+ sum-tree = { package = "sum_tree", git = "https://github.com/Travis-Gilbert/zed", rev = "6d4d90754f7dde3e62afb6fe74a632c0b4660396" }
+@@ -118,6 +116,10 @@ errno = { version = "0.3.14", default-features = false }
+ features = ["Wdk", "Wdk_System", "Wdk_System_SystemServices"]
+ version = "0.58.0"
+ 
++# Upstream's GPUI Fast sources stay byte-identical; the feature does not exist here.
++[workspace.lints.rust]
++unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("gpui-fast"))'] }
++
+ [workspace.lints.clippy]
+ almost_complete_range = "allow"
+ arc_with_non_send_sync = "allow"
+@@ -156,8 +158,6 @@ taffy = { opt-level = 3 }
+ ttf-parser = { opt-level = 3 }
+ smol = { opt-level = 3 }
+ gpui = { opt-level = 3 }
+-gpui-fast = { opt-level = 3 }
+-gpui-fast-platform = { opt-level = 3 }
+ gpui_platform = { opt-level = 3 }
+ tree-sitter = { opt-level = 3 }
+ sum_tree = { opt-level = 3 }
+@@ -194,5 +194,5 @@ ignored = ["log", "anyhow", "serde"]
+ 
+ [workspace.metadata.theorem-fork]
+ upstream = "https://github.com/longbridge/gpui-kit"
+-upstream_tag = "v0.6.0"
++upstream_tag = "v0.7.3"
+ zed_rev = "6d4d90754f7dde3e62afb6fe74a632c0b4660396"
+diff --git a/crates/assets/Cargo.toml b/crates/assets/Cargo.toml
+index 953538c6..7689d174 100644
+--- a/crates/assets/Cargo.toml
++++ b/crates/assets/Cargo.toml
+@@ -17,12 +17,10 @@ links = "gpui-kit-default-icons"
+ [dependencies]
+ anyhow.workspace = true
+ gpui.workspace = true
+-gpui-fast = { workspace = true, optional = true }
+ log.workspace = true
+ 
+ [dev-dependencies]
+ gpui_platform.workspace = true
+-gpui-fast-platform.workspace = true
+ 
+ [target.'cfg(not(target_family = "wasm"))'.dependencies]
+ rust-embed = { version = "8.7.2", features = ["interpolate-folder-path", "include-exclude"] }
+@@ -32,5 +30,5 @@ reqwest = { workspace = true }
+ wasm-bindgen = "0.2"
+ wasm-bindgen-futures = "0.4"
+ 
+-[features]
+-gpui-fast = ["dep:gpui-fast"]
++[lints.rust]
++unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("gpui-fast"))'] }
+diff --git a/crates/base/Cargo.toml b/crates/base/Cargo.toml
+index 43a105a9..0991280b 100644
+--- a/crates/base/Cargo.toml
++++ b/crates/base/Cargo.toml
+@@ -25,10 +25,9 @@ name = "text_view_scroll"
+ harness = false
+ 
+ [features]
+-gpui-fast = ["dep:gpui-fast"]
+ decimal = ["dep:rust_decimal"]
+-test-support = ["gpui/test-support", "gpui-fast?/test-support"]
+-inspector = ["gpui_macros/inspector", "gpui/inspector", "gpui-fast?/inspector"]
++test-support = ["gpui/test-support"]
++inspector = ["gpui_macros/inspector", "gpui/inspector"]
+ 
+ [dependencies]
+ anyhow.workspace = true
+@@ -37,7 +36,6 @@ chrono = "0.4.38"
+ data-url = "0.3"
+ futures = "0.3"
+ gpui.workspace = true
+-gpui-fast = { workspace = true, optional = true }
+ gpui_macros.workspace = true
+ instant.workspace = true
+ itertools = "0.13.0"
+@@ -81,11 +79,9 @@ windows = { workspace = true, features = ["Win32_Foundation", "Win32_UI_WindowsA
+ ashpd = { version = "0.13", default-features = false, features = ["async-io", "settings"] }
+ 
+ [dev-dependencies]
+-criterion = "0.8"
++criterion = "0.5"
+ gpui = { workspace = true, features = ["test-support", "bench-support"] }
+-gpui-fast = { workspace = true, features = ["test-support", "bench-support"] }
+ gpui_platform = { workspace = true, features = ["bench-support"] }
+-gpui-fast-platform = { workspace = true, features = ["bench-support"] }
+ indoc = "2"
+ reqwest_client.workspace = true
+ 
+diff --git a/crates/base/examples/native/Cargo.toml b/crates/base/examples/native/Cargo.toml
+index 0a4f5822..9dc08a28 100644
+--- a/crates/base/examples/native/Cargo.toml
++++ b/crates/base/examples/native/Cargo.toml
+@@ -8,16 +8,13 @@ edition.workspace = true
+ [dependencies]
+ chrono = "0.4.38"
+ gpui.workspace = true
+-gpui-fast = { workspace = true, optional = true }
+ gpui-base = { path = "../.." }
+ gpui_platform.workspace = true
+-gpui-fast-platform = { workspace = true, optional = true }
+ reqwest_client.workspace = true
+ syntect.workspace = true
+ 
+ [dev-dependencies]
+ gpui = { workspace = true, features = ["test-support"] }
+-gpui-fast = { workspace = true, features = ["test-support"] }
+ 
+ [lints]
+ workspace = true
+@@ -26,6 +23,3 @@ workspace = true
+ # follow when detecting its `chrono`, `gpui`, `gpui_base`, and `syntect` imports.
+ [package.metadata.cargo-machete]
+ ignored = ["chrono", "gpui", "gpui-base", "syntect"]
+-
+-[features]
+-gpui-fast = ["dep:gpui-fast", "dep:gpui-fast-platform"]
+diff --git a/crates/base/examples/wasm/Cargo.toml b/crates/base/examples/wasm/Cargo.toml
+index 3cca66d8..59c846ea 100644
+--- a/crates/base/examples/wasm/Cargo.toml
++++ b/crates/base/examples/wasm/Cargo.toml
+@@ -10,10 +10,8 @@ crate-type = ["cdylib", "rlib"]
+ [dependencies]
+ chrono = "0.4.38"
+ gpui.workspace = true
+-gpui-fast = { workspace = true, optional = true }
+ gpui-base = { path = "../.." }
+ gpui_platform.workspace = true
+-gpui-fast-platform = { workspace = true, optional = true }
+ console_error_panic_hook = "0.1"
+ console_log = "1.0"
+ log.workspace = true
+@@ -31,6 +29,3 @@ workspace = true
+ # follow when detecting its `chrono`, `gpui_base` and `syntect` imports.
+ [package.metadata.cargo-machete]
+ ignored = ["chrono", "gpui-base", "reqwest_client", "syntect"]
+-
+-[features]
+-gpui-fast = ["dep:gpui-fast", "dep:gpui-fast-platform"]
+diff --git a/crates/base/src/input/editor/display_map/text_wrapper.rs b/crates/base/src/input/editor/display_map/text_wrapper.rs
+index 4c59bf27..56b1d8a6 100644
+--- a/crates/base/src/input/editor/display_map/text_wrapper.rs
++++ b/crates/base/src/input/editor/display_map/text_wrapper.rs
+@@ -431,9 +431,7 @@ impl TextWrapper {
+                 if offset < line_str.len() {
+                     fragments.push(LineFragment::text(&line_str[offset..]));
+                 }
+-                line_wrapper
+-                    .wrap_line(&fragments, wrap_width, gpui::IndentAdjustment::SameIndent)
+-                    .collect()
++                line_wrapper.wrap_line(&fragments, wrap_width).collect()
+             },
+         );
+     }
+diff --git a/crates/base/src/text/inline.rs b/crates/base/src/text/inline.rs
+index 6c1545e9..4bd57c3a 100644
+--- a/crates/base/src/text/inline.rs
++++ b/crates/base/src/text/inline.rs
+@@ -466,7 +466,7 @@ impl Inline {
+                 let click_focus = focus.clone();
+                 let handler = self.link_click_handler.clone();
+                 let url = link.url.clone();
+-                let text_view_state = GlobalState::global(cx).text_view_state().cloned();
++                let text_view_state = GlobalState::global(cx).text_view_state();
+                 let click = move |event: &ClickEvent, window: &mut Window, cx: &mut App| {
+                     if !matches!(event, ClickEvent::Keyboard(_))
+                         && text_view_state
+@@ -968,8 +968,56 @@ impl Inline {
+         }
+     }
+ 
+-    /// Paint each range highlight behind the text of its range.
+-    fn paint_range_highlights(&self, text_layout: &TextLayout, window: &mut Window) {
++    /// Paint the shaped glyphs and decorations, then the dotted underline of
++    /// each link that asks for one.
++    fn paint_glyphs(
++        &mut self,
++        global_id: Option<&GlobalElementId>,
++        text_layout: &TextLayout,
++        bounds: Bounds<Pixels>,
++        window: &mut Window,
++        cx: &mut App,
++    ) {
++        self.styled_text
++            .paint(global_id, None, bounds, &mut (), &mut (), window, cx);
++
++        let text_color = self
++            .text_style
++            .as_ref()
++            .map(|style| style.color)
++            .unwrap_or_else(|| window.text_style().color);
++        for (range, link) in self.links.iter() {
++            if self.link_underline_for(&link.url, cx) != LinkUnderline::Dotted {
++                continue;
++            }
++            let color = self
++                .highlights
++                .iter()
++                .find_map(|(span, highlight)| {
++                    (span.start <= range.start && range.start < span.end)
++                        .then_some(highlight.style.color)
++                        .flatten()
++                })
++                .unwrap_or(text_color);
++            for (_, fragment) in link_fragment_bounds(text_layout, range.clone()) {
++                for dot in dotted_underline_bounds(fragment) {
++                    window.paint_quad(gpui::fill(dot, color));
++                }
++            }
++        }
++    }
++
++    /// Paint each range highlight, then each text run background, behind
++    /// the text of its range. Both lie under the selection.
++    fn paint_backgrounds(&self, text_layout: &TextLayout, window: &mut Window) {
++        let run_backgrounds = self
++            .retained_key
++            .as_ref()
++            .map(|(runs, _)| run_backgrounds(runs))
++            .unwrap_or_default();
++        if self.range_backgrounds.is_empty() && run_backgrounds.is_empty() {
++            return;
++        }
+         let glyphs = glyph_boxes(
+             text_layout,
+             window.text_style().text_align,
+@@ -977,7 +1025,7 @@ impl Inline {
+         );
+         let origin = text_layout.bounds().origin;
+         let line_height = text_layout.line_height();
+-        for (range, color) in &self.range_backgrounds {
++        for (range, color) in self.range_backgrounds.iter().chain(&run_backgrounds) {
+             for (row, left, right) in range_boxes(&glyphs, range.clone()) {
+                 window.paint_quad(gpui::fill(
+                     Bounds::from_corners(
+@@ -991,6 +1039,18 @@ impl Inline {
+     }
+ }
+ 
++/// The byte range and color of each text run that has a background.
++fn run_backgrounds(runs: &[TextRun]) -> Vec<(Range<usize>, Hsla)> {
++    let mut start = 0;
++    runs.iter()
++        .filter_map(|run| {
++            let range = start..start + run.len;
++            start = range.end;
++            run.background_color.map(|color| (range, color))
++        })
++        .collect()
++}
++
+ impl IntoElement for Inline {
+     type Element = Self;
+ 
+@@ -1049,8 +1109,7 @@ impl Element for Inline {
+         let runs = if overrides.is_empty() {
+             text_runs(self.text.len(), &text_style, &self.highlights)
+         } else {
+-            let highlights =
+-                combine_highlights(self.highlights.clone(), overrides);
++            let highlights = combine_highlights(self.highlights.clone(), overrides);
+             text_runs(self.text.len(), &text_style, &highlights)
+         };
+ 
+@@ -1060,9 +1119,18 @@ impl Element for Inline {
+         let retained = take_retained_layout(&self.state).filter(|retained| {
+             retained.text == self.text && retained.runs == runs && retained.text_style == text_style
+         });
++        // The run backgrounds paint under the selection (see `paint`), so the
++        // shaped text gets its runs without them and paints the glyphs only.
++        let glyph_runs = runs
++            .iter()
++            .map(|run| TextRun {
++                background_color: None,
++                ..run.clone()
++            })
++            .collect::<Vec<_>>();
+         self.styled_text = match retained {
+-            Some(retained) => retained.styled_text.with_runs(runs.clone()),
+-            None => StyledText::new(self.text.clone()).with_runs(runs.clone()),
++            Some(retained) => retained.styled_text.with_runs(glyph_runs),
++            None => StyledText::new(self.text.clone()).with_runs(glyph_runs),
+         };
+         self.retained_key = Some((runs, text_style));
+         let (layout_id, _) =
+@@ -1112,7 +1180,7 @@ impl Element for Inline {
+ 
+     fn paint(
+         &mut self,
+-        _: Option<&GlobalElementId>,
++        global_id: Option<&GlobalElementId>,
+         _: Option<&InspectorElementId>,
+         bounds: Bounds<Pixels>,
+         _: &mut Self::RequestLayoutState,
+@@ -1130,42 +1198,21 @@ impl Element for Inline {
+             return;
+         }
+         let text_layout = self.styled_text.layout().clone();
+-        if !self.range_backgrounds.is_empty() {
+-            self.paint_range_highlights(&text_layout, window);
+-        }
+-        _ = text_layout.paint_background(window, cx);
+-
+-        let text_color = self
+-            .text_style
+-            .as_ref()
+-            .map(|style| style.color)
+-            .unwrap_or_else(|| window.text_style().color);
+-        for (range, link) in self.links.iter() {
+-            if self.link_underline_for(&link.url, cx) != LinkUnderline::Dotted {
+-                continue;
+-            }
+-            let color = self
+-                .highlights
+-                .iter()
+-                .find_map(|(span, highlight)| {
+-                    (span.start <= range.start && range.start < span.end)
+-                        .then_some(highlight.style.color)
+-                        .flatten()
+-                })
+-                .unwrap_or(text_color);
+-            for (_, fragment) in link_fragment_bounds(&text_layout, range.clone()) {
+-                for dot in dotted_underline_bounds(fragment) {
+-                    window.paint_quad(gpui::fill(dot, color));
+-                }
+-            }
+-        }
++        // Backgrounds, then the selection, then the glyphs, so selected text
++        // stays readable over an opaque selection. The Theorem Zed source has
++        // no separate background and glyph passes on `TextLayout`; the shaped
++        // text carries no run backgrounds (see `request_layout`) and paints
++        // after the selection.
++        self.paint_backgrounds(&text_layout, window);
+ 
+         // layout selections
+         let (is_selectable, is_selection, selection) =
+             self.layout_selections(&text_layout, &bounds, window, cx);
+ 
+-        let Ok(mut state) = self.state.lock() else {
+-            _ = text_layout.paint_foreground(window, cx);
++        // The glyphs paint while the state is held, so hold it by its own handle.
++        let inline_state = self.state.clone();
++        let Ok(mut state) = inline_state.lock() else {
++            self.paint_glyphs(global_id, &text_layout, bounds, window, cx);
+             return;
+         };
+ 
+@@ -1209,7 +1256,7 @@ impl Element for Inline {
+             }
+         }
+ 
+-        _ = text_layout.paint_foreground(window, cx);
++        self.paint_glyphs(global_id, &text_layout, bounds, window, cx);
+ 
+         if is_selectable {
+             if let Some(text_view_state) = GlobalState::global(cx).text_view_state() {
+diff --git a/crates/base/src/text/inline_flow.rs b/crates/base/src/text/inline_flow.rs
+index b8ef9526..06606f60 100644
+--- a/crates/base/src/text/inline_flow.rs
++++ b/crates/base/src/text/inline_flow.rs
+@@ -1309,7 +1309,7 @@ fn next_wrap(
+     end: usize,
+ ) -> usize {
+     wrapper
+-        .wrap_line(fragments, wrap_width, gpui::IndentAdjustment::SameIndent)
++        .wrap_line(fragments, wrap_width)
+         .next()
+         .map_or(end, |boundary| (start + boundary.ix).min(end))
+ }
+diff --git a/crates/component-shell/Cargo.toml b/crates/component-shell/Cargo.toml
+index 9780959e..c2a9d544 100644
+--- a/crates/component-shell/Cargo.toml
++++ b/crates/component-shell/Cargo.toml
+@@ -15,13 +15,9 @@ gpui-component = { workspace = true, features = ["tree-sitter-rust"] }
+ 
+ [dev-dependencies]
+ gpui = { workspace = true, features = ["test-support"] }
+-gpui-fast = { workspace = true, features = ["test-support"] }
+ gpui-base = { workspace = true, features = ["test-support"] }
+ gpui-component = { workspace = true, features = ["test-support"] }
+ serde_json.workspace = true
+ 
+ [lints]
+ workspace = true
+-
+-[features]
+-gpui-fast = ["gpui-shell/gpui-fast", "gpui-component/gpui-fast", "gpui-base/gpui-fast"]
+diff --git a/crates/component/Cargo.toml b/crates/component/Cargo.toml
+index 8cd50d1a..523e5893 100644
+--- a/crates/component/Cargo.toml
++++ b/crates/component/Cargo.toml
+@@ -15,10 +15,9 @@ edition.workspace = true
+ doctest = false
+ 
+ [features]
+-gpui-fast = ["dep:gpui-fast", "gpui-base/gpui-fast", "gpui-kit-assets/gpui-fast"]
+-test-support = ["gpui/test-support", "gpui-base/test-support", "gpui-fast?/test-support"]
++test-support = ["gpui/test-support", "gpui-base/test-support"]
+ decimal = ["gpui-base/decimal"]
+-inspector = ["gpui_macros/inspector", "gpui/inspector", "gpui-base/inspector", "gpui-fast?/inspector"]
++inspector = ["gpui_macros/inspector", "gpui/inspector", "gpui-base/inspector"]
+ tree-sitter = ["dep:tree-sitter", "dep:tree-sitter-json"]
+ # Speech input: microphone capture and the system speech recognizer.
+ speech = [
+@@ -118,7 +117,6 @@ similar = { version = "2.7", features = ["unicode"] }
+ regex = "1"
+ anyhow.workspace = true
+ gpui = { workspace = true }
+-gpui-fast = { workspace = true, optional = true }
+ gpui_macros.workspace = true
+ gpui-base.workspace = true
+ gpui-component-macros = { workspace = true }
+@@ -252,7 +250,6 @@ windows = { workspace = true, features = [
+ 
+ [dev-dependencies]
+ gpui = { workspace = true, features = ["test-support"] }
+-gpui-fast = { workspace = true, features = ["test-support"] }
+ indoc = "2"
+ 
+ [lints]
+diff --git a/crates/component/src/setting/settings.rs b/crates/component/src/setting/settings.rs
+index ffbc8d8c..b284e3c3 100644
+--- a/crates/component/src/setting/settings.rs
++++ b/crates/component/src/setting/settings.rs
+@@ -360,16 +360,24 @@ impl Settings {
+             .refine_style(&self.header_style)
+             .child(Input::new(&search_input).prefix(IconName::Search));
+         if self.sections.is_empty() {
+-            frame(Sidebar::new("settings-sidebar"), &self.sidebar_style, header)
+-                .child(SidebarMenu::new().children(filter.visible_pages().map(&item)))
+-                .into_any_element()
++            frame(
++                Sidebar::new("settings-sidebar"),
++                &self.sidebar_style,
++                header,
++            )
++            .child(SidebarMenu::new().children(filter.visible_pages().map(&item)))
++            .into_any_element()
+         } else {
+-            frame(Sidebar::new("settings-sidebar"), &self.sidebar_style, header)
+-                .children(sections.iter().map(|(title, page_ixs)| {
+-                    SidebarGroup::new(title.clone())
+-                        .child(SidebarMenu::new().children(page_ixs.iter().copied().map(&item)))
+-                }))
+-                .into_any_element()
++            frame(
++                Sidebar::new("settings-sidebar"),
++                &self.sidebar_style,
++                header,
++            )
++            .children(sections.iter().map(|(title, page_ixs)| {
++                SidebarGroup::new(title.clone())
++                    .child(SidebarMenu::new().children(page_ixs.iter().copied().map(&item)))
++            }))
++            .into_any_element()
+         }
+     }
+ }
+diff --git a/crates/component/src/sidebar/menu.rs b/crates/component/src/sidebar/menu.rs
+index a521c5e9..211c3ecd 100644
+--- a/crates/component/src/sidebar/menu.rs
++++ b/crates/component/src/sidebar/menu.rs
+@@ -10,8 +10,7 @@ use crate::{
+ use gpui::{
+     AnyElement, App, ClickEvent, Div, ElementId, InteractiveElement as _, IntoElement,
+     ParentElement as _, Role, SharedString, Stateful, StatefulInteractiveElement as _,
+-    StyleRefinement,
+-    Styled, Window, div, percentage, prelude::FluentBuilder,
++    StyleRefinement, Styled, Window, div, percentage, prelude::FluentBuilder,
+ };
+ use gpui_base::TestSupportExt as _;
+ use std::rc::Rc;
+diff --git a/crates/component/src/text/mod.rs b/crates/component/src/text/mod.rs
+index ec9749bf..69840d8e 100644
+--- a/crates/component/src/text/mod.rs
++++ b/crates/component/src/text/mod.rs
+@@ -12,8 +12,7 @@ pub use gpui_base::text::{
+     InlineElement, InlineRenderContext, LinkFragment, LinkUnderline, MarkdownBlockParserFn,
+     MarkdownBlockRenderFn, MarkdownExtensions, MarkdownNode, MarkdownParseContext, MarkdownPlugin,
+     RangeHighlight, RangeHighlightError, RenderedText, SelectionFormat, TableData, TextViewMotion,
+-    TextViewState,
+-    markdown_ast,
++    TextViewState, markdown_ast,
+ };
+ pub use style::TextViewStyle;
+ 
+diff --git a/crates/fps/Cargo.toml b/crates/fps/Cargo.toml
+index 15211fd4..1d1d2957 100644
+--- a/crates/fps/Cargo.toml
++++ b/crates/fps/Cargo.toml
+@@ -18,7 +18,6 @@ doctest = false
+ # `gpui/profiler` belongs here, not on the workspace dependency: this is the
+ # only crate that uses it, and cargo unifies features across the graph.
+ gpui = { workspace = true, features = ["profiler"] }
+-gpui-fast = { workspace = true, features = ["profiler"] , optional = true }
+ web-time = "1"
+ 
+ [target.'cfg(not(target_family = "wasm"))'.dependencies]
+@@ -58,10 +57,6 @@ windows = { workspace = true, features = [
+ 
+ [dev-dependencies]
+ gpui = { workspace = true, features = ["test-support"] }
+-gpui-fast = { workspace = true, features = ["test-support"] }
+ 
+ [lints]
+ workspace = true
+-
+-[features]
+-gpui-fast = ["dep:gpui-fast"]
+diff --git a/crates/fps/src/sampler.rs b/crates/fps/src/sampler.rs
+index ec91ede6..5f97c00f 100644
+--- a/crates/fps/src/sampler.rs
++++ b/crates/fps/src/sampler.rs
+@@ -526,9 +526,6 @@ mod tests {
+             invalidations,
+             draw_start: start,
+             draw_end: start + draw,
+-            refresh_interval: None,
+-            signal_at: None,
+-            phases: Default::default(),
+         }
+     }
+ 
+@@ -555,9 +552,6 @@ mod tests {
+             invalidations,
+             draw_start: start,
+             draw_end: start + draw,
+-            refresh_interval: None,
+-            signal_at: None,
+-            phases: Default::default(),
+         }
+     }
+ 
+diff --git a/crates/kit/Cargo.toml b/crates/kit/Cargo.toml
+index 75ed3974..67a38d85 100644
+--- a/crates/kit/Cargo.toml
++++ b/crates/kit/Cargo.toml
+@@ -17,17 +17,15 @@ workspace = true
+ 
+ [features]
+ default = ["component", "assets"]
+-# Select GPUI Fast across the core, platforms, and already-enabled layers.
+-gpui-fast = ["dep:gpui-fast", "dep:gpui-fast-platform", "dep:gpui-fast-web", "gpui-base/gpui-fast", "gpui-component?/gpui-fast", "gpui-kit-assets?/gpui-fast"]
+ # The styled component library, `gpui_kit::component`. Initializes `gpui-base` too.
+ component = ["dep:gpui-component"]
+ # The default icon set for `gpui-component`, `gpui_kit::assets`.
+ assets = ["dep:gpui-kit-assets"]
+ # GPUI's test harness, native-platform rendering, and Kit UI test helpers.
+-test-support = ["gpui/test-support", "gpui_platform/test-support", "gpui-base/test-support", "gpui-component?/test-support", "gpui-fast?/test-support", "gpui-fast-platform?/test-support"]
++test-support = ["gpui/test-support", "gpui_platform/test-support", "gpui-base/test-support", "gpui-component?/test-support"]
+ # Frame-event instrumentation remains opt-in for performance builds.
+-profiler = ["gpui/profiler", "gpui-fast?/profiler"]
+-inspector = ["gpui/inspector", "gpui-base/inspector", "gpui-component?/inspector", "gpui-fast?/inspector"]
++profiler = ["gpui/profiler"]
++inspector = ["gpui/inspector", "gpui-base/inspector", "gpui-component?/inspector"]
+ decimal = ["component", "gpui-component/decimal"]
+ # Speech input: microphone capture and the system speech recognizer.
+ speech = ["component", "gpui-component/speech"]
+@@ -73,23 +71,19 @@ tree-sitter-zig = ["component", "gpui-component/tree-sitter-zig"]
+ [dependencies]
+ gpui_macros.workspace = true
+ gpui.workspace = true
+-gpui-fast = { workspace = true, optional = true }
+ gpui-base.workspace = true
+ gpui-component = { workspace = true, optional = true }
+ gpui-kit-assets = { workspace = true, optional = true }
+ 
+ [target.'cfg(not(any(target_os = "ios", target_os = "android")))'.dependencies]
+ gpui_platform.workspace = true
+-gpui-fast-platform = { workspace = true, optional = true }
+ 
+ [target.'cfg(target_family = "wasm")'.dependencies]
+ gpui_web.workspace = true
+-gpui-fast-web = { workspace = true, optional = true }
+ 
+ [dev-dependencies]
+ chrono = "0.4.38"
+ gpui = { workspace = true, features = ["test-support"] }
+-gpui-fast = { workspace = true, features = ["test-support"] }
+ lsp-types.workspace = true
+ 
+ [[test]]
+diff --git a/crates/kit/tests/exports.rs b/crates/kit/tests/exports.rs
+index a8dccf9d..7f914f01 100644
+--- a/crates/kit/tests/exports.rs
++++ b/crates/kit/tests/exports.rs
+@@ -6,6 +6,10 @@
+ 
+ #![allow(unused_imports, dead_code)]
+ 
++// The Theorem Zed GPUI macros expand to bare `gpui::` paths; this one line per
++// crate root resolves them through the Kit (gpui-kit #3306).
++extern crate gpui_kit as gpui;
++
+ /// `use gpui_kit::*;` alone is GPUI, so a file needs nothing else for it.
+ mod glob_is_gpui {
+     use gpui_kit::*;
+diff --git a/crates/shell/Cargo.toml b/crates/shell/Cargo.toml
+index ee92e07c..d3418823 100644
+--- a/crates/shell/Cargo.toml
++++ b/crates/shell/Cargo.toml
+@@ -18,7 +18,6 @@ name = "gpui-shell"
+ path = "src/bin/gpui-shell.rs"
+ 
+ [features]
+-gpui-fast = ["dep:gpui-fast", "dep:gpui-fast-platform", "gpui-base/gpui-fast", "gpui-fps/gpui-fast"]
+ default = ["quickjs"]
+ # The scripting engine. See `src/engine/mod.rs` for the surface an engine has
+ # to provide; QuickJS is the only implementation today, and the feature exists
+@@ -33,9 +32,7 @@ quickjs = [
+ 
+ [dependencies]
+ gpui.workspace = true
+-gpui-fast = { workspace = true, optional = true }
+ gpui_platform.workspace = true
+-gpui-fast-platform = { workspace = true, optional = true }
+ gpui-base = { workspace = true, features = ["inspector"] }
+ gpui-fps.workspace = true
+ 
+@@ -76,7 +73,6 @@ tracing.workspace = true
+ 
+ [dev-dependencies]
+ gpui = { workspace = true, features = ["test-support"] }
+-gpui-fast = { workspace = true, features = ["test-support"] }
+ 
+ [target.'cfg(unix)'.dependencies]
+ libc = "0.2"
+diff --git a/crates/story-web/Cargo.toml b/crates/story-web/Cargo.toml
+index 4302ea0c..05ff43fc 100644
+--- a/crates/story-web/Cargo.toml
++++ b/crates/story-web/Cargo.toml
+@@ -21,6 +21,3 @@ serde_json.workspace = true
+ 
+ [lints]
+ workspace = true
+-
+-[features]
+-gpui-fast = ["gpui-kit/gpui-fast"]
+diff --git a/crates/story/Cargo.toml b/crates/story/Cargo.toml
+index 6d9470b0..9174afe2 100644
+--- a/crates/story/Cargo.toml
++++ b/crates/story/Cargo.toml
+@@ -5,7 +5,6 @@ publish = false
+ edition.workspace = true
+ 
+ [features]
+-gpui-fast = ["gpui-kit/gpui-fast", "gpui-fps/gpui-fast", "gpui-shell/gpui-fast"]
+ inspector = ["gpui-kit/inspector"]
+ tree-sitter = ["gpui-kit/tree-sitter-languages"]
+ test-support = ["gpui-kit/test-support"]
+@@ -14,8 +13,6 @@ default = ["tree-sitter"]
+ [dependencies]
+ anyhow.workspace = true
+ gpui-kit = { workspace = true, features = ["speech"] }
+-# The Theorem Zed `#[derive(Action)]` expands to `gpui::` paths.
+-gpui.workspace = true
+ gpui-fps.workspace = true
+ 
+ async-channel = "2.3.1"
+diff --git a/crates/story/src/lib.rs b/crates/story/src/lib.rs
+index bf545112..7833d739 100644
+--- a/crates/story/src/lib.rs
++++ b/crates/story/src/lib.rs
+@@ -1,3 +1,7 @@
++// The Theorem Zed GPUI macros expand to bare `gpui::` paths; this one line per
++// crate root resolves them through the Kit (gpui-kit #3306).
++extern crate gpui_kit as gpui;
++
+ use gpui_fps::fps_monitor;
+ use gpui_kit::component::{
+     ActiveTheme, IconName, Root, Sizable as _, Size as ComponentSize, StyledExt as _,
+diff --git a/crates/webview/Cargo.toml b/crates/webview/Cargo.toml
+index 6abc29f1..cd2ad91f 100644
+--- a/crates/webview/Cargo.toml
++++ b/crates/webview/Cargo.toml
+@@ -12,7 +12,6 @@ publish = true
+ version = "0.7.3"
+ 
+ [features]
+-gpui-fast = ["dep:gpui-fast"]
+ inspector = ["wry/devtools"]
+ 
+ [lib]
+@@ -21,5 +20,7 @@ doctest = false
+ [dependencies]
+ anyhow.workspace = true
+ gpui.workspace = true
+-gpui-fast = { workspace = true, optional = true }
+ wry = { version = "0.53.3", package = "lb-wry" }
++
++[lints.rust]
++unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("gpui-fast"))'] }
+diff --git a/examples/ai_recipes/Cargo.toml b/examples/ai_recipes/Cargo.toml
+index 466cbbf4..a0ddc4cb 100644
+--- a/examples/ai_recipes/Cargo.toml
++++ b/examples/ai_recipes/Cargo.toml
+@@ -13,6 +13,3 @@ gpui-kit = { workspace = true, features = ["test-support"] }
+ 
+ [lints]
+ workspace = true
+-
+-[features]
+-gpui-fast = ["gpui-kit/gpui-fast"]
+diff --git a/examples/ai_recipes/tests/controlled_value.rs b/examples/ai_recipes/tests/controlled_value.rs
+index 3eb2b7aa..300d754d 100644
+--- a/examples/ai_recipes/tests/controlled_value.rs
++++ b/examples/ai_recipes/tests/controlled_value.rs
+@@ -1,3 +1,7 @@
++// The Theorem Zed GPUI macros expand to bare `gpui::` paths; this one line per
++// crate root resolves them through the Kit (gpui-kit #3306).
++extern crate gpui_kit as gpui;
++
+ use gpui_kit::component::Root;
+ use gpui_kit::{AppContext as _, Modifiers, TestAppContext, point, px};
+ use gpui_kit_recipes::controlled_value::ControlledCheckbox;
+diff --git a/examples/ai_recipes/tests/gpui_test_contract.rs b/examples/ai_recipes/tests/gpui_test_contract.rs
+index 22696e9b..2c386140 100644
+--- a/examples/ai_recipes/tests/gpui_test_contract.rs
++++ b/examples/ai_recipes/tests/gpui_test_contract.rs
+@@ -1,3 +1,7 @@
++// The Theorem Zed GPUI macros expand to bare `gpui::` paths; this one line per
++// crate root resolves them through the Kit (gpui-kit #3306).
++extern crate gpui_kit as gpui;
++
+ // Preserve the published #[gpui_kit::test] API.
+ // This package depends only on gpui-kit, without a direct GPUI dependency.
+ // Running the same contract here prevents Kit's own GPUI dependency from hiding
+diff --git a/examples/ai_recipes/tests/settings.rs b/examples/ai_recipes/tests/settings.rs
+index cb60448e..1e8b8567 100644
+--- a/examples/ai_recipes/tests/settings.rs
++++ b/examples/ai_recipes/tests/settings.rs
+@@ -1,3 +1,7 @@
++// The Theorem Zed GPUI macros expand to bare `gpui::` paths; this one line per
++// crate root resolves them through the Kit (gpui-kit #3306).
++extern crate gpui_kit as gpui;
++
+ use gpui_kit::component::Root;
+ use gpui_kit::{AppContext as _, TestAppContext};
+ use gpui_kit_recipes::Settings;
+diff --git a/examples/app_assets/Cargo.toml b/examples/app_assets/Cargo.toml
+index c3884025..54aef7c0 100644
+--- a/examples/app_assets/Cargo.toml
++++ b/examples/app_assets/Cargo.toml
+@@ -12,6 +12,3 @@ rust-embed = { version = "8", features = ["interpolate-folder-path"] }
+ 
+ [lints]
+ workspace = true
+-
+-[features]
+-gpui-fast = ["gpui-kit/gpui-fast"]
+diff --git a/examples/brush/Cargo.toml b/examples/brush/Cargo.toml
+index b12a80ea..69809e05 100644
+--- a/examples/brush/Cargo.toml
++++ b/examples/brush/Cargo.toml
+@@ -10,6 +10,3 @@ gpui-component-story = { path = "../../crates/story" }
+ 
+ [lints]
+ workspace = true
+-
+-[features]
+-gpui-fast = ["gpui-kit/gpui-fast"]
+diff --git a/examples/dialog_overlay/Cargo.toml b/examples/dialog_overlay/Cargo.toml
+index 357ac368..ffc89989 100644
+--- a/examples/dialog_overlay/Cargo.toml
++++ b/examples/dialog_overlay/Cargo.toml
+@@ -11,6 +11,3 @@ anyhow.workspace = true
+ 
+ [lints]
+ workspace = true
+-
+-[features]
+-gpui-fast = ["gpui-kit/gpui-fast"]
+diff --git a/examples/dock/Cargo.toml b/examples/dock/Cargo.toml
+index a9c51162..9eaa2d0c 100644
+--- a/examples/dock/Cargo.toml
++++ b/examples/dock/Cargo.toml
+@@ -14,6 +14,3 @@ serde_json.workspace = true
+ 
+ [lints]
+ workspace = true
+-
+-[features]
+-gpui-fast = ["gpui-kit/gpui-fast"]
+diff --git a/examples/editor/Cargo.toml b/examples/editor/Cargo.toml
+index 750d9b93..3be91982 100644
+--- a/examples/editor/Cargo.toml
++++ b/examples/editor/Cargo.toml
+@@ -17,6 +17,3 @@ tree-sitter-navi = "0.2.3"
+ 
+ [lints]
+ workspace = true
+-
+-[features]
+-gpui-fast = ["gpui-kit/gpui-fast"]
+diff --git a/examples/focus_trap/Cargo.toml b/examples/focus_trap/Cargo.toml
+index da4a1d7a..ade6f09c 100644
+--- a/examples/focus_trap/Cargo.toml
++++ b/examples/focus_trap/Cargo.toml
+@@ -11,6 +11,3 @@ anyhow.workspace = true
+ 
+ [lints]
+ workspace = true
+-
+-[features]
+-gpui-fast = ["gpui-kit/gpui-fast"]
+diff --git a/examples/fps_monitor/Cargo.toml b/examples/fps_monitor/Cargo.toml
+index 2f79a612..716e2e7d 100644
+--- a/examples/fps_monitor/Cargo.toml
++++ b/examples/fps_monitor/Cargo.toml
+@@ -11,6 +11,3 @@ gpui-fps.workspace = true
+ 
+ [lints]
+ workspace = true
+-
+-[features]
+-gpui-fast = ["gpui-fps/gpui-fast"]
+diff --git a/examples/hello_world/Cargo.toml b/examples/hello_world/Cargo.toml
+index 1c94c9a6..6af01790 100644
+--- a/examples/hello_world/Cargo.toml
++++ b/examples/hello_world/Cargo.toml
+@@ -11,6 +11,3 @@ gpui-kit.workspace = true
+ 
+ [lints]
+ workspace = true
+-
+-[features]
+-gpui-fast = ["gpui-kit/gpui-fast"]
+diff --git a/examples/html/Cargo.toml b/examples/html/Cargo.toml
+index 5eb59271..831df396 100644
+--- a/examples/html/Cargo.toml
++++ b/examples/html/Cargo.toml
+@@ -10,6 +10,3 @@ gpui-component-story = { path = "../../crates/story" }
+ 
+ [lints]
+ workspace = true
+-
+-[features]
+-gpui-fast = ["gpui-kit/gpui-fast"]
+diff --git a/examples/input/Cargo.toml b/examples/input/Cargo.toml
+index c1baa36e..6c922a79 100644
+--- a/examples/input/Cargo.toml
++++ b/examples/input/Cargo.toml
+@@ -10,6 +10,3 @@ anyhow.workspace = true
+ 
+ [lints]
+ workspace = true
+-
+-[features]
+-gpui-fast = ["gpui-kit/gpui-fast"]
+diff --git a/examples/large-text/Cargo.toml b/examples/large-text/Cargo.toml
+index 68b41cce..f367de23 100644
+--- a/examples/large-text/Cargo.toml
++++ b/examples/large-text/Cargo.toml
+@@ -10,6 +10,3 @@ gpui-component-story = { path = "../../crates/story" }
+ 
+ [lints]
+ workspace = true
+-
+-[features]
+-gpui-fast = ["gpui-kit/gpui-fast"]
+diff --git a/examples/markdown/Cargo.toml b/examples/markdown/Cargo.toml
+index f8a9ef74..0cca5a98 100644
+--- a/examples/markdown/Cargo.toml
++++ b/examples/markdown/Cargo.toml
+@@ -12,6 +12,3 @@ regex = "1"
+ 
+ [lints]
+ workspace = true
+-
+-[features]
+-gpui-fast = ["gpui-kit/gpui-fast"]
+diff --git a/examples/markdown_table/Cargo.toml b/examples/markdown_table/Cargo.toml
+index 55fddd7a..ddf679e4 100644
+--- a/examples/markdown_table/Cargo.toml
++++ b/examples/markdown_table/Cargo.toml
+@@ -10,6 +10,3 @@ gpui-kit.workspace = true
+ 
+ [lints]
+ workspace = true
+-
+-[features]
+-gpui-fast = ["gpui-kit/gpui-fast"]
+diff --git a/examples/sidebar/Cargo.toml b/examples/sidebar/Cargo.toml
+index 948f60de..69ce5752 100644
+--- a/examples/sidebar/Cargo.toml
++++ b/examples/sidebar/Cargo.toml
+@@ -11,6 +11,3 @@ anyhow.workspace = true
+ 
+ [lints]
+ workspace = true
+-
+-[features]
+-gpui-fast = ["gpui-kit/gpui-fast"]
+diff --git a/examples/speech/Cargo.toml b/examples/speech/Cargo.toml
+index 497c1043..94a18c70 100644
+--- a/examples/speech/Cargo.toml
++++ b/examples/speech/Cargo.toml
+@@ -12,6 +12,3 @@ gpui-kit = { workspace = true, features = ["speech"] }
+ 
+ [lints]
+ workspace = true
+-
+-[features]
+-gpui-fast = ["gpui-kit/gpui-fast"]
+diff --git a/examples/stream-markdown/Cargo.toml b/examples/stream-markdown/Cargo.toml
+index 2de3ae8e..d114742a 100644
+--- a/examples/stream-markdown/Cargo.toml
++++ b/examples/stream-markdown/Cargo.toml
+@@ -12,6 +12,3 @@ smol.workspace = true
+ 
+ [lints]
+ workspace = true
+-
+-[features]
+-gpui-fast = ["gpui-kit/gpui-fast"]
+diff --git a/examples/system_monitor/Cargo.toml b/examples/system_monitor/Cargo.toml
+index 56c36807..c1589dda 100644
+--- a/examples/system_monitor/Cargo.toml
++++ b/examples/system_monitor/Cargo.toml
+@@ -26,6 +26,3 @@ windows = { version = "0.62", features = [
+ [lints.clippy]
+ dbg_macro = "deny"
+ todo = "deny"
+-
+-[features]
+-gpui-fast = ["gpui-kit/gpui-fast"]
+diff --git a/examples/table_in_scrollable/Cargo.toml b/examples/table_in_scrollable/Cargo.toml
+index 7cb2719a..e6520a8e 100644
+--- a/examples/table_in_scrollable/Cargo.toml
++++ b/examples/table_in_scrollable/Cargo.toml
+@@ -10,6 +10,3 @@ gpui-kit.workspace = true
+ 
+ [lints]
+ workspace = true
+-
+-[features]
+-gpui-fast = ["gpui-kit/gpui-fast"]
+diff --git a/examples/text_max_lines/Cargo.toml b/examples/text_max_lines/Cargo.toml
+index 2305b296..b591302b 100644
+--- a/examples/text_max_lines/Cargo.toml
++++ b/examples/text_max_lines/Cargo.toml
+@@ -12,6 +12,3 @@ anyhow.workspace = true
+ 
+ [lints]
+ workspace = true
+-
+-[features]
+-gpui-fast = ["gpui-kit/gpui-fast"]
+diff --git a/examples/text_selection/Cargo.toml b/examples/text_selection/Cargo.toml
+index 7ac29e35..36aceea1 100644
+--- a/examples/text_selection/Cargo.toml
++++ b/examples/text_selection/Cargo.toml
+@@ -11,6 +11,3 @@ anyhow.workspace = true
+ 
+ [lints]
+ workspace = true
+-
+-[features]
+-gpui-fast = ["gpui-kit/gpui-fast"]
+diff --git a/examples/tig/Cargo.toml b/examples/tig/Cargo.toml
+index dded50e6..b93b47c4 100644
+--- a/examples/tig/Cargo.toml
++++ b/examples/tig/Cargo.toml
+@@ -11,8 +11,5 @@ gpui-kit = { workspace = true, features = ["tree-sitter-rust", "tree-sitter-toml
+ [dev-dependencies]
+ gpui-kit = { workspace = true, features = ["test-support"] }
+ 
+-[features]
+-gpui-fast = ["gpui-kit/gpui-fast"]
+-
+ [lints]
+ workspace = true
+diff --git a/examples/tig/src/main.rs b/examples/tig/src/main.rs
+index e4340036..053496fe 100644
+--- a/examples/tig/src/main.rs
++++ b/examples/tig/src/main.rs
+@@ -1,3 +1,7 @@
++// The Theorem Zed GPUI macros expand to bare `gpui::` paths; this one line per
++// crate root resolves them through the Kit (gpui-kit #3306).
++extern crate gpui_kit as gpui;
++
+ mod app;
+ mod repository;
+ 
+diff --git a/examples/tooltip_top_edge/Cargo.toml b/examples/tooltip_top_edge/Cargo.toml
+index 2cf66d83..b69353a0 100644
+--- a/examples/tooltip_top_edge/Cargo.toml
++++ b/examples/tooltip_top_edge/Cargo.toml
+@@ -11,6 +11,3 @@ anyhow.workspace = true
+ 
+ [lints]
+ workspace = true
+-
+-[features]
+-gpui-fast = ["gpui-kit/gpui-fast"]
+diff --git a/examples/touch_selection/Cargo.toml b/examples/touch_selection/Cargo.toml
+index 7a6437cf..15fd06b9 100644
+--- a/examples/touch_selection/Cargo.toml
++++ b/examples/touch_selection/Cargo.toml
+@@ -11,6 +11,3 @@ anyhow.workspace = true
+ 
+ [lints]
+ workspace = true
+-
+-[features]
+-gpui-fast = ["gpui-kit/gpui-fast"]
+diff --git a/examples/webview/Cargo.toml b/examples/webview/Cargo.toml
+index 583fe034..07ce9865 100644
+--- a/examples/webview/Cargo.toml
++++ b/examples/webview/Cargo.toml
+@@ -6,7 +6,6 @@ publish = false
+ edition.workspace = true
+ 
+ [features]
+-gpui-fast = ["gpui-kit/gpui-fast"]
+ inspector = []
+ 
+ [dependencies]
+diff --git a/examples/window_title/Cargo.toml b/examples/window_title/Cargo.toml
+index 34dfc98b..9a896599 100644
+--- a/examples/window_title/Cargo.toml
++++ b/examples/window_title/Cargo.toml
+@@ -11,6 +11,3 @@ anyhow.workspace = true
+ 
+ [lints]
+ workspace = true
+-
+-[features]
+-gpui-fast = ["gpui-kit/gpui-fast"]
+-- 
+2.53.0
+
