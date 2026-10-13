@@ -6,6 +6,10 @@
 
 #![allow(unused_imports, dead_code)]
 
+// The Theorem Zed GPUI macros expand to bare `gpui::` paths; this one line per
+// crate root resolves them through the Kit (gpui-kit #3306).
+extern crate gpui_kit as gpui;
+
 /// `use gpui_kit::*;` alone is GPUI, so a file needs nothing else for it.
 mod glob_is_gpui {
     use gpui_kit::*;

@@ -1,3 +1,7 @@
+// The Theorem Zed GPUI macros expand to bare `gpui::` paths; this one line per
+// crate root resolves them through the Kit (gpui-kit #3306).
+extern crate gpui_kit as gpui;
+
 use gpui_fps::fps_monitor;
 use gpui_kit::component::{
     ActiveTheme, IconName, Root, Sizable as _, Size as ComponentSize, StyledExt as _,

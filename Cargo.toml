@@ -62,16 +62,14 @@ story = { path = "crates/story" }
 
 # GPUI comes from Theorem's pinned Zed fork rather than upstream's `gpui-pre-*`
 # snapshots, so every GPUI family crate resolves from one immutable revision and
-# Theorem keeps a single GPUI type identity.
+# Theorem keeps a single GPUI type identity. Upstream's optional GPUI Fast
+# backend (`gpui-fast-*` 0.1.7) is not carried: it cannot resolve beside this
+# source (its `oo7 ^0.6` excludes the Zed fork's `oo7 =0.6.0-alpha`), and a
+# second engine would be a second GPUI type identity. Its `cfg(feature =
+# "gpui-fast")` code stays inert, declared below so it raises no warning.
 gpui = { git = "https://github.com/Travis-Gilbert/zed", rev = "6d4d90754f7dde3e62afb6fe74a632c0b4660396" }
 gpui_platform = { git = "https://github.com/Travis-Gilbert/zed", rev = "6d4d90754f7dde3e62afb6fe74a632c0b4660396", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
 gpui_web = { git = "https://github.com/Travis-Gilbert/zed", rev = "6d4d90754f7dde3e62afb6fe74a632c0b4660396" }
-# Fast is optional; existing crates select it through their gpui-fast feature.
-# Explicit package fields make Cargo use these dependency keys as Rust crate names;
-# the packages declare the same library names as the pre backend.
-gpui-fast = { package = "gpui-fast", version = "0.1.7", features = ["windows-manifest-provided-by-host"] }
-gpui-fast-platform = { package = "gpui-fast-platform", version = "0.1.7", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
-gpui-fast-web = { package = "gpui-fast-web", version = "0.1.7" }
 gpui_macros = { git = "https://github.com/Travis-Gilbert/zed", rev = "6d4d90754f7dde3e62afb6fe74a632c0b4660396" }
 reqwest_client = { git = "https://github.com/Travis-Gilbert/zed", rev = "6d4d90754f7dde3e62afb6fe74a632c0b4660396" }
 sum-tree = { package = "sum_tree", git = "https://github.com/Travis-Gilbert/zed", rev = "6d4d90754f7dde3e62afb6fe74a632c0b4660396" }
@@ -118,6 +116,10 @@ errno = { version = "0.3.14", default-features = false }
 features = ["Wdk", "Wdk_System", "Wdk_System_SystemServices"]
 version = "0.58.0"
 
+# Upstream's GPUI Fast sources stay byte-identical; the feature does not exist here.
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("gpui-fast"))'] }
+
 [workspace.lints.clippy]
 almost_complete_range = "allow"
 arc_with_non_send_sync = "allow"
@@ -156,8 +158,6 @@ taffy = { opt-level = 3 }
 ttf-parser = { opt-level = 3 }
 smol = { opt-level = 3 }
 gpui = { opt-level = 3 }
-gpui-fast = { opt-level = 3 }
-gpui-fast-platform = { opt-level = 3 }
 gpui_platform = { opt-level = 3 }
 tree-sitter = { opt-level = 3 }
 sum_tree = { opt-level = 3 }
@@ -194,5 +194,5 @@ ignored = ["log", "anyhow", "serde"]
 
 [workspace.metadata.theorem-fork]
 upstream = "https://github.com/longbridge/gpui-kit"
-upstream_tag = "v0.6.0"
+upstream_tag = "v0.7.3"
 zed_rev = "6d4d90754f7dde3e62afb6fe74a632c0b4660396"

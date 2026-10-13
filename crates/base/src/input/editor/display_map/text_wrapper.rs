@@ -431,9 +431,7 @@ impl TextWrapper {
                 if offset < line_str.len() {
                     fragments.push(LineFragment::text(&line_str[offset..]));
                 }
-                line_wrapper
-                    .wrap_line(&fragments, wrap_width, gpui::IndentAdjustment::SameIndent)
-                    .collect()
+                line_wrapper.wrap_line(&fragments, wrap_width).collect()
             },
         );
     }

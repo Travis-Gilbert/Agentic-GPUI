@@ -360,16 +360,24 @@ impl Settings {
             .refine_style(&self.header_style)
             .child(Input::new(&search_input).prefix(IconName::Search));
         if self.sections.is_empty() {
-            frame(Sidebar::new("settings-sidebar"), &self.sidebar_style, header)
-                .child(SidebarMenu::new().children(filter.visible_pages().map(&item)))
-                .into_any_element()
+            frame(
+                Sidebar::new("settings-sidebar"),
+                &self.sidebar_style,
+                header,
+            )
+            .child(SidebarMenu::new().children(filter.visible_pages().map(&item)))
+            .into_any_element()
         } else {
-            frame(Sidebar::new("settings-sidebar"), &self.sidebar_style, header)
-                .children(sections.iter().map(|(title, page_ixs)| {
-                    SidebarGroup::new(title.clone())
-                        .child(SidebarMenu::new().children(page_ixs.iter().copied().map(&item)))
-                }))
-                .into_any_element()
+            frame(
+                Sidebar::new("settings-sidebar"),
+                &self.sidebar_style,
+                header,
+            )
+            .children(sections.iter().map(|(title, page_ixs)| {
+                SidebarGroup::new(title.clone())
+                    .child(SidebarMenu::new().children(page_ixs.iter().copied().map(&item)))
+            }))
+            .into_any_element()
         }
     }
 }

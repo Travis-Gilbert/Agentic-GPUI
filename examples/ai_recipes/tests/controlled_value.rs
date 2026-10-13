@@ -1,3 +1,7 @@
+// The Theorem Zed GPUI macros expand to bare `gpui::` paths; this one line per
+// crate root resolves them through the Kit (gpui-kit #3306).
+extern crate gpui_kit as gpui;
+
 use gpui_kit::component::Root;
 use gpui_kit::{AppContext as _, Modifiers, TestAppContext, point, px};
 use gpui_kit_recipes::controlled_value::ControlledCheckbox;

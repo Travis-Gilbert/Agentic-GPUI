@@ -13,6 +13,3 @@ gpui-kit = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true
-
-[features]
-gpui-fast = ["gpui-kit/gpui-fast"]

@@ -1309,7 +1309,7 @@ fn next_wrap(
     end: usize,
 ) -> usize {
     wrapper
-        .wrap_line(fragments, wrap_width, gpui::IndentAdjustment::SameIndent)
+        .wrap_line(fragments, wrap_width)
         .next()
         .map_or(end, |boundary| (start + boundary.ix).min(end))
 }

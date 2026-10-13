@@ -10,8 +10,7 @@ use crate::{
 use gpui::{
     AnyElement, App, ClickEvent, Div, ElementId, InteractiveElement as _, IntoElement,
     ParentElement as _, Role, SharedString, Stateful, StatefulInteractiveElement as _,
-    StyleRefinement,
-    Styled, Window, div, percentage, prelude::FluentBuilder,
+    StyleRefinement, Styled, Window, div, percentage, prelude::FluentBuilder,
 };
 use gpui_base::TestSupportExt as _;
 use std::rc::Rc;

@@ -466,7 +466,7 @@ impl Inline {
                 let click_focus = focus.clone();
                 let handler = self.link_click_handler.clone();
                 let url = link.url.clone();
-                let text_view_state = GlobalState::global(cx).text_view_state().cloned();
+                let text_view_state = GlobalState::global(cx).text_view_state();
                 let click = move |event: &ClickEvent, window: &mut Window, cx: &mut App| {
                     if !matches!(event, ClickEvent::Keyboard(_))
                         && text_view_state
@@ -968,8 +968,56 @@ impl Inline {
         }
     }
 
-    /// Paint each range highlight behind the text of its range.
-    fn paint_range_highlights(&self, text_layout: &TextLayout, window: &mut Window) {
+    /// Paint the shaped glyphs and decorations, then the dotted underline of
+    /// each link that asks for one.
+    fn paint_glyphs(
+        &mut self,
+        global_id: Option<&GlobalElementId>,
+        text_layout: &TextLayout,
+        bounds: Bounds<Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.styled_text
+            .paint(global_id, None, bounds, &mut (), &mut (), window, cx);
+
+        let text_color = self
+            .text_style
+            .as_ref()
+            .map(|style| style.color)
+            .unwrap_or_else(|| window.text_style().color);
+        for (range, link) in self.links.iter() {
+            if self.link_underline_for(&link.url, cx) != LinkUnderline::Dotted {
+                continue;
+            }
+            let color = self
+                .highlights
+                .iter()
+                .find_map(|(span, highlight)| {
+                    (span.start <= range.start && range.start < span.end)
+                        .then_some(highlight.style.color)
+                        .flatten()
+                })
+                .unwrap_or(text_color);
+            for (_, fragment) in link_fragment_bounds(text_layout, range.clone()) {
+                for dot in dotted_underline_bounds(fragment) {
+                    window.paint_quad(gpui::fill(dot, color));
+                }
+            }
+        }
+    }
+
+    /// Paint each range highlight, then each text run background, behind
+    /// the text of its range. Both lie under the selection.
+    fn paint_backgrounds(&self, text_layout: &TextLayout, window: &mut Window) {
+        let run_backgrounds = self
+            .retained_key
+            .as_ref()
+            .map(|(runs, _)| run_backgrounds(runs))
+            .unwrap_or_default();
+        if self.range_backgrounds.is_empty() && run_backgrounds.is_empty() {
+            return;
+        }
         let glyphs = glyph_boxes(
             text_layout,
             window.text_style().text_align,
@@ -977,7 +1025,7 @@ impl Inline {
         );
         let origin = text_layout.bounds().origin;
         let line_height = text_layout.line_height();
-        for (range, color) in &self.range_backgrounds {
+        for (range, color) in self.range_backgrounds.iter().chain(&run_backgrounds) {
             for (row, left, right) in range_boxes(&glyphs, range.clone()) {
                 window.paint_quad(gpui::fill(
                     Bounds::from_corners(
@@ -989,6 +1037,18 @@ impl Inline {
             }
         }
     }
+}
+
+/// The byte range and color of each text run that has a background.
+fn run_backgrounds(runs: &[TextRun]) -> Vec<(Range<usize>, Hsla)> {
+    let mut start = 0;
+    runs.iter()
+        .filter_map(|run| {
+            let range = start..start + run.len;
+            start = range.end;
+            run.background_color.map(|color| (range, color))
+        })
+        .collect()
 }
 
 impl IntoElement for Inline {
@@ -1049,8 +1109,7 @@ impl Element for Inline {
         let runs = if overrides.is_empty() {
             text_runs(self.text.len(), &text_style, &self.highlights)
         } else {
-            let highlights =
-                combine_highlights(self.highlights.clone(), overrides);
+            let highlights = combine_highlights(self.highlights.clone(), overrides);
             text_runs(self.text.len(), &text_style, &highlights)
         };
 
@@ -1060,9 +1119,18 @@ impl Element for Inline {
         let retained = take_retained_layout(&self.state).filter(|retained| {
             retained.text == self.text && retained.runs == runs && retained.text_style == text_style
         });
+        // The run backgrounds paint under the selection (see `paint`), so the
+        // shaped text gets its runs without them and paints the glyphs only.
+        let glyph_runs = runs
+            .iter()
+            .map(|run| TextRun {
+                background_color: None,
+                ..run.clone()
+            })
+            .collect::<Vec<_>>();
         self.styled_text = match retained {
-            Some(retained) => retained.styled_text.with_runs(runs.clone()),
-            None => StyledText::new(self.text.clone()).with_runs(runs.clone()),
+            Some(retained) => retained.styled_text.with_runs(glyph_runs),
+            None => StyledText::new(self.text.clone()).with_runs(glyph_runs),
         };
         self.retained_key = Some((runs, text_style));
         let (layout_id, _) =
@@ -1112,7 +1180,7 @@ impl Element for Inline {
 
     fn paint(
         &mut self,
-        _: Option<&GlobalElementId>,
+        global_id: Option<&GlobalElementId>,
         _: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
@@ -1130,42 +1198,21 @@ impl Element for Inline {
             return;
         }
         let text_layout = self.styled_text.layout().clone();
-        if !self.range_backgrounds.is_empty() {
-            self.paint_range_highlights(&text_layout, window);
-        }
-        _ = text_layout.paint_background(window, cx);
-
-        let text_color = self
-            .text_style
-            .as_ref()
-            .map(|style| style.color)
-            .unwrap_or_else(|| window.text_style().color);
-        for (range, link) in self.links.iter() {
-            if self.link_underline_for(&link.url, cx) != LinkUnderline::Dotted {
-                continue;
-            }
-            let color = self
-                .highlights
-                .iter()
-                .find_map(|(span, highlight)| {
-                    (span.start <= range.start && range.start < span.end)
-                        .then_some(highlight.style.color)
-                        .flatten()
-                })
-                .unwrap_or(text_color);
-            for (_, fragment) in link_fragment_bounds(&text_layout, range.clone()) {
-                for dot in dotted_underline_bounds(fragment) {
-                    window.paint_quad(gpui::fill(dot, color));
-                }
-            }
-        }
+        // Backgrounds, then the selection, then the glyphs, so selected text
+        // stays readable over an opaque selection. The Theorem Zed source has
+        // no separate background and glyph passes on `TextLayout`; the shaped
+        // text carries no run backgrounds (see `request_layout`) and paints
+        // after the selection.
+        self.paint_backgrounds(&text_layout, window);
 
         // layout selections
         let (is_selectable, is_selection, selection) =
             self.layout_selections(&text_layout, &bounds, window, cx);
 
-        let Ok(mut state) = self.state.lock() else {
-            _ = text_layout.paint_foreground(window, cx);
+        // The glyphs paint while the state is held, so hold it by its own handle.
+        let inline_state = self.state.clone();
+        let Ok(mut state) = inline_state.lock() else {
+            self.paint_glyphs(global_id, &text_layout, bounds, window, cx);
             return;
         };
 
@@ -1209,7 +1256,7 @@ impl Element for Inline {
             }
         }
 
-        _ = text_layout.paint_foreground(window, cx);
+        self.paint_glyphs(global_id, &text_layout, bounds, window, cx);
 
         if is_selectable {
             if let Some(text_view_state) = GlobalState::global(cx).text_view_state() {
