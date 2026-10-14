@@ -27,6 +27,7 @@ pub struct Button {
     children: SmallVec<[AnyElement; 2]>,
     on_click: Option<ClickHandler>,
     accessibility_label: Option<SharedString>,
+    accessibility_description: Option<SharedString>,
     role: RoleOverride,
     provided_focus_handle: Option<FocusHandle>,
     tab_index: isize,
@@ -47,6 +48,7 @@ impl Button {
             children: SmallVec::new(),
             on_click: None,
             accessibility_label: None,
+            accessibility_description: None,
             role: RoleOverride::Implicit,
             provided_focus_handle: None,
             tab_index: 0,
@@ -81,6 +83,15 @@ impl Button {
     /// Sets the label exposed to accessibility clients.
     pub fn accessibility_label(mut self, label: impl Into<SharedString>) -> Self {
         self.accessibility_label = Some(label.into());
+        self
+    }
+
+    /// Sets the description exposed to accessibility clients.
+    ///
+    /// The description is announced after the name, role and state. It is where
+    /// a control says why it is unavailable.
+    pub fn accessibility_description(mut self, description: impl Into<SharedString>) -> Self {
+        self.accessibility_description = Some(description.into());
         self
     }
 
@@ -231,6 +242,9 @@ impl RenderOnce for Button {
             })
             .when_some(self.accessibility_label, |this, label| {
                 this.aria_label(label)
+            })
+            .when_some(self.accessibility_description, |this, description| {
+                this.aria_description(description)
             })
             .when(!disabled && self.focusable, |this| {
                 this.track_focus(

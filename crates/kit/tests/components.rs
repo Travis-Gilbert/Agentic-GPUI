@@ -1,6 +1,7 @@
 mod common;
 use gpui_component::{
-    Disableable, TitleBar,
+    Disableable, RoleOverride, TitleBar,
+    alert::Alert,
     button::{Button, DropdownButton},
     clipboard::Clipboard,
     input::{Input, InputState},
@@ -93,6 +94,71 @@ fn button_reports_accessibility_name_without_claiming_visible_text(cx: &mut Test
     cx.update_window(handle.into(), |_, window, cx| {
         window.draw(cx).clear(cx);
         assert_eq!(window.find("save").label(), Some("Save this document"));
+    })
+    .unwrap();
+}
+
+struct Described;
+impl Render for Described {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .child(
+                Button::new("send")
+                    .label("Send")
+                    .disabled(true)
+                    .accessibility_description("Sign in to send"),
+            )
+            .child(Button::new("plain").label("Plain"))
+    }
+}
+
+#[gpui_kit::test]
+fn button_publishes_its_description_beside_its_name(cx: &mut TestAppContext) {
+    cx.update(gpui_component::init);
+    let (handle, _) = common::open_window(cx, None, |_, cx| cx.new(|_| Described));
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.draw(cx).clear(cx);
+        let send = window.find("send");
+        assert_eq!(send.label(), Some("Send"));
+        assert_eq!(send.description(), Some("Sign in to send"));
+        assert_eq!(window.find("plain").description(), None);
+    })
+    .unwrap();
+}
+
+struct Alerts;
+impl Render for Alerts {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .child(Alert::info("default-alert", "Saved"))
+            .child(Alert::info("quiet-alert", "Saved").role(RoleOverride::Presentational))
+            .child(Alert::info("named-alert", "Saved").aria_label("Save status"))
+            .child(Alert::info("status-alert", "Saved").role(gpui_kit::Role::Status))
+    }
+}
+
+#[gpui_kit::test]
+fn alert_role_and_name_belong_to_the_caller(cx: &mut TestAppContext) {
+    cx.update(gpui_component::init);
+    let (handle, _) = common::open_window(cx, None, |_, cx| cx.new(|_| Alerts));
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.draw(cx).clear(cx);
+        let default = window.find("default-alert");
+        assert_eq!(default.role(), Some(gpui_kit::Role::Alert));
+        assert_eq!(default.label(), None);
+
+        let quiet = window.find("quiet-alert");
+        assert_eq!(quiet.role(), None);
+        assert_eq!(quiet.label(), None);
+
+        let named = window.find("named-alert");
+        assert_eq!(named.role(), Some(gpui_kit::Role::Alert));
+        assert_eq!(named.label(), Some("Save status"));
+
+        assert_eq!(
+            window.find("status-alert").role(),
+            Some(gpui_kit::Role::Status)
+        );
     })
     .unwrap();
 }

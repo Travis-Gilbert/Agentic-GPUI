@@ -29,6 +29,7 @@ pub struct ElementSnapshot {
     focus_action: bool,
     disabled: Option<bool>,
     label: Option<SharedString>,
+    description: Option<SharedString>,
 }
 impl fmt::Debug for ElementSnapshot {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -57,6 +58,7 @@ impl fmt::Debug for ElementSnapshot {
             .field("focus_action", &self.focus_action)
             .field("disabled", &self.disabled)
             .field("label", &self.label)
+            .field("description", &self.description)
             .finish()
     }
 }
@@ -111,6 +113,11 @@ impl ElementSnapshot {
     /// The accessibility label; it can intentionally differ from visible text.
     pub fn label(&self) -> Option<&str> {
         self.label.as_deref()
+    }
+    /// The accessibility description: supplementary text announced after the
+    /// name, such as the reason a control is unavailable.
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref()
     }
 }
 
@@ -316,6 +323,7 @@ impl<E: Element<PrepaintState = Option<Hitbox>> + InteractiveElement> Element fo
             focus_action: node.supports_action(gpui::accesskit::Action::Focus),
             disabled: node.is_disabled().then_some(true),
             label: node.label().map(|label| label.to_owned().into()),
+            description: node.description().map(|text| text.to_owned().into()),
         };
         let registration =
             window.with_element_state(global_id, |state: Option<Rc<Registration>>, window| {

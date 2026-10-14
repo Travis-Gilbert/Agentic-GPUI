@@ -194,6 +194,7 @@ pub struct Button {
     label: Option<SharedString>,
     /// The announced name, when the visible content is not it.
     accessibility_label: Option<SharedString>,
+    accessibility_description: Option<SharedString>,
     children: Vec<AnyElement>,
     disabled: bool,
     pub(crate) selected: bool,
@@ -248,6 +249,7 @@ impl Button {
             icon: None,
             label: None,
             accessibility_label: None,
+            accessibility_description: None,
             children: Vec::new(),
             disabled: false,
             selected: false,
@@ -392,6 +394,17 @@ impl Button {
     /// name without adding anything to the screen.
     pub fn accessibility_label(mut self, label: impl Into<SharedString>) -> Self {
         self.accessibility_label = Some(label.into());
+        self
+    }
+
+    /// Set the accessible description of the button.
+    ///
+    /// A description is announced after the name, role and state and adds
+    /// nothing to the screen. It is where an unavailable button says why:
+    /// `Button::new("send").label("Send").disabled(true)` tells a reader that it
+    /// is dimmed, and this tells them what to do about it.
+    pub fn accessibility_description(mut self, description: impl Into<SharedString>) -> Self {
+        self.accessibility_description = Some(description.into());
         self
     }
 
@@ -623,6 +636,7 @@ impl RenderOnce for Button {
         let tooltip_placement = self.tooltip_placement;
         let tooltip_show_delay = self.tooltip_show_delay;
         let accessibility_label = self.accessible_name();
+        let accessibility_description = self.accessibility_description.clone();
         let hover_group = self.hover_group;
         let hover_group_held = self.hover_group_held;
         let mut base = self.base;
@@ -818,6 +832,9 @@ impl RenderOnce for Button {
         })
         .when_some(accessibility_label, |this, label| {
             this.accessibility_label(label)
+        })
+        .when_some(accessibility_description, |this, description| {
+            this.accessibility_description(description)
         })
         .when_some(self.toggled, |this, toggled| {
             this.aria_toggled(if toggled {

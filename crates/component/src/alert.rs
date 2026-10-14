@@ -1,3 +1,4 @@
+use gpui_base::TestSupportExt as _;
 use std::rc::Rc;
 
 use gpui::{
@@ -7,7 +8,7 @@ use gpui::{
 };
 
 use crate::{
-    ActiveTheme as _, Colorize, Icon, IconName, Sizable, Size, StyledExt, h_flex,
+    ActiveTheme as _, Colorize, Icon, IconName, RoleOverride, Sizable, Size, StyledExt, h_flex,
     text::{Text, TextViewStyle},
 };
 
@@ -67,6 +68,8 @@ pub struct Alert {
     banner: bool,
     on_close: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     visible: bool,
+    role: RoleOverride,
+    aria_label: Option<SharedString>,
 }
 
 impl Alert {
@@ -83,6 +86,8 @@ impl Alert {
             banner: false,
             visible: true,
             on_close: None,
+            role: RoleOverride::default(),
+            aria_label: None,
         }
     }
 
@@ -147,6 +152,25 @@ impl Alert {
         self
     }
 
+    /// Set the accessibility role published for the alert container.
+    ///
+    /// An alert announces itself as [`Role::Alert`] by default. Pass another
+    /// role to change it, or [`RoleOverride::Presentational`] to publish no
+    /// node for the container when the host already publishes its own named
+    /// node for the same content; the alert's children keep their own nodes.
+    pub fn role(mut self, role: impl Into<RoleOverride>) -> Self {
+        self.role = role.into();
+        self
+    }
+
+    /// Set the accessible name of the alert container.
+    ///
+    /// The name is published only while the alert publishes a role.
+    pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.aria_label = Some(label.into());
+        self
+    }
+
     /// Set alert as closable, true will show Close icon.
     pub fn on_close(
         mut self,
@@ -187,9 +211,15 @@ impl RenderOnce for Alert {
         let fg = self.variant.fg(cx);
         let border_color = self.variant.border_color(cx);
 
+        let role = self.role.resolve(|| Role::Alert);
+
         h_flex()
             .id(self.id)
-            .role(Role::Alert)
+            .test_support()
+            .when_some(role, |this, role| {
+                this.role(role)
+                    .when_some(self.aria_label, |this, label| this.aria_label(label))
+            })
             .w_full()
             .text_color(fg)
             .bg(bg)
@@ -251,5 +281,35 @@ impl RenderOnce for Alert {
                 )
             })
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_alert_announces_itself_as_an_alert_unless_told_otherwise() {
+        let alert = Alert::info("alert", "Saved");
+
+        assert_eq!(alert.role, RoleOverride::Implicit);
+        assert_eq!(alert.role.resolve(|| Role::Alert), Some(Role::Alert));
+        assert_eq!(alert.aria_label, None);
+    }
+
+    #[test]
+    fn the_role_is_the_callers_to_change_or_drop() {
+        let status = Alert::info("alert", "Saved").role(Role::Status);
+        assert_eq!(status.role.resolve(|| Role::Alert), Some(Role::Status));
+
+        let quiet = Alert::info("alert", "Saved").role(RoleOverride::Presentational);
+        assert_eq!(quiet.role.resolve(|| Role::Alert), None);
+    }
+
+    #[test]
+    fn the_name_is_set_by_aria_label() {
+        let alert = Alert::info("alert", "Saved").aria_label("Save status");
+
+        assert_eq!(alert.aria_label.as_deref(), Some("Save status"));
     }
 }
