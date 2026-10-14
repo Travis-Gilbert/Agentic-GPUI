@@ -283,9 +283,19 @@ registers with `test_support()` so the role and name are observable in headless 
 description, so a control can say why it is unavailable. `ElementSnapshot` gains
 `description()` to read it back.
 
-`Button::disabled(true)` does not publish AccessKit `disabled`: GPUI at the pinned
-Zed revision (`6d4d907`) has no way to set it. The fork's Zed series adds
-`aria_disabled(bool)` at `4bc784f`; Button should call it from `render` once this
-fork's Zed pin moves to a revision that contains it, and the existing assertion
-`window.find("disabled").disabled() == None` in `crates/kit/tests/components.rs`
-then becomes `Some(true)`.
+At this patch, `Button::disabled(true)` did not yet publish AccessKit `disabled`,
+because GPUI at the then-pinned Zed revision (`6d4d907`) had no way to set it.
+Patch 0024 closes that.
+
+## Disabled Button state (patch 0024)
+
+The Zed pin moves from `6d4d907` to `45cde9a` on
+`Travis-Gilbert/chat-workspace-native-motion`. That revision adds
+`StatefulInteractiveElement::aria_disabled(bool)` and has `gpui_web` project a
+node's description, disabled, required and read-only states as `aria-*`
+attributes. The base `Button` now calls `aria_disabled` from `render`, using the
+same flag that blocks its pointer input, so a disabled button reads as disabled
+to assistive technology rather than only looking dim. The assertion in
+`crates/kit/tests/components.rs` is now `window.find("disabled").disabled() ==
+Some(true)`. TheoremWeb moves its Kit and Zed pins together with this patch, so
+one `gpui` copy stays in its graph.
