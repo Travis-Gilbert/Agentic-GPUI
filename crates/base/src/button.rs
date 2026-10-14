@@ -246,6 +246,9 @@ impl RenderOnce for Button {
             .when_some(self.accessibility_description, |this, description| {
                 this.aria_description(description)
             })
+            // The platform reads the same state the pointer does: an inert
+            // button is announced as unavailable, not just drawn dim.
+            .aria_disabled(disabled)
             .when(!disabled && self.focusable, |this| {
                 this.track_focus(
                     &focus_handle
@@ -562,9 +565,7 @@ mod tests {
         assert_eq!(disabled.role(), Role::Button);
         assert!(!disabled.supports_action(accesskit::Action::Click));
 
-        // GPUI's current StatefulInteractiveElement interface has no
-        // aria-disabled setter even though AccessKit can represent it. This
-        // assertion records that upstream gap instead of claiming support.
-        assert!(!disabled.is_disabled());
+        assert!(disabled.is_disabled());
+        assert!(!enabled.is_disabled());
     }
 }

@@ -67,12 +67,12 @@ story = { path = "crates/story" }
 # source (its `oo7 ^0.6` excludes the Zed fork's `oo7 =0.6.0-alpha`), and a
 # second engine would be a second GPUI type identity. Its `cfg(feature =
 # "gpui-fast")` code stays inert, declared below so it raises no warning.
-gpui = { git = "https://github.com/Travis-Gilbert/zed", rev = "6d4d90754f7dde3e62afb6fe74a632c0b4660396" }
-gpui_platform = { git = "https://github.com/Travis-Gilbert/zed", rev = "6d4d90754f7dde3e62afb6fe74a632c0b4660396", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
-gpui_web = { git = "https://github.com/Travis-Gilbert/zed", rev = "6d4d90754f7dde3e62afb6fe74a632c0b4660396" }
-gpui_macros = { git = "https://github.com/Travis-Gilbert/zed", rev = "6d4d90754f7dde3e62afb6fe74a632c0b4660396" }
-reqwest_client = { git = "https://github.com/Travis-Gilbert/zed", rev = "6d4d90754f7dde3e62afb6fe74a632c0b4660396" }
-sum-tree = { package = "sum_tree", git = "https://github.com/Travis-Gilbert/zed", rev = "6d4d90754f7dde3e62afb6fe74a632c0b4660396" }
+gpui = { git = "https://github.com/Travis-Gilbert/zed", rev = "45cde9a99b7ab2059912410cc89a71aaff692707" }
+gpui_platform = { git = "https://github.com/Travis-Gilbert/zed", rev = "45cde9a99b7ab2059912410cc89a71aaff692707", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
+gpui_web = { git = "https://github.com/Travis-Gilbert/zed", rev = "45cde9a99b7ab2059912410cc89a71aaff692707" }
+gpui_macros = { git = "https://github.com/Travis-Gilbert/zed", rev = "45cde9a99b7ab2059912410cc89a71aaff692707" }
+reqwest_client = { git = "https://github.com/Travis-Gilbert/zed", rev = "45cde9a99b7ab2059912410cc89a71aaff692707" }
+sum-tree = { package = "sum_tree", git = "https://github.com/Travis-Gilbert/zed", rev = "45cde9a99b7ab2059912410cc89a71aaff692707" }
 reqwest = { package = "zed-reqwest", git = "https://github.com/zed-industries/reqwest.git", rev = "33bc764aa15ff7b200bf7c93bd96e24878d53e14", version = "0.12.15-zed", default-features = false, features = [
     "charset",
     "http2",
@@ -195,4 +195,4 @@ ignored = ["log", "anyhow", "serde"]
 [workspace.metadata.theorem-fork]
 upstream = "https://github.com/longbridge/gpui-kit"
 upstream_tag = "v0.7.3"
-zed_rev = "6d4d90754f7dde3e62afb6fe74a632c0b4660396"
+zed_rev = "45cde9a99b7ab2059912410cc89a71aaff692707"
