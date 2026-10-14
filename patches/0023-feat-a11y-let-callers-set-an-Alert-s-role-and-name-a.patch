@@ -1,0 +1,354 @@
+From 4ce9a51c1173685859412a594f946656905447e5 Mon Sep 17 00:00:00 2001
+From: Travis Gilbert <1travisgilbert@gmail.com>
+Date: Wed, 14 Oct 2026 12:20:18 -0400
+Subject: [PATCH] feat(a11y): let callers set an Alert's role and name and a
+ Button's description
+
+---
+ crates/base/src/button.rs             | 14 ++++++
+ crates/base/src/test_support.rs       |  8 ++++
+ crates/component/src/alert.rs         | 64 ++++++++++++++++++++++++-
+ crates/component/src/button/button.rs | 17 +++++++
+ crates/kit/tests/components.rs        | 68 ++++++++++++++++++++++++++-
+ 5 files changed, 168 insertions(+), 3 deletions(-)
+
+diff --git a/crates/base/src/button.rs b/crates/base/src/button.rs
+index 84a870c4..dbc503d6 100644
+--- a/crates/base/src/button.rs
++++ b/crates/base/src/button.rs
+@@ -27,6 +27,7 @@ pub struct Button {
+     children: SmallVec<[AnyElement; 2]>,
+     on_click: Option<ClickHandler>,
+     accessibility_label: Option<SharedString>,
++    accessibility_description: Option<SharedString>,
+     role: RoleOverride,
+     provided_focus_handle: Option<FocusHandle>,
+     tab_index: isize,
+@@ -47,6 +48,7 @@ impl Button {
+             children: SmallVec::new(),
+             on_click: None,
+             accessibility_label: None,
++            accessibility_description: None,
+             role: RoleOverride::Implicit,
+             provided_focus_handle: None,
+             tab_index: 0,
+@@ -84,6 +86,15 @@ impl Button {
+         self
+     }
+ 
++    /// Sets the description exposed to accessibility clients.
++    ///
++    /// The description is announced after the name, role and state. It is where
++    /// a control says why it is unavailable.
++    pub fn accessibility_description(mut self, description: impl Into<SharedString>) -> Self {
++        self.accessibility_description = Some(description.into());
++        self
++    }
++
+     /// Overrides the accessibility role. The default is [`Role::Button`].
+     pub fn role(mut self, role: impl Into<RoleOverride>) -> Self {
+         self.role = role.into();
+@@ -232,6 +243,9 @@ impl RenderOnce for Button {
+             .when_some(self.accessibility_label, |this, label| {
+                 this.aria_label(label)
+             })
++            .when_some(self.accessibility_description, |this, description| {
++                this.aria_description(description)
++            })
+             .when(!disabled && self.focusable, |this| {
+                 this.track_focus(
+                     &focus_handle
+diff --git a/crates/base/src/test_support.rs b/crates/base/src/test_support.rs
+index 27cb13b4..2875a652 100644
+--- a/crates/base/src/test_support.rs
++++ b/crates/base/src/test_support.rs
+@@ -29,6 +29,7 @@ pub struct ElementSnapshot {
+     focus_action: bool,
+     disabled: Option<bool>,
+     label: Option<SharedString>,
++    description: Option<SharedString>,
+ }
+ impl fmt::Debug for ElementSnapshot {
+     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+@@ -57,6 +58,7 @@ impl fmt::Debug for ElementSnapshot {
+             .field("focus_action", &self.focus_action)
+             .field("disabled", &self.disabled)
+             .field("label", &self.label)
++            .field("description", &self.description)
+             .finish()
+     }
+ }
+@@ -112,6 +114,11 @@ impl ElementSnapshot {
+     pub fn label(&self) -> Option<&str> {
+         self.label.as_deref()
+     }
++    /// The accessibility description: supplementary text announced after the
++    /// name, such as the reason a control is unavailable.
++    pub fn description(&self) -> Option<&str> {
++        self.description.as_deref()
++    }
+ }
+ 
+ // Each Window owns a distinct Arc<WindowTextSystem>, stable even during initial
+@@ -316,6 +323,7 @@ impl<E: Element<PrepaintState = Option<Hitbox>> + InteractiveElement> Element fo
+             focus_action: node.supports_action(gpui::accesskit::Action::Focus),
+             disabled: node.is_disabled().then_some(true),
+             label: node.label().map(|label| label.to_owned().into()),
++            description: node.description().map(|text| text.to_owned().into()),
+         };
+         let registration =
+             window.with_element_state(global_id, |state: Option<Rc<Registration>>, window| {
+diff --git a/crates/component/src/alert.rs b/crates/component/src/alert.rs
+index 7ceb3a9f..d37a94c1 100644
+--- a/crates/component/src/alert.rs
++++ b/crates/component/src/alert.rs
+@@ -1,3 +1,4 @@
++use gpui_base::TestSupportExt as _;
+ use std::rc::Rc;
+ 
+ use gpui::{
+@@ -7,7 +8,7 @@ use gpui::{
+ };
+ 
+ use crate::{
+-    ActiveTheme as _, Colorize, Icon, IconName, Sizable, Size, StyledExt, h_flex,
++    ActiveTheme as _, Colorize, Icon, IconName, RoleOverride, Sizable, Size, StyledExt, h_flex,
+     text::{Text, TextViewStyle},
+ };
+ 
+@@ -67,6 +68,8 @@ pub struct Alert {
+     banner: bool,
+     on_close: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+     visible: bool,
++    role: RoleOverride,
++    aria_label: Option<SharedString>,
+ }
+ 
+ impl Alert {
+@@ -83,6 +86,8 @@ impl Alert {
+             banner: false,
+             visible: true,
+             on_close: None,
++            role: RoleOverride::default(),
++            aria_label: None,
+         }
+     }
+ 
+@@ -147,6 +152,25 @@ impl Alert {
+         self
+     }
+ 
++    /// Set the accessibility role published for the alert container.
++    ///
++    /// An alert announces itself as [`Role::Alert`] by default. Pass another
++    /// role to change it, or [`RoleOverride::Presentational`] to publish no
++    /// node for the container when the host already publishes its own named
++    /// node for the same content; the alert's children keep their own nodes.
++    pub fn role(mut self, role: impl Into<RoleOverride>) -> Self {
++        self.role = role.into();
++        self
++    }
++
++    /// Set the accessible name of the alert container.
++    ///
++    /// The name is published only while the alert publishes a role.
++    pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
++        self.aria_label = Some(label.into());
++        self
++    }
++
+     /// Set alert as closable, true will show Close icon.
+     pub fn on_close(
+         mut self,
+@@ -187,9 +211,15 @@ impl RenderOnce for Alert {
+         let fg = self.variant.fg(cx);
+         let border_color = self.variant.border_color(cx);
+ 
++        let role = self.role.resolve(|| Role::Alert);
++
+         h_flex()
+             .id(self.id)
+-            .role(Role::Alert)
++            .test_support()
++            .when_some(role, |this, role| {
++                this.role(role)
++                    .when_some(self.aria_label, |this, label| this.aria_label(label))
++            })
+             .w_full()
+             .text_color(fg)
+             .bg(bg)
+@@ -253,3 +283,33 @@ impl RenderOnce for Alert {
+             .into_any_element()
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn an_alert_announces_itself_as_an_alert_unless_told_otherwise() {
++        let alert = Alert::info("alert", "Saved");
++
++        assert_eq!(alert.role, RoleOverride::Implicit);
++        assert_eq!(alert.role.resolve(|| Role::Alert), Some(Role::Alert));
++        assert_eq!(alert.aria_label, None);
++    }
++
++    #[test]
++    fn the_role_is_the_callers_to_change_or_drop() {
++        let status = Alert::info("alert", "Saved").role(Role::Status);
++        assert_eq!(status.role.resolve(|| Role::Alert), Some(Role::Status));
++
++        let quiet = Alert::info("alert", "Saved").role(RoleOverride::Presentational);
++        assert_eq!(quiet.role.resolve(|| Role::Alert), None);
++    }
++
++    #[test]
++    fn the_name_is_set_by_aria_label() {
++        let alert = Alert::info("alert", "Saved").aria_label("Save status");
++
++        assert_eq!(alert.aria_label.as_deref(), Some("Save status"));
++    }
++}
+diff --git a/crates/component/src/button/button.rs b/crates/component/src/button/button.rs
+index 27c4a9aa..a8f81f4b 100644
+--- a/crates/component/src/button/button.rs
++++ b/crates/component/src/button/button.rs
+@@ -194,6 +194,7 @@ pub struct Button {
+     label: Option<SharedString>,
+     /// The announced name, when the visible content is not it.
+     accessibility_label: Option<SharedString>,
++    accessibility_description: Option<SharedString>,
+     children: Vec<AnyElement>,
+     disabled: bool,
+     pub(crate) selected: bool,
+@@ -248,6 +249,7 @@ impl Button {
+             icon: None,
+             label: None,
+             accessibility_label: None,
++            accessibility_description: None,
+             children: Vec::new(),
+             disabled: false,
+             selected: false,
+@@ -395,6 +397,17 @@ impl Button {
+         self
+     }
+ 
++    /// Set the accessible description of the button.
++    ///
++    /// A description is announced after the name, role and state and adds
++    /// nothing to the screen. It is where an unavailable button says why:
++    /// `Button::new("send").label("Send").disabled(true)` tells a reader that it
++    /// is dimmed, and this tells them what to do about it.
++    pub fn accessibility_description(mut self, description: impl Into<SharedString>) -> Self {
++        self.accessibility_description = Some(description.into());
++        self
++    }
++
+     fn accessible_name(&self) -> Option<SharedString> {
+         self.accessibility_label
+             .clone()
+@@ -623,6 +636,7 @@ impl RenderOnce for Button {
+         let tooltip_placement = self.tooltip_placement;
+         let tooltip_show_delay = self.tooltip_show_delay;
+         let accessibility_label = self.accessible_name();
++        let accessibility_description = self.accessibility_description.clone();
+         let hover_group = self.hover_group;
+         let hover_group_held = self.hover_group_held;
+         let mut base = self.base;
+@@ -819,6 +833,9 @@ impl RenderOnce for Button {
+         .when_some(accessibility_label, |this, label| {
+             this.accessibility_label(label)
+         })
++        .when_some(accessibility_description, |this, description| {
++            this.accessibility_description(description)
++        })
+         .when_some(self.toggled, |this, toggled| {
+             this.aria_toggled(if toggled {
+                 gpui::accesskit::Toggled::True
+diff --git a/crates/kit/tests/components.rs b/crates/kit/tests/components.rs
+index 23d4914c..0ef8deb1 100644
+--- a/crates/kit/tests/components.rs
++++ b/crates/kit/tests/components.rs
+@@ -1,6 +1,7 @@
+ mod common;
+ use gpui_component::{
+-    Disableable, TitleBar,
++    Disableable, RoleOverride, TitleBar,
++    alert::Alert,
+     button::{Button, DropdownButton},
+     clipboard::Clipboard,
+     input::{Input, InputState},
+@@ -97,6 +98,71 @@ fn button_reports_accessibility_name_without_claiming_visible_text(cx: &mut Test
+     .unwrap();
+ }
+ 
++struct Described;
++impl Render for Described {
++    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++        div()
++            .child(
++                Button::new("send")
++                    .label("Send")
++                    .disabled(true)
++                    .accessibility_description("Sign in to send"),
++            )
++            .child(Button::new("plain").label("Plain"))
++    }
++}
++
++#[gpui_kit::test]
++fn button_publishes_its_description_beside_its_name(cx: &mut TestAppContext) {
++    cx.update(gpui_component::init);
++    let (handle, _) = common::open_window(cx, None, |_, cx| cx.new(|_| Described));
++    cx.update_window(handle.into(), |_, window, cx| {
++        window.draw(cx).clear(cx);
++        let send = window.find("send");
++        assert_eq!(send.label(), Some("Send"));
++        assert_eq!(send.description(), Some("Sign in to send"));
++        assert_eq!(window.find("plain").description(), None);
++    })
++    .unwrap();
++}
++
++struct Alerts;
++impl Render for Alerts {
++    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++        div()
++            .child(Alert::info("default-alert", "Saved"))
++            .child(Alert::info("quiet-alert", "Saved").role(RoleOverride::Presentational))
++            .child(Alert::info("named-alert", "Saved").aria_label("Save status"))
++            .child(Alert::info("status-alert", "Saved").role(gpui_kit::Role::Status))
++    }
++}
++
++#[gpui_kit::test]
++fn alert_role_and_name_belong_to_the_caller(cx: &mut TestAppContext) {
++    cx.update(gpui_component::init);
++    let (handle, _) = common::open_window(cx, None, |_, cx| cx.new(|_| Alerts));
++    cx.update_window(handle.into(), |_, window, cx| {
++        window.draw(cx).clear(cx);
++        let default = window.find("default-alert");
++        assert_eq!(default.role(), Some(gpui_kit::Role::Alert));
++        assert_eq!(default.label(), None);
++
++        let quiet = window.find("quiet-alert");
++        assert_eq!(quiet.role(), None);
++        assert_eq!(quiet.label(), None);
++
++        let named = window.find("named-alert");
++        assert_eq!(named.role(), Some(gpui_kit::Role::Alert));
++        assert_eq!(named.label(), Some("Save status"));
++
++        assert_eq!(
++            window.find("status-alert").role(),
++            Some(gpui_kit::Role::Status)
++        );
++    })
++    .unwrap();
++}
++
+ struct NamedClipboard;
+ impl Render for NamedClipboard {
+     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {

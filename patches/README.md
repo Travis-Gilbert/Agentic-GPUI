@@ -268,3 +268,24 @@ detection to the members a browser defines. Both manifests must move together:
 `[patch.crates-io]` rewrites crates.io sources and not git ones, so a consumer
 that bumps only its own pin builds two `gpui` versions and fails where the two
 dependency chains meet.
+
+## Alert role and name, Button description (patch 0023)
+
+`Alert` gains `role(impl Into<RoleOverride>)` and `aria_label(impl Into<SharedString>)`,
+the same caller-controlled surface `Editor` and `Input` already have, through the
+same `RoleOverride::resolve` the other components use. The default is unchanged
+(`Role::Alert`); `RoleOverride::Presentational` publishes no node for the alert
+container while its children keep theirs, for a host that publishes its own named
+node for the same row. The name is published only while a role is. The alert's root
+registers with `test_support()` so the role and name are observable in headless tests.
+
+`Button` gains `accessibility_description`, written to the node as the AccessKit
+description, so a control can say why it is unavailable. `ElementSnapshot` gains
+`description()` to read it back.
+
+`Button::disabled(true)` does not publish AccessKit `disabled`: GPUI at the pinned
+Zed revision (`6d4d907`) has no way to set it. The fork's Zed series adds
+`aria_disabled(bool)` at `4bc784f`; Button should call it from `render` once this
+fork's Zed pin moves to a revision that contains it, and the existing assertion
+`window.find("disabled").disabled() == None` in `crates/kit/tests/components.rs`
+then becomes `Some(true)`.
