@@ -122,6 +122,7 @@ impl MenuRowPresentation {
 
 #[derive(Clone)]
 pub struct PopupMenuPresentation {
+    focus: gpui::WeakFocusHandle,
     entity: WeakEntity<PopupMenu>,
     revision: u64,
     bounds: Bounds<Pixels>,
@@ -134,6 +135,8 @@ pub struct PopupMenuPresentation {
     active_submenu: Option<WeakEntity<PopupMenu>>,
 }
 impl PopupMenuPresentation {
+    /// The actual menu dispatch node, including after its owner is retired.
+    pub fn focus(&self) -> gpui::WeakFocusHandle { self.focus.clone() }
     pub fn entity(&self) -> WeakEntity<PopupMenu> {
         self.entity.clone()
     }
@@ -319,6 +322,7 @@ impl PopupMenu {
             })
             .collect();
         PopupMenuPresentation {
+            focus: self.focus_handle.downgrade(),
             entity,
             revision: self.presentation.revision,
             bounds: self.bounds,

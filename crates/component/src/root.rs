@@ -15,7 +15,7 @@ use gpui::{
     prelude::FluentBuilder as _,
 };
 use gpui_base::{TextSelection, TextSelectionScopeId};
-use std::{any::TypeId, rc::Rc};
+use std::{any::TypeId, cell::RefCell, rc::Rc};
 
 pub(crate) fn init(cx: &mut App) {
     gpui_base::Root::register_plugin::<WindowState>(cx, WindowState::new);
@@ -46,6 +46,7 @@ pub(crate) struct ActiveSheet {
 
 #[derive(Clone)]
 pub(crate) struct ActiveDialog {
+    pub(crate) presentation: Rc<RefCell<crate::dialog::presentation::DialogPresentationOwner>>,
     focus_handle: FocusHandle,
     /// The previous focused handle before opening the Dialog.
     previous_focused_handle: Option<WeakFocusHandle>,
@@ -64,6 +65,7 @@ impl ActiveDialog {
             focus_handle,
             previous_focused_handle,
             selection_scope,
+            presentation: Rc::default(),
             builder: Rc::new(builder),
         }
     }
@@ -200,14 +202,16 @@ impl WindowState {
             .enumerate()
             .map(|(i, active_dialog)| {
                 let mut dialog = Dialog::new(cx);
-
+                dialog.platform_owner = Some(active_dialog.presentation.clone());
                 dialog = (active_dialog.builder)(dialog, window, cx);
+                dialog.platform_owner = Some(active_dialog.presentation.clone());
 
                 // Give the dialog the focus handle, because `dialog` is a temporary value, is not possible to
                 // keep the focus handle in the dialog.
                 //
                 // So we keep the focus handle in the `active_dialog`, this is owned by the `WindowState`.
                 dialog.focus_handle = active_dialog.focus_handle.clone();
+                dialog.platform_previous_focus = active_dialog.previous_focused_handle.clone();
                 dialog.selection_scope = active_dialog.selection_scope;
 
                 dialog.layer_ix = i;
@@ -268,62 +272,67 @@ impl WindowState {
         cx.notify();
     }
 
-    fn close_dialog_internal(&mut self) -> Option<FocusHandle> {
+    fn close_dialog_internal(&mut self) -> Option<crate::dialog::presentation::DialogFocusRestore> {
         self.focused_input = None;
-        self.active_dialogs
-            .pop()
-            .and_then(|d| d.previous_focused_handle)
-            .and_then(|h| h.upgrade())
+        self.active_dialogs.pop().map(|dialog| {
+            crate::dialog::presentation::DialogFocusRestore::new(
+                &dialog.presentation,
+                dialog.previous_focused_handle,
+            )
+        })
     }
-
-    pub fn close_dialog(&mut self, window: &mut Window, cx: &mut Context<'_, WindowState>) {
-        if let Some(handle) = self.close_dialog_internal() {
-            window.focus(&handle, cx);
-        }
+    pub fn close_dialog(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, WindowState>,
+    ) -> Option<crate::dialog::presentation::DialogFocusRestore> {
+        let restore = self.close_dialog_internal();
         gpui_base::TextSelection::clear(window, cx);
         cx.notify();
+        restore
     }
-
     pub(crate) fn defer_close_dialog(
         &mut self,
         window: &mut Window,
         cx: &mut Context<'_, WindowState>,
     ) {
-        if let Some(handle) = self.close_dialog_internal() {
+        if let Some(restore) = self.close_dialog_internal() {
             let dialogs_count = self.active_dialogs.len();
-
-            // Save for new dialogs opened during animation to maintain focus chain
-            self.pending_focus_restore = Some(handle.downgrade());
-
-            cx.spawn_in(window, async move |this, cx| {
-                cx.background_executor().timer(*ANIMATION_DURATION).await;
-                let _ = this.update_in(cx, |this, window, cx| {
-                    let current_dialogs_count = this.active_dialogs.len();
-                    // Only restore focus if no new dialogs were opened during animation
-                    if current_dialogs_count == dialogs_count {
-                        window.focus(&handle, cx);
+            self.pending_focus_restore = restore.previous.as_ref().map(|handle| handle.downgrade());
+            if restore.has_target() {
+                cx.spawn_in(window, async move |this, cx| {
+                    cx.background_executor().timer(*ANIMATION_DURATION).await;
+                    let restore = this.update_in(cx, |this, _, _| {
+                        let current_dialogs_count = this.active_dialogs.len();
+                        this.pending_focus_restore = None;
+                        (current_dialogs_count == dialogs_count).then_some(restore)
+                    });
+                    if let Ok(Some(restore)) = restore {
+                        let _ = cx.update(|window, cx| restore.apply(window, cx));
                     }
-                    this.pending_focus_restore = None;
-                });
-            })
-            .detach();
+                })
+                .detach();
+            }
         }
         gpui_base::TextSelection::clear(window, cx);
         cx.notify();
     }
-
-    pub fn close_all_dialogs(&mut self, window: &mut Window, cx: &mut Context<'_, WindowState>) {
+    pub fn close_all_dialogs(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, WindowState>,
+    ) -> Option<crate::dialog::presentation::DialogFocusRestore> {
         self.focused_input = None;
-        let previous_focused_handle = self
-            .active_dialogs
-            .first()
-            .and_then(|d| d.previous_focused_handle.clone());
+        let restore = self.active_dialogs.first().map(|dialog| {
+            crate::dialog::presentation::DialogFocusRestore::new(
+                &dialog.presentation,
+                dialog.previous_focused_handle.clone(),
+            )
+        });
         self.active_dialogs.clear();
-        if let Some(handle) = previous_focused_handle.and_then(|h| h.upgrade()) {
-            window.focus(&handle, cx);
-        }
         gpui_base::TextSelection::clear(window, cx);
         cx.notify();
+        restore
     }
 
     pub fn open_sheet_at<F>(

@@ -2,6 +2,11 @@ mod alert_dialog;
 mod content;
 mod description;
 mod dialog;
+pub(crate) mod presentation;
+pub use presentation::{
+    DialogButtonPresentation, DialogInput, DialogInputRefusal, DialogPresentation, DialogPresenter,
+    DialogPresenterFactory,
+};
 mod dispatch_anchor;
 mod entrance;
 mod footer;

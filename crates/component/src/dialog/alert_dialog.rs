@@ -12,6 +12,7 @@ use crate::{
     },
     h_flex, v_flex,
 };
+use gpui_base::ElementExt as _;
 
 /// AlertDialog is a modal dialog that interrupts the user with important content
 /// and expects a response.
@@ -88,6 +89,37 @@ impl AlertDialog {
             description: None,
             children: Vec::new(),
         }
+    }
+
+    pub(crate) fn with_platform_owner(
+        mut self,
+        owner: Option<
+            std::rc::Rc<std::cell::RefCell<super::presentation::DialogPresentationOwner>>,
+        >,
+    ) -> Self {
+        self.base.platform_owner = owner;
+        self
+    }
+    /// The same text feeds native content and its platform descriptor.
+    pub fn title_text(mut self, title: impl Into<SharedString>) -> Self {
+        let title = title.into();
+        self = self.title(title.clone());
+        self.base.platform_text.title = Some(title);
+        self
+    }
+    pub fn description_text(mut self, description: impl Into<SharedString>) -> Self {
+        let description = description.into();
+        self = self.description(description.clone());
+        self.base.platform_text.description = Some(description);
+        self
+    }
+    pub fn presenter(
+        mut self,
+        invoker: impl Into<SharedString>,
+        factory: super::presentation::DialogPresenterFactory,
+    ) -> Self {
+        self.base = self.base.presenter(invoker, factory);
+        self
     }
 
     /// Set to use confirm dialog, with OK and Cancel buttons.
@@ -168,6 +200,7 @@ impl AlertDialog {
     #[track_caller]
     pub fn title(mut self, title: impl IntoElement) -> Self {
         self.debug_assert_no_trigger();
+        self.base.platform_text.title = None;
         self.title = Some(title.into_any_element());
         self
     }
@@ -176,6 +209,7 @@ impl AlertDialog {
     #[track_caller]
     pub fn description(mut self, description: impl IntoElement) -> Self {
         self.debug_assert_no_trigger();
+        self.base.platform_text.description = None;
         self.description = Some(description.into_any_element());
         self
     }
@@ -318,8 +352,32 @@ impl AlertDialog {
         let has_title = self.icon.is_some() || self.title.is_some();
         let has_header = has_title || self.description.is_some();
         let has_footer = self.base.footer.is_some();
-
-        self.base
+        let owner = self.base.platform_owner.clone();
+        let delegated = owner
+            .as_ref()
+            .is_some_and(|owner| owner.borrow().delegated());
+        let title_bounds = owner
+            .as_ref()
+            .map(|owner| owner.borrow().title_bounds.clone());
+        let description_bounds = owner
+            .as_ref()
+            .map(|owner| owner.borrow().description_bounds.clone());
+        let confirm_bounds = owner
+            .as_ref()
+            .map(|owner| owner.borrow().confirm_bounds.clone());
+        let cancel_bounds = owner
+            .as_ref()
+            .map(|owner| owner.borrow().cancel_bounds.clone());
+        let mut text = self.base.platform_text.clone();
+        text.alert = true;
+        text.complete = text.title.is_some()
+            && text.description.is_some()
+            && self.icon.is_none()
+            && self.children.is_empty()
+            && !has_footer
+            && self.base.content_builder.is_none();
+        let mut result = self
+            .base
             .when(has_header, |this| {
                 this.header(
                     DialogHeader::new().child(
@@ -333,10 +391,24 @@ impl AlertDialog {
                                     .min_w_0()
                                     .gap_1()
                                     .when_some(self.title, |this, title| {
-                                        this.child(DialogTitle::new().child(title))
+                                        this.child(DialogTitle::new().child(title).on_prepaint(
+                                            move |bounds, _, _| {
+                                                if let Some(cell) = title_bounds {
+                                                    cell.set(bounds);
+                                                }
+                                            },
+                                        ))
                                     })
                                     .when_some(self.description, |this, desc| {
-                                        this.child(DialogDescription::new().child(desc))
+                                        this.child(
+                                            DialogDescription::new().child(desc).on_prepaint(
+                                                move |bounds, _, _| {
+                                                    if let Some(cell) = description_bounds {
+                                                        cell.set(bounds);
+                                                    }
+                                                },
+                                            ),
+                                        )
                                     }),
                             ),
                     ),
@@ -348,11 +420,23 @@ impl AlertDialog {
                 this.footer(
                     DialogFooter::new()
                         .when(button_props.is_cancel_shown(), |this| {
-                            this.child(button_props.render_cancel(window, cx))
+                            this.child(button_props.render_cancel_observed(
+                                window,
+                                cx,
+                                cancel_bounds,
+                                delegated,
+                            ))
                         })
-                        .child(button_props.render_ok(window, cx)),
+                        .child(button_props.render_ok_observed(
+                            window,
+                            cx,
+                            confirm_bounds,
+                            delegated,
+                        )),
                 )
-            })
+            });
+        result.platform_text = text;
+        result
     }
 }
 

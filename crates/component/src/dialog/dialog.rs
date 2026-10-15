@@ -146,34 +146,67 @@ impl DialogButtonProps {
             .unwrap_or_else(|| Rc::new(|_, _, _| {}))
     }
 
-    pub(crate) fn render_ok(&self, _: &mut Window, _: &mut App) -> AnyElement {
-        let ok_text = self
-            .ok_text
+    pub(crate) fn ok_label(&self) -> SharedString {
+        self.ok_text
             .clone()
-            .unwrap_or_else(|| t!("Dialog.ok").into());
-
-        DialogButton {
-            anchor_key: "dialog-ok-anchor",
-            button: Button::new("ok")
-                .label(ok_text)
-                .with_variant(self.ok_variant.unwrap_or(ButtonVariant::Primary)),
-            action: Rc::new(Confirm { secondary: false }),
-        }
-        .into_any_element()
+            .unwrap_or_else(|| t!("Dialog.ok").into())
     }
-
-    pub(crate) fn render_cancel(&self, _: &mut Window, _: &mut App) -> AnyElement {
-        let cancel_text = self
-            .cancel_text
+    pub(crate) fn cancel_label(&self) -> SharedString {
+        self.cancel_text
             .clone()
-            .unwrap_or_else(|| t!("Dialog.cancel").into());
-
+            .unwrap_or_else(|| t!("Dialog.cancel").into())
+    }
+    pub(crate) fn render_ok_observed(
+        &self,
+        window: &mut Window,
+        cx: &mut App,
+        bounds: Option<Rc<std::cell::Cell<gpui::Bounds<Pixels>>>>,
+        delegated: bool,
+    ) -> AnyElement {
+        self.render_button(true, window, cx, bounds, delegated)
+    }
+    pub(crate) fn render_cancel_observed(
+        &self,
+        window: &mut Window,
+        cx: &mut App,
+        bounds: Option<Rc<std::cell::Cell<gpui::Bounds<Pixels>>>>,
+        delegated: bool,
+    ) -> AnyElement {
+        self.render_button(false, window, cx, bounds, delegated)
+    }
+    fn render_button(
+        &self,
+        ok: bool,
+        _window: &mut Window,
+        _cx: &mut App,
+        bounds: Option<Rc<std::cell::Cell<gpui::Bounds<Pixels>>>>,
+        delegated: bool,
+    ) -> AnyElement {
+        let label = if ok {
+            self.ok_label()
+        } else {
+            self.cancel_label()
+        };
         DialogButton {
-            anchor_key: "dialog-cancel-anchor",
-            button: Button::new("cancel")
-                .label(cancel_text)
-                .with_variant(self.cancel_variant.unwrap_or_default()),
-            action: Rc::new(Cancel),
+            anchor_key: if ok {
+                "dialog-ok-anchor"
+            } else {
+                "dialog-cancel-anchor"
+            },
+            button: Button::new(if ok { "ok" } else { "cancel" })
+                .label(label)
+                .with_variant(if ok {
+                    self.ok_variant.unwrap_or(ButtonVariant::Primary)
+                } else {
+                    self.cancel_variant.unwrap_or_default()
+                }),
+            action: if ok {
+                Rc::new(Confirm { secondary: false })
+            } else {
+                Rc::new(Cancel)
+            },
+            bounds,
+            delegated,
         }
         .into_any_element()
     }
@@ -187,12 +220,18 @@ struct DialogButton {
     anchor_key: &'static str,
     button: Button,
     action: Rc<dyn Action>,
+    bounds: Option<Rc<std::cell::Cell<gpui::Bounds<Pixels>>>>,
+    delegated: bool,
 }
 
 impl RenderOnce for DialogButton {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let anchor = DialogDispatchAnchor::new(self.anchor_key, window, cx);
         self.button
+            .when(self.delegated, |button| button.role(None::<gpui::Role>))
+            .when_some(self.bounds, |button, bounds| {
+                button.on_prepaint(move |allocation, _, _| bounds.set(allocation))
+            })
             .child(anchor.element())
             .on_click(move |_, window, cx| anchor.dispatch(&*self.action, window, cx))
     }
@@ -208,9 +247,9 @@ pub(crate) struct DialogProps {
     close_button: bool,
 
     overlay: bool,
-    overlay_closable: bool,
+    pub(super) overlay_closable: bool,
     pub(crate) overlay_visible: bool,
-    keyboard: bool,
+    pub(super) keyboard: bool,
     entrance: DialogEntrance,
 }
 
@@ -271,6 +310,9 @@ impl BaseDialogRoot {
     fn popup(self, element: impl IntoElement) -> Self {
         map_base_root!(self, popup(element))
     }
+    fn platform_delegated(self, value: bool) -> Self {
+        map_base_root!(self, platform_delegated(value))
+    }
     fn on_ok(self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) -> bool + 'static) -> Self {
         map_base_root!(self, on_ok(handler))
     }
@@ -301,6 +343,12 @@ impl IntoElement for BaseDialogRoot {
 /// A modal to display content in a dialog box.
 #[derive(IntoElement)]
 pub struct Dialog {
+    pub(super) platform_presenter:
+        Option<(SharedString, super::presentation::DialogPresenterFactory)>,
+    pub(super) platform_text: super::presentation::DialogText,
+    pub(crate) platform_previous_focus: Option<gpui::WeakFocusHandle>,
+    pub(crate) platform_owner:
+        Option<Rc<std::cell::RefCell<super::presentation::DialogPresentationOwner>>>,
     base: Option<BaseDialogRoot>,
     pub(crate) style: StyleRefinement,
     children: Vec<AnyElement>,
@@ -327,7 +375,7 @@ pub(crate) fn overlay_color(overlay: bool, cx: &App) -> Hsla {
     cx.theme().overlay
 }
 
-fn dialog_shadow(delta: f32) -> Vec<BoxShadow> {
+pub(super) fn dialog_shadow(delta: f32) -> Vec<BoxShadow> {
     vec![
         BoxShadow {
             color: hsla(0., 0., 0., 0.1 * delta),
@@ -351,6 +399,10 @@ impl Dialog {
     pub fn new(cx: &mut App) -> Self {
         Self {
             base: Some(BaseDialogRoot::Dialog(gpui_base::Dialog::new(cx))),
+            platform_presenter: None,
+            platform_text: Default::default(),
+            platform_previous_focus: None,
+            platform_owner: None,
             focus_handle: cx.focus_handle(),
             style: StyleRefinement::default(),
             trigger: None,
@@ -364,6 +416,15 @@ impl Dialog {
             selection_scope: TextSelectionScopeId::default(),
             button_props: DialogButtonProps::default(),
         }
+    }
+
+    pub fn presenter(
+        mut self,
+        invoker: impl Into<SharedString>,
+        factory: super::presentation::DialogPresenterFactory,
+    ) -> Self {
+        self.platform_presenter = Some((invoker.into(), factory));
+        self
     }
 
     /// Sets the trigger element for the dialog.
@@ -596,6 +657,14 @@ impl RenderOnce for Dialog {
             return self.render_trigger(trigger, window, cx);
         }
 
+        let platform_owner = self.platform_owner.clone();
+        let platform_animation_owner = platform_owner.clone();
+        let platform_frame = platform_owner.as_ref().and_then(|owner| {
+            super::presentation::DialogPresentationOwner::prepare(owner, &self, window, cx)
+        });
+        let delegated = platform_owner
+            .as_ref()
+            .is_some_and(|owner| owner.borrow().delegated());
         let layer_ix = self.layer_ix;
         let selection_scope = self.selection_scope;
         let on_close = self.button_props.close_handler();
@@ -682,6 +751,7 @@ impl RenderOnce for Dialog {
                                     == WindowState::read(window, cx).active_dialogs.len(),
                             )
                             .focus_handle(self.focus_handle.clone())
+                            .platform_delegated(delegated)
                             .close_on_escape(self.props.keyboard)
                             .close_on_backdrop_press(self.props.overlay_closable)
                             .dismiss_below_y(TITLE_BAR_HEIGHT)
@@ -729,6 +799,7 @@ impl RenderOnce for Dialog {
                                         .px_0()
                                         .occlude()
                                         .w(width)
+                                        .on_prepaint({let owner=platform_owner.clone();move|bounds,_,_|{if let Some(owner)=owner{owner.borrow().bounds.set(bounds);}}})
                                         .when_some(self.props.max_width, |this, w| this.max_w(w))
                                         .max_h(max_height)
                                         .child(
@@ -800,6 +871,9 @@ impl RenderOnce for Dialog {
                                                         .icon(IconName::Close)
                                                 })
                                         }))
+                                        .child(gpui::canvas(move|_,window,cx|{
+                                            if let (Some(owner),Some(frame))=(platform_owner,platform_frame){super::presentation::DialogPresentationOwner::publish(&owner,frame,window,cx);}
+                                        },|_,_,_,_|{}).absolute().size_0())
                                         .map(|surface| {
                                             if animated {
                                                 surface
@@ -860,14 +934,16 @@ impl RenderOnce for Dialog {
                                 }),
                             ),
                     )
-                    .map(|layer| {
+                    .map(move |layer| {
                         if animated {
                             layer
-                                .with_animation("fade-in", animation, |layer, delta| {
+                                .with_animation("fade-in", animation, move |layer, delta| {
+                                    if let Some(owner)=&platform_animation_owner{owner.borrow().opacity.set(delta);}
                                     layer.opacity(delta)
                                 })
                                 .into_any_element()
                         } else {
+                            if let Some(owner)=&platform_animation_owner{owner.borrow().opacity.set(1.);}
                             layer.into_any_element()
                         }
                     }),

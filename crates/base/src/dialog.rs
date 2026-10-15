@@ -94,6 +94,12 @@ pub fn init(cx: &mut App) {
 }
 
 impl Dialog {
+    /// The platform owns visible modal focus only after presentation acknowledgement.
+    pub fn platform_delegated(mut self, delegated: bool) -> Self {
+        self.platform_delegated = delegated;
+        self
+    }
+
     pub fn on_ok(
         mut self,
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) -> bool + 'static,
@@ -125,6 +131,7 @@ pub struct Dialog {
     style: StyleRefinement,
     focus: FocusHandle,
     role: Role,
+    platform_delegated: bool,
     layer: usize,
     keyboard: bool,
     overlay_closable: bool,
@@ -426,6 +433,7 @@ impl Dialog {
             style: StyleRefinement::default(),
             focus: cx.focus_handle(),
             role: Role::Dialog,
+            platform_delegated: false,
             layer: 0,
             keyboard: true,
             overlay_closable: true,
@@ -560,9 +568,9 @@ impl RenderOnce for Dialog {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .role(self.role)
+                    .when(!self.platform_delegated, |this| this.role(self.role))
+                    .when(self.platform_delegated, |this| this.opacity(0.))
                     .track_focus(&self.focus)
-                    .focus_trap(format!("dialog-{}", self.layer), &self.focus)
                     .when(self.keyboard, |this| this.key_context(CONTEXT))
                     .map(|this| {
                         let request_cancel = request_close.clone();
@@ -637,7 +645,15 @@ impl RenderOnce for Dialog {
                     })
                     .children(self.popup)
                     .children(self.children)
-                    .refine_style(&self.style),
+                    .refine_style(&self.style)
+                    .map(|this| {
+                        if self.platform_delegated {
+                            this.into_any_element()
+                        } else {
+                            this.focus_trap(format!("dialog-{}", self.layer), &self.focus)
+                                .into_any_element()
+                        }
+                    }),
             ),
         )
         .with_priority(10 + self.layer)

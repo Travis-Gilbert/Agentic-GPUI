@@ -25,6 +25,8 @@ use crate::{
     v_flex, v_virtual_list,
 };
 
+pub(super) mod presentation;
+
 pub(crate) const CONTEXT: &str = "Command";
 
 /// The row a separator occupies: a one-pixel rule with a little air on
@@ -115,6 +117,7 @@ struct MatchedItem {
 /// The interaction state of a [`crate::command::Command`] palette: its query,
 /// focus, scrolling, and highlighted command.
 pub struct CommandState {
+    presentation: presentation::PresentationState,
     focus_handle: FocusHandle,
     query_input: Entity<InputState>,
     scroll_handle: VirtualListScrollHandle,
@@ -150,6 +153,7 @@ impl CommandState {
             vec![cx.subscribe_in(&query_input, window, Self::on_query_input_event)];
 
         Self {
+            presentation: Default::default(),
             focus_handle: cx.focus_handle(),
             query_input,
             scroll_handle: VirtualListScrollHandle::new(),
@@ -350,6 +354,7 @@ impl CommandState {
     /// Recompute the visible rows and the matching items for the current query.
     ///
     fn update_matches(&mut self, cx: &App) {
+        self.presentation.revision = self.presentation.revision.wrapping_add(1);
         let query = self.query(cx);
         let query = query.trim();
 
@@ -772,8 +777,15 @@ impl CommandState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let bounds = self.presentation.rows.clone();
         let Some(&CommandRow::Item(matched_ix)) = self.rows.get(row_ix) else {
-            return self.render_row(row_ix, window, cx);
+            return div()
+                .w_full()
+                .child(self.render_row(row_ix, window, cx))
+                .on_prepaint(move |rect, _, _| {
+                    bounds.borrow_mut().insert(row_ix, rect);
+                })
+                .into_any_element();
         };
 
         let binding = self.item_binding(matched_ix, window, cx);
@@ -785,7 +797,13 @@ impl CommandState {
             self.measure_on_next_frame(window, cx);
         }
 
-        self.render_item_with_binding(matched_ix, binding, window, cx)
+        div()
+            .w_full()
+            .child(self.render_item_with_binding(matched_ix, binding, window, cx))
+            .on_prepaint(move |rect, _, _| {
+                bounds.borrow_mut().insert(row_ix, rect);
+            })
+            .into_any_element()
     }
 
     /// The keybinding hint an item shows in its trailing slot. A custom child
@@ -846,7 +864,9 @@ impl CommandState {
         self.item_row(selected, window, cx)
             .id(self.matched[matched_ix].index_path)
             .test_support()
-            .role(Role::ListBoxOption)
+            .when(!self.is_platform_delegated(), |this| {
+                this.role(Role::ListBoxOption)
+            })
             .aria_selected(selected)
             .when(disabled, |this| this.text_color(muted_foreground))
             .when(!disabled, |this| {
@@ -914,12 +934,22 @@ impl Render for CommandState {
                 .scroll_to_item(row_ix, ScrollStrategy::Nearest);
         }
 
+        self.presentation.rows.borrow_mut().clear();
+        let delegated = self.is_platform_delegated();
+        let query_bounds = self.presentation.query_bounds.clone();
+        let owner = cx.entity().downgrade();
         let rows_count = self.rows.len();
         let row_sizes = self.row_sizes.clone();
         let command_state = cx.entity();
 
         v_flex()
             .id("command")
+            .on_prepaint({let owner=owner.clone();move |bounds, _, cx| {
+                if let Some(owner) = owner.upgrade() {
+                    owner.update(cx, |state, _| state.presentation.bounds=bounds);
+                }
+            }})
+            .when(delegated, |this| this.opacity(0.))
             .test_support()
             .key_context(CONTEXT)
             .track_focus(&self.focus_handle)
@@ -947,8 +977,10 @@ impl Render for CommandState {
                         .px_3()
                         .border_b_1()
                         .border_color(cx.theme().border)
+                        .on_prepaint(move |bounds, _, _| query_bounds.set(bounds))
                         .child(
                             Input::new(&self.query_input)
+                                .when(delegated, |this| this.role(None::<Role>))
                                 .prefix(
                                     Icon::new(IconName::Search)
                                         .text_color(cx.theme().muted_foreground),
@@ -961,7 +993,7 @@ impl Render for CommandState {
             .child(
                 v_flex()
                     .id("command-list-container")
-                    .role(Role::ListBox)
+                    .when(!delegated, |this| this.role(Role::ListBox))
                     .relative()
                     .flex_1()
                     // The rows carry their inset on the virtual list itself so
@@ -973,6 +1005,7 @@ impl Render for CommandState {
                         let measure_state = command_state.clone();
                         move |bounds, window, cx| {
                             measure_state.update(cx, |state, cx| {
+                                state.presentation.list_bounds = bounds;
                                 // The list's `p_1` is one quarter rem on each
                                 // side. Its rem-dependent padding and inherited
                                 // layout-relevant text style participate in
@@ -1036,6 +1069,11 @@ impl Render for CommandState {
             .when_some(self.options.footer.as_ref(), |this, footer| {
                 this.child(footer(self, window, cx))
             })
+            // Publish after the actual query/list/header children prepaint.
+            // The native row map is current-frame data, not last frame's rows.
+            .child(gpui::canvas(move|_,window,cx|{
+                if let Some(owner)=owner.upgrade(){owner.update(cx,|state,cx|state.publish_platform(state.presentation.bounds,window,cx));}
+            },|_,(),_,_|{}).absolute().inset_0())
     }
 }
 

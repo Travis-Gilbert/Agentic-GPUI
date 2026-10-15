@@ -223,6 +223,10 @@ impl AlertDialog {
         self.0 = self.0.popup(element);
         self
     }
+    pub fn platform_delegated(mut self, value: bool) -> Self {
+        self.0 = self.0.platform_delegated(value);
+        self
+    }
     pub fn close_on_escape(mut self, value: bool) -> Self {
         self.0 = self.0.close_on_escape(value);
         self

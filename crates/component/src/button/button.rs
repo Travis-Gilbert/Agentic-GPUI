@@ -686,13 +686,7 @@ impl RenderOnce for Button {
             .clone();
         let is_focused = focus_handle.is_focused(window);
 
-        let rounding = match self.rounded {
-            ButtonRounded::Small => cx.theme().radius * 0.5,
-            ButtonRounded::Medium => cx.theme().radius,
-            ButtonRounded::Large => cx.theme().radius * 2.0,
-            ButtonRounded::Size(px) => px,
-            ButtonRounded::None => Pixels::ZERO,
-        };
+        let rounding = button_rounding(self.rounded, cx);
 
         let root = base
             .cursor_default()
@@ -750,7 +744,7 @@ impl RenderOnce for Button {
             .when(self.border_corners.bottom_right, |this| {
                 this.rounded_br(rounding)
             })
-            .when(self.variant.is_default() || self.outline, |this| {
+            .when(self.variant.draws_border(self.outline), |this| {
                 this.when(self.border_edges.left, |this| this.border_l_1())
                     .when(self.border_edges.right, |this| this.border_r_1())
                     .when(self.border_edges.top, |this| this.border_t_1())
@@ -944,6 +938,65 @@ struct ButtonVariantStyle {
     fg: Hsla,
     underline: bool,
     shadow: bool,
+}
+
+fn button_rounding(rounding: ButtonRounded, cx: &App) -> Pixels {
+    match rounding {
+        ButtonRounded::Small => cx.theme().radius * 0.5,
+        ButtonRounded::Medium => cx.theme().radius,
+        ButtonRounded::Large => cx.theme().radius * 2.0,
+        ButtonRounded::Size(px) => px,
+        ButtonRounded::None => Pixels::ZERO,
+    }
+}
+
+/// Native variant colors exposed without a second style policy. A patterned
+/// background has no solid color and must remain on its native realization.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ButtonPresentationStyle {
+    pub background: Option<Hsla>,
+    pub border: Hsla,
+    pub foreground: Hsla,
+    pub underline: bool,
+    pub shadow: bool,
+}
+impl From<ButtonVariantStyle> for ButtonPresentationStyle {
+    fn from(style: ButtonVariantStyle) -> Self {
+        Self {
+            background: style.bg.as_solid(),
+            border: style.border,
+            foreground: style.fg,
+            underline: style.underline,
+            shadow: style.shadow,
+        }
+    }
+}
+#[derive(Clone, Debug, PartialEq)]
+pub struct ButtonPresentationStyles {
+    /// Metadata for the unmodified Button defaults used by DialogButtonProps.
+    pub default_border_width: Pixels,
+    pub default_radius: Pixels,
+    pub default_text: gpui::TextStyleRefinement,
+    pub normal: ButtonPresentationStyle,
+    pub hovered: ButtonPresentationStyle,
+    pub active: ButtonPresentationStyle,
+    pub disabled: ButtonPresentationStyle,
+}
+impl ButtonVariant {
+    fn draws_border(&self, outline: bool) -> bool { self.is_default() || outline }
+    /// The same four functions consumed by the native Button renderer.
+    pub fn presentation_styles(&self, outline: bool, cx: &mut App) -> ButtonPresentationStyles {
+        let mut text = div().button_text_size(Size::default());
+        ButtonPresentationStyles {
+            default_border_width: if self.draws_border(outline) { gpui::px(1.) } else { Pixels::ZERO },
+            default_radius: button_rounding(ButtonRounded::default(), cx),
+            default_text: text.style().text.clone(),
+            normal: self.normal(outline, cx).into(),
+            hovered: self.hovered(outline, cx).into(),
+            active: self.active(outline, cx).into(),
+            disabled: self.disabled(outline, cx).into(),
+        }
+    }
 }
 
 #[derive(Clone, Copy)]

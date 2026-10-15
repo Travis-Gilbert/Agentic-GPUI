@@ -22,6 +22,13 @@ pub struct DialogDescription {
 }
 
 impl DialogDescription {
+    /// The same native body policy used by the retained renderer.
+    pub fn presentation_style(cx: &App) -> StyleRefinement {
+        let mut native = gpui::div()
+            .text_sm()
+            .text_color(cx.theme().muted_foreground);
+        native.style().clone()
+    }
     pub fn new() -> Self {
         Self {
             base: BaseDialogDescription::new(),
@@ -46,8 +53,7 @@ impl Styled for DialogDescription {
 impl RenderOnce for DialogDescription {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         self.base
-            .text_sm()
-            .text_color(cx.theme().muted_foreground)
+            .refine_style(&Self::presentation_style(cx))
             .refine_style(&self.style)
             .children(self.children)
     }

@@ -195,8 +195,9 @@ impl WindowExt for Window {
     where
         F: Fn(AlertDialog, &mut Window, &mut App) -> AlertDialog + 'static,
     {
-        self.open_dialog(cx, move |_, window, cx| {
-            build(AlertDialog::new(cx), window, cx).build_surface(window, cx)
+        self.open_dialog(cx, move |dialog, window, cx| {
+            let alert = AlertDialog::new(cx).with_platform_owner(dialog.platform_owner);
+            build(alert, window, cx).build_surface(window, cx)
         })
     }
 
@@ -207,16 +208,21 @@ impl WindowExt for Window {
 
     #[inline]
     fn close_dialog(&mut self, cx: &mut App) {
-        WindowState::update(self, cx, |root, window, cx| {
-            root.close_dialog(window, cx);
-        })
+        let restore =
+            WindowState::update(self, cx, |root, window, cx| root.close_dialog(window, cx));
+        if let Some(restore) = restore {
+            restore.apply(self, cx);
+        }
     }
 
     #[inline]
     fn close_all_dialogs(&mut self, cx: &mut App) {
-        WindowState::update(self, cx, |root, window, cx| {
-            root.close_all_dialogs(window, cx);
-        })
+        let restore = WindowState::update(self, cx, |root, window, cx| {
+            root.close_all_dialogs(window, cx)
+        });
+        if let Some(restore) = restore {
+            restore.apply(self, cx);
+        }
     }
 
     #[inline]

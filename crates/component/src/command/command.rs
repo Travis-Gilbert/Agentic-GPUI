@@ -8,6 +8,7 @@ use gpui::{
 use crate::IndexPath;
 use crate::command::{
     item::{CommandEntry, CommandGroup, CommandItem},
+    state::presentation::{CommandPresenterFactory, PresentationGuard},
     state::{CommandModel, CommandState, OnCancel, OnIndex, OnQuery},
 };
 
@@ -65,6 +66,7 @@ pub struct Command {
     on_confirm: Option<Rc<OnIndex>>,
     on_cancel: Option<Rc<OnCancel>>,
     options: CommandOptions,
+    presenter: Option<(SharedString, CommandPresenterFactory)>,
 }
 
 impl Command {
@@ -80,7 +82,19 @@ impl Command {
             on_confirm: None,
             on_cancel: None,
             options: CommandOptions::default(),
+            presenter: None,
         }
+    }
+
+    /// Observe this existing owner while its actual rendered element lives.
+    /// The shared factory identity distinguishes a replaced platform host.
+    pub fn presenter(
+        mut self,
+        invoker: impl Into<SharedString>,
+        factory: CommandPresenterFactory,
+    ) -> Self {
+        self.presenter = Some((invoker.into(), factory));
+        self
     }
 
     /// Add an ungrouped command item.
@@ -238,7 +252,24 @@ impl Styled for Command {
 }
 
 impl RenderOnce for Command {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        if let Some((invoker, factory)) = self.presenter {
+            let guard = window.use_keyed_state(
+                gpui::ElementId::NamedInteger(
+                    "command-platform-presentation".into(),
+                    self.state.entity_id().as_u64(),
+                ),
+                cx,
+                |_, _| PresentationGuard::new(factory.clone(), invoker.clone()),
+            );
+            let presenter = guard.update(cx, |guard, _| guard.install(factory, invoker));
+            self.state.update(cx, |state, cx| {
+                state.install_platform_presenter(Some(presenter), cx)
+            });
+        } else {
+            self.state
+                .update(cx, |state, cx| state.install_platform_presenter(None, cx));
+        }
         let options = self.options;
         let model = CommandModel {
             entries: self.entries,

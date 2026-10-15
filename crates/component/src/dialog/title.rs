@@ -15,6 +15,14 @@ pub struct DialogTitle {
 }
 
 impl DialogTitle {
+    /// The same native title policy used by the retained renderer.
+    pub fn presentation_style() -> StyleRefinement {
+        let mut native = gpui::div()
+            .text_base()
+            .font_semibold()
+            .line_height(relative(1.25));
+        native.style().clone()
+    }
     pub fn new() -> Self {
         Self {
             base: BaseDialogTitle::new(),
@@ -39,9 +47,7 @@ impl Styled for DialogTitle {
 impl RenderOnce for DialogTitle {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
         self.base
-            .text_base()
-            .font_semibold()
-            .line_height(relative(1.25))
+            .refine_style(&Self::presentation_style())
             .refine_style(&self.style)
             .children(self.children)
     }
