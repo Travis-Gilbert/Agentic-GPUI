@@ -1,0 +1,293 @@
+From ad375276d83fd2dbecda91ed86626e36f8f69ff4 Mon Sep 17 00:00:00 2001
+From: Travis Gilbert <1travisgilbert@gmail.com>
+Date: Thu, 15 Oct 2026 13:54:28 -0400
+Subject: [PATCH] feat(popover): expose weak retained controller observation
+
+---
+ crates/base/src/popover.rs                 |  19 ++-
+ crates/component/src/menu/dropdown_menu.rs | 130 ++++++++++++++++++++-
+ crates/component/src/popover.rs            |  16 +++
+ 3 files changed, 162 insertions(+), 3 deletions(-)
+
+diff --git a/crates/base/src/popover.rs b/crates/base/src/popover.rs
+index ba09fb9e..cf3ac6f9 100644
+--- a/crates/base/src/popover.rs
++++ b/crates/base/src/popover.rs
+@@ -4,7 +4,7 @@ use gpui::{
+     Anchor, AnyElement, App, Context, DismissEvent, ElementId, EventEmitter, FocusHandle,
+     Focusable, InteractiveElement as _, IntoElement, KeyBinding, MouseButton, ParentElement as _,
+     Render, RenderOnce, Role, StatefulInteractiveElement as _, StyleRefinement, Styled,
+-    Subscription, Window, div, prelude::FluentBuilder as _,
++    Subscription, WeakEntity, Window, div, prelude::FluentBuilder as _,
+ };
+ 
+ use crate::{
+@@ -183,6 +183,7 @@ pub struct Popover {
+     mouse_button: MouseButton,
+     overlay_closable: bool,
+     platform_delegation: Option<Rc<dyn Fn(&App) -> bool>>,
++    state_observer: Option<Rc<dyn Fn(WeakEntity<PopoverState>, &mut Window, &mut App)>>,
+     on_open_change: Option<OpenChangeHandler>,
+ }
+ 
+@@ -202,6 +203,7 @@ impl Popover {
+             mouse_button: MouseButton::Left,
+             overlay_closable: true,
+             platform_delegation: None,
++            state_observer: None,
+             on_open_change: None,
+         }
+     }
+@@ -280,6 +282,18 @@ impl Popover {
+         self
+     }
+ 
++    /// Observe the actual keyed controller without extending its lifetime.
++    /// A platform trigger may call its existing `show`/`dismiss` methods and
++    /// refresh the containing window; it must not maintain a second open flag.
++    /// The callback runs during render and must not reenter this view.
++    pub fn on_state_ready(
++        mut self,
++        observer: impl Fn(WeakEntity<PopoverState>, &mut Window, &mut App) + 'static,
++    ) -> Self {
++        self.state_observer = Some(Rc::new(observer));
++        self
++    }
++
+     /// Read the retained content owner's acknowledged presentation lease.
+     /// Delegation removes the canvas wrapper role without removing its paint
+     /// traversal, action dispatch, focus scope, or dismissal ownership.
+@@ -321,6 +335,9 @@ impl RenderOnce for Popover {
+             }
+         });
+ 
++        if let Some(observer) = self.state_observer {
++            observer(state.downgrade(), window, cx);
++        }
+         let open = state.read(cx).is_open();
+         let focus_handle = state.read(cx).focus_handle(cx);
+         let Some(trigger) = self.trigger else {
+diff --git a/crates/component/src/menu/dropdown_menu.rs b/crates/component/src/menu/dropdown_menu.rs
+index b6742a85..88dd61c8 100644
+--- a/crates/component/src/menu/dropdown_menu.rs
++++ b/crates/component/src/menu/dropdown_menu.rs
+@@ -3,10 +3,15 @@ use std::rc::Rc;
+ use gpui::{
+     Anchor, AnyElement, App, Context, DismissEvent, Element, ElementId, Entity, FocusHandle,
+     Focusable, GlobalElementId, InspectorElementId, InteractiveElement, IntoElement, LayoutId,
+-    RenderOnce, SharedString, Styled, Window, prelude::FluentBuilder,
++    RenderOnce, SharedString, Styled, WeakEntity, Window, prelude::FluentBuilder,
+ };
+ 
+-use crate::{Selectable, button::Button, menu::PopupMenu, popover::Popover};
++use crate::{
++    Selectable,
++    button::Button,
++    menu::PopupMenu,
++    popover::{Popover, PopoverState},
++};
+ 
+ /// A dropdown menu trait for buttons and other interactive elements
+ pub trait DropdownMenu: Styled + Selectable + InteractiveElement + IntoElement + 'static {
+@@ -39,6 +44,7 @@ pub struct DropdownMenuPopover<T: Selectable + IntoElement + 'static> {
+     trigger: T,
+     builder: Rc<dyn Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu>,
+     on_open_change: Option<Rc<dyn Fn(&bool, &mut Window, &mut App)>>,
++    state_observer: Option<Rc<dyn Fn(WeakEntity<PopoverState>, &mut Window, &mut App)>>,
+ }
+ 
+ impl<T> DropdownMenuPopover<T>
+@@ -57,9 +63,21 @@ where
+             trigger,
+             builder: Rc::new(builder),
+             on_open_change: None,
++            state_observer: None,
+         }
+     }
+ 
++    /// Observe the actual keyed popover controller behind this menu trigger.
++    /// The existing menu still handles row actions and dismissal. No controller
++    /// or open-state copy is constructed for a platform presenter.
++    pub fn on_state_ready(
++        mut self,
++        observer: impl Fn(WeakEntity<PopoverState>, &mut Window, &mut App) + 'static,
++    ) -> Self {
++        self.state_observer = Some(Rc::new(observer));
++        self
++    }
++
+     /// Set the anchor corner for the dropdown menu popover.
+     pub fn anchor(mut self, anchor: impl Into<Anchor>) -> Self {
+         self.anchor = anchor.into();
+@@ -122,6 +140,9 @@ where
+             })
+             .trigger(self.trigger)
+             .anchor(self.anchor)
++            .when_some(self.state_observer, |this, observer| {
++                this.on_state_ready(move |state, window, cx| observer(state, window, cx))
++            })
+             .when_some(self.on_open_change, |this, callback| {
+                 this.on_open_change(move |open, window, cx| callback(open, window, cx))
+             })
+@@ -354,6 +375,111 @@ mod tests {
+         }
+     }
+ 
++    struct ObservedMenuRoot {
++        state: Rc<RefCell<Option<WeakEntity<PopoverState>>>>,
++        menu: Rc<RefCell<Option<WeakEntity<PopupMenu>>>>,
++    }
++    impl Render for ObservedMenuRoot {
++        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++            let state = self.state.clone();
++            let menu = self.menu.clone();
++            div().size_full().child(
++                Button::new("observed-menu-trigger")
++                    .label("Edit")
++                    .invisible()
++                    .dropdown_menu(move |owner, _, cx| {
++                        *menu.borrow_mut() = Some(cx.weak_entity());
++                        owner.menu("Copy", Box::new(CopyText))
++                    })
++                    .on_state_ready(move |owner, _, _| *state.borrow_mut() = Some(owner)),
++            )
++        }
++    }
++
++    #[gpui::test]
++    fn an_observed_weak_controller_opens_the_same_menu_and_expires_with_its_anchor(
++        cx: &mut TestAppContext,
++    ) {
++        cx.update(crate::init);
++        let observed = Rc::new(RefCell::new(None::<WeakEntity<PopoverState>>));
++        let menu = Rc::new(RefCell::new(None::<WeakEntity<PopupMenu>>));
++        {
++            let (_, cx) = cx.add_window_view({
++                let state = observed.clone();
++                let menu = menu.clone();
++                move |_, _| ObservedMenuRoot { state, menu }
++            });
++            cx.update(|window, cx| window.draw(cx).clear(cx));
++            let controller = observed
++                .borrow()
++                .clone()
++                .expect("the keyed owner is exposed");
++            cx.update(|window, cx| {
++                assert!(!controller.upgrade().unwrap().read(cx).is_open());
++                controller
++                    .update(cx, |state, cx| state.show(window, cx))
++                    .unwrap();
++                // The real keyed state owns the transition; refresh renders the
++                // containing native anchor after an external platform activation.
++                window.refresh();
++                window.draw(cx).clear(cx);
++                window.draw(cx).clear(cx);
++                assert!(controller.upgrade().unwrap().read(cx).is_open());
++                let owner = menu
++                    .borrow()
++                    .as_ref()
++                    .and_then(WeakEntity::upgrade)
++                    .expect("the original builder creates the actual menu");
++                let bounds = owner.read(cx).presentation(owner.downgrade()).bounds();
++                assert!(
++                    bounds.size.width > px(0.) && bounds.size.height > px(0.),
++                    "hiding only the retained trigger preserves the deferred menu allocation"
++                );
++            });
++            cx.simulate_keystrokes("escape");
++            cx.run_until_parked();
++            cx.update(|window, cx| {
++                window.draw(cx).clear(cx);
++                assert!(
++                    !controller.upgrade().unwrap().read(cx).is_open(),
++                    "the existing menu Escape path closes its existing popover"
++                );
++                assert!(
++                    menu.borrow()
++                        .as_ref()
++                        .and_then(WeakEntity::upgrade)
++                        .is_none(),
++                    "dismissal releases the actual menu"
++                );
++                controller
++                    .update(cx, |state, cx| state.show(window, cx))
++                    .unwrap();
++                window.refresh();
++                window.draw(cx).clear(cx);
++                window.draw(cx).clear(cx);
++                assert!(
++                    menu.borrow()
++                        .as_ref()
++                        .and_then(WeakEntity::upgrade)
++                        .is_some()
++                );
++                window.remove_window();
++            });
++            cx.run_until_parked();
++            assert!(
++                controller.upgrade().is_none(),
++                "the observation cannot retain the retired anchor"
++            );
++            assert!(
++                menu.borrow()
++                    .as_ref()
++                    .and_then(WeakEntity::upgrade)
++                    .is_none()
++            );
++        }
++        cx.update(|cx| assert!(!gpui_base::GlobalState::is_in_deferred_context(cx)));
++    }
++
+     /// Opening the menu and closing the window without dismissing it must
+     /// release the `PopupMenu`: the dismiss subscription lives as long as the
+     /// menu, which `DropdownMenuState` owns, so strong captures in it formed
+diff --git a/crates/component/src/popover.rs b/crates/component/src/popover.rs
+index 6f8e7075..7ec97de7 100644
+--- a/crates/component/src/popover.rs
++++ b/crates/component/src/popover.rs
+@@ -129,6 +129,7 @@ pub struct Popover {
+     appearance: bool,
+     overlay_closable: bool,
+     platform_delegation: Option<Rc<dyn Fn(&App) -> bool>>,
++    state_observer: Option<Rc<dyn Fn(gpui::WeakEntity<PopoverState>, &mut Window, &mut App)>>,
+     on_open_change: Option<Rc<dyn Fn(&bool, &mut Window, &mut App)>>,
+ }
+ 
+@@ -150,12 +151,24 @@ impl Popover {
+             appearance: true,
+             overlay_closable: true,
+             platform_delegation: None,
++            state_observer: None,
+             default_open: false,
+             open: None,
+             on_open_change: None,
+         }
+     }
+ 
++    /// Observe the same keyed controller used by the native trigger.
++    /// Keep the weak owner, not a separate open flag; refresh the window after
++    /// an external owner transition so the containing popover is rendered.
++    pub fn on_state_ready(
++        mut self,
++        observer: impl Fn(gpui::WeakEntity<PopoverState>, &mut Window, &mut App) + 'static,
++    ) -> Self {
++        self.state_observer = Some(Rc::new(observer));
++        self
++    }
++
+     /// Follow the retained content owner's acknowledged platform lease.
+     /// The base keeps its focus and dismissal behavior while omitting its
+     /// duplicate canvas dialog semantics after the native region is prepared.
+@@ -421,6 +434,9 @@ impl RenderOnce for Popover {
+             .when_some(self.tracked_focus_handle, |this, handle| {
+                 this.track_focus(&handle)
+             })
++            .when_some(self.state_observer, |this, observer| {
++                this.on_state_ready(move |state, window, cx| observer(state, window, cx))
++            })
+             .when_some(self.on_open_change, |this, callback| {
+                 this.on_open_change(move |open, window, cx| callback(open, window, cx))
+             })
+-- 
+2.53.0
+

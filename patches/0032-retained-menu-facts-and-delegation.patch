@@ -1,0 +1,506 @@
+From b3e77a541119cb349a55062cb016d8415ee9e40d Mon Sep 17 00:00:00 2001
+From: Travis Gilbert <1travisgilbert@gmail.com>
+Date: Thu, 15 Oct 2026 13:38:29 -0400
+Subject: [PATCH] feat(menu): complete retained popup presentation facts and
+ withdrawal
+
+---
+ crates/base/src/popover.rs                    |  18 ++-
+ crates/component/src/icon.rs                  |   1 -
+ crates/component/src/menu/dropdown_menu.rs    |   8 ++
+ crates/component/src/menu/menu_item.rs        |   8 +-
+ crates/component/src/menu/popup_menu.rs       |  39 +++++
+ .../src/menu/popup_menu/presentation.rs       | 136 ++++++++++++++++--
+ crates/component/src/popover.rs               |  13 ++
+ 7 files changed, 208 insertions(+), 15 deletions(-)
+
+diff --git a/crates/base/src/popover.rs b/crates/base/src/popover.rs
+index a9c35c05..ba09fb9e 100644
+--- a/crates/base/src/popover.rs
++++ b/crates/base/src/popover.rs
+@@ -182,6 +182,7 @@ pub struct Popover {
+     content: Option<ContentBuilder>,
+     mouse_button: MouseButton,
+     overlay_closable: bool,
++    platform_delegation: Option<Rc<dyn Fn(&App) -> bool>>,
+     on_open_change: Option<OpenChangeHandler>,
+ }
+ 
+@@ -200,6 +201,7 @@ impl Popover {
+             content: None,
+             mouse_button: MouseButton::Left,
+             overlay_closable: true,
++            platform_delegation: None,
+             on_open_change: None,
+         }
+     }
+@@ -278,6 +280,14 @@ impl Popover {
+         self
+     }
+ 
++    /// Read the retained content owner's acknowledged presentation lease.
++    /// Delegation removes the canvas wrapper role without removing its paint
++    /// traversal, action dispatch, focus scope, or dismissal ownership.
++    pub fn delegate_platform_when(mut self, delegated: impl Fn(&App) -> bool + 'static) -> Self {
++        self.platform_delegation = Some(Rc::new(delegated));
++        self
++    }
++
+     pub fn content<F, E>(mut self, content: F) -> Self
+     where
+         E: IntoElement,
+@@ -353,7 +363,13 @@ impl RenderOnce for Popover {
+             // A popover surface is a non-modal dialog: it takes focus and is
+             // dismissed with Escape, which is what this role tells assistive
+             // technology to expect.
+-            .role(Role::Dialog)
++            .when(
++                !self
++                    .platform_delegation
++                    .as_ref()
++                    .is_some_and(|read| read(cx)),
++                |this| this.role(Role::Dialog),
++            )
+             .occlude()
+             .tab_group()
+             .track_focus(&focus_handle)
+diff --git a/crates/component/src/icon.rs b/crates/component/src/icon.rs
+index 8b4c1697..3ff75b2e 100644
+--- a/crates/component/src/icon.rs
++++ b/crates/component/src/icon.rs
+@@ -138,7 +138,6 @@ impl Icon {
+         self
+     }
+ 
+-    #[cfg(any(target_os = "macos", target_os = "windows", test))]
+     pub(crate) fn source_ref(&self) -> &IconSource {
+         &self.source
+     }
+diff --git a/crates/component/src/menu/dropdown_menu.rs b/crates/component/src/menu/dropdown_menu.rs
+index d913cfd1..b6742a85 100644
+--- a/crates/component/src/menu/dropdown_menu.rs
++++ b/crates/component/src/menu/dropdown_menu.rs
+@@ -109,9 +109,17 @@ where
+         let menu_state =
+             window.use_keyed_state(self.id.clone(), cx, |_, _| DropdownMenuState::default());
+ 
++        let delegated_state = menu_state.clone();
+         Popover::new(SharedString::from(format!("popover:{}", self.id)))
+             .appearance(false)
+             .overlay_closable(false)
++            .delegate_platform_when(move |cx| {
++                delegated_state
++                    .read(cx)
++                    .menu
++                    .as_ref()
++                    .is_some_and(|menu| menu.read(cx).is_platform_delegated())
++            })
+             .trigger(self.trigger)
+             .anchor(self.anchor)
+             .when_some(self.on_open_change, |this, callback| {
+diff --git a/crates/component/src/menu/menu_item.rs b/crates/component/src/menu/menu_item.rs
+index a7e5e374..70220bdb 100644
+--- a/crates/component/src/menu/menu_item.rs
++++ b/crates/component/src/menu/menu_item.rs
+@@ -102,9 +102,11 @@ impl RenderOnce for MenuItemElement {
+         h_flex()
+             .id(self.id)
+             .test_support()
+-            .when(!self.delegate_platform, |this| this.role(Role::MenuItem))
+-            .when_some(self.aria_label, |this, label| this.aria_label(label))
+-            .aria_selected(self.selected)
++            .when(!self.delegate_platform, |this| {
++                this.role(Role::MenuItem)
++                    .when_some(self.aria_label, |this, label| this.aria_label(label))
++                    .aria_selected(self.selected)
++            })
+             .gap_x_1()
+             .py_1()
+             .px_2()
+diff --git a/crates/component/src/menu/popup_menu.rs b/crates/component/src/menu/popup_menu.rs
+index ea55e294..5e52f179 100644
+--- a/crates/component/src/menu/popup_menu.rs
++++ b/crates/component/src/menu/popup_menu.rs
+@@ -779,6 +779,8 @@ impl PopupMenu {
+         menu.menu_items.clear();
+         menu.presentation.metadata.clear();
+         menu.presentation.bounds.borrow_mut().clear();
++        menu.presentation.icons.borrow_mut().clear();
++        menu.presentation.shortcuts.borrow_mut().clear();
+         menu.selected_index = None;
+         *self = f(menu, window, cx);
+         self.presentation.revision = revision;
+@@ -1251,6 +1253,26 @@ impl PopupMenu {
+         };
+ 
+         let selected = self.selected_index == Some(ix);
++        let icon = match item {
++            PopupMenuItem::Item { icon, .. }
++            | PopupMenuItem::ElementItem { icon, .. }
++            | PopupMenuItem::Submenu { icon, .. } => icon.as_ref(),
++            _ => None,
++        };
++        let icon_svg = icon.and_then(|icon| match icon.source_ref() {
++            crate::icon::IconSource::Data(bytes) => Some(bytes.clone()),
++            crate::icon::IconSource::Path(path) => cx
++                .asset_source()
++                .load(path.as_ref())
++                .ok()
++                .flatten()
++                .map(|bytes| std::sync::Arc::from(bytes.as_ref())),
++        });
++        if let Some(bytes) = icon_svg {
++            self.presentation.icons.borrow_mut().insert(ix, bytes);
++        } else {
++            self.presentation.icons.borrow_mut().remove(&ix);
++        }
+         const EDGE_PADDING: Pixels = px(4.);
+         const INNER_PADDING: Pixels = px(8.);
+ 
+@@ -1363,6 +1385,14 @@ impl PopupMenu {
+                 let show_link_icon = *is_link && self.external_link_icon;
+                 let action = action.as_ref().map(|action| action.boxed_clone());
+                 let key = self.render_key_binding(action, window, cx);
++                if let Some(key) = &key {
++                    self.presentation
++                        .shortcuts
++                        .borrow_mut()
++                        .insert(ix, Kbd::format(key.keystroke()).into());
++                } else {
++                    self.presentation.shortcuts.borrow_mut().remove(&ix);
++                }
+ 
+                 this.when(!disabled, |this| {
+                     this.on_click(
+@@ -1490,6 +1520,9 @@ impl Render for PopupMenu {
+             .presenter
+             .as_ref()
+             .is_some_and(|p| p.delegated.get());
++        if let Some(presenter) = &self.presentation.presenter {
++            presenter.entity_id.set(Some(cx.entity_id().as_u64()));
++        }
+         for metadata in self.presentation.metadata.values() {
+             metadata.delegated.set(delegated);
+         }
+@@ -1509,6 +1542,12 @@ impl Render for PopupMenu {
+                         menu.priority = parent_priority + 1;
+                     });
+                 }
++                if menu.read(cx).presentation.presenter.is_none() {
++                    if let Some(presenter) = &self.presentation.presenter {
++                        let presenter = presenter.for_submenu();
++                        menu.update(cx, |menu, _| menu.presentation.presenter = Some(presenter));
++                    }
++                }
+             }
+         }
+ 
+diff --git a/crates/component/src/menu/popup_menu/presentation.rs b/crates/component/src/menu/popup_menu/presentation.rs
+index 94ffb637..5de0f8b8 100644
+--- a/crates/component/src/menu/popup_menu/presentation.rs
++++ b/crates/component/src/menu/popup_menu/presentation.rs
+@@ -12,6 +12,7 @@ pub struct MenuItemPresentation {
+     id: SharedString,
+     label: SharedString,
+     description: Option<SharedString>,
++    checkable: bool,
+     pub(super) delegated: Rc<Cell<bool>>,
+ }
+ impl MenuItemPresentation {
+@@ -20,6 +21,7 @@ impl MenuItemPresentation {
+             id: id.into(),
+             label: label.into(),
+             description: None,
++            checkable: false,
+             delegated: Rc::default(),
+         }
+     }
+@@ -30,6 +32,10 @@ impl MenuItemPresentation {
+     pub fn id(&self) -> &SharedString {
+         &self.id
+     }
++    pub fn checkable(mut self, checkable: bool) -> Self {
++        self.checkable = checkable;
++        self
++    }
+     pub fn label(&self) -> &SharedString {
+         &self.label
+     }
+@@ -73,6 +79,9 @@ pub struct MenuRowPresentation {
+     kind: MenuRowKind,
+     disabled: bool,
+     checked: bool,
++    checkable: bool,
++    icon_svg: Option<std::sync::Arc<[u8]>>,
++    shortcut: Option<SharedString>,
+     bounds: Bounds<Pixels>,
+ }
+ impl MenuRowPresentation {
+@@ -97,6 +106,15 @@ impl MenuRowPresentation {
+     pub fn is_checked(&self) -> bool {
+         self.checked
+     }
++    pub fn is_checkable(&self) -> bool {
++        self.checkable
++    }
++    pub fn icon_svg(&self) -> Option<&[u8]> {
++        self.icon_svg.as_deref()
++    }
++    pub fn shortcut(&self) -> Option<&SharedString> {
++        self.shortcut.as_ref()
++    }
+     pub fn bounds(&self) -> Bounds<Pixels> {
+         self.bounds
+     }
+@@ -112,11 +130,19 @@ pub struct PopupMenuPresentation {
+     rows: Vec<MenuRowPresentation>,
+     complete: bool,
+     delegated: bool,
++    parent: Option<WeakEntity<PopupMenu>>,
++    active_submenu: Option<WeakEntity<PopupMenu>>,
+ }
+ impl PopupMenuPresentation {
+     pub fn entity(&self) -> WeakEntity<PopupMenu> {
+         self.entity.clone()
+     }
++    pub fn parent(&self) -> Option<WeakEntity<PopupMenu>> {
++        self.parent.clone()
++    }
++    pub fn active_submenu(&self) -> Option<WeakEntity<PopupMenu>> {
++        self.active_submenu.clone()
++    }
+     pub fn revision(&self) -> u64 {
+         self.revision
+     }
+@@ -145,26 +171,43 @@ impl PopupMenuPresentation {
+ #[derive(Clone)]
+ pub struct PopupMenuPresenter {
+     pub(super) frame: Rc<dyn Fn(PopupMenuPresentation, &mut Window, &mut App) -> bool>,
+-    closed: Rc<dyn Fn()>,
++    closed: Rc<dyn Fn(u64)>,
++    pub(super) entity_id: Rc<Cell<Option<u64>>>,
+     pub(super) delegated: Rc<Cell<bool>>,
+     is_closed: Rc<Cell<bool>>,
+ }
+ impl PopupMenuPresenter {
+     pub fn new(
+         frame: impl Fn(PopupMenuPresentation, &mut Window, &mut App) -> bool + 'static,
+-        closed: impl Fn() + 'static,
++        closed: impl Fn(u64) + 'static,
+     ) -> Self {
+         Self {
+             frame: Rc::new(frame),
+             closed: Rc::new(closed),
++            entity_id: Rc::default(),
+             delegated: Rc::default(),
+             is_closed: Rc::default(),
+         }
+     }
++    /// Whether this actual owner has acknowledged a prepared native region.
++    pub fn is_platform_delegated(&self) -> bool {
++        self.delegated.get() && !self.is_closed.get()
++    }
+     pub(super) fn close(&self) {
+         if !self.is_closed.replace(true) {
+             self.delegated.set(false);
+-            (self.closed)();
++            if let Some(id) = self.entity_id.get() {
++                (self.closed)(id);
++            }
++        }
++    }
++    pub(super) fn for_submenu(&self) -> Self {
++        Self {
++            frame: self.frame.clone(),
++            closed: self.closed.clone(),
++            entity_id: Rc::default(),
++            delegated: Rc::default(),
++            is_closed: Rc::default(),
+         }
+     }
+ }
+@@ -192,11 +235,20 @@ pub enum MenuInputRefusal {
+ pub(super) struct PresentationState {
+     pub(super) metadata: BTreeMap<usize, MenuItemPresentation>,
+     pub(super) bounds: Rc<RefCell<BTreeMap<usize, Bounds<Pixels>>>>,
++    pub(super) icons: RefCell<BTreeMap<usize, std::sync::Arc<[u8]>>>,
++    pub(super) shortcuts: RefCell<BTreeMap<usize, SharedString>>,
+     pub(super) presenter: Option<PopupMenuPresenter>,
+     pub(super) revision: u64,
+ }
+ 
+ impl PopupMenu {
++    /// The existing menu's acknowledged platform presentation fact.
++    pub fn is_platform_delegated(&self) -> bool {
++        self.presentation
++            .presenter
++            .as_ref()
++            .is_some_and(PopupMenuPresenter::is_platform_delegated)
++    }
+     pub fn presented_item(mut self, item: PresentedMenuItem) -> Self {
+         self.presentation
+             .metadata
+@@ -242,6 +294,9 @@ impl PopupMenu {
+                     kind,
+                     disabled: !item.is_clickable(),
+                     checked: item.is_checked(),
++                    checkable: item.is_checked() || metadata.is_some_and(|m| m.checkable),
++                    icon_svg: self.presentation.icons.borrow().get(&index).cloned(),
++                    shortcut: self.presentation.shortcuts.borrow().get(&index).cloned(),
+                     bounds: bounds.get(&index).copied().unwrap_or_default(),
+                 })
+             })
+@@ -259,6 +314,8 @@ impl PopupMenu {
+                 .presenter
+                 .as_ref()
+                 .is_some_and(|p| p.delegated.get()),
++            parent: self.parent_menu.clone(),
++            active_submenu: self.active_submenu().map(|menu| menu.downgrade()),
+         }
+     }
+     pub fn presented_input(
+@@ -271,12 +328,9 @@ impl PopupMenu {
+         if revision != self.presentation.revision {
+             return Err(MenuInputRefusal::StaleRevision);
+         }
+-        if !self
+-            .presentation
+-            .presenter
+-            .as_ref()
+-            .is_some_and(|p| p.delegated.get() && !p.is_closed.get())
+-        {
++        if !self.presentation.presenter.as_ref().is_some_and(|p| {
++            !p.is_closed.get() && (p.delegated.get() || input == PopupMenuInput::Dismiss)
++        }) {
+             return Err(MenuInputRefusal::NotPresented);
+         }
+         match input {
+@@ -331,11 +385,12 @@ mod tests {
+         let closed = Rc::new(Cell::new(0));
+         let presenter = PopupMenuPresenter::new(|_, _, _| true, {
+             let closed = closed.clone();
+-            move || closed.set(closed.get() + 1)
++            move |_| closed.set(closed.get() + 1)
+         });
+         // This owner-only unit test admits the presentation lease directly;
+         // browser oracles separately prove the inert/acknowledged handoff.
+         presenter.delegated.set(true);
++        presenter.entity_id.set(Some(1));
+         let metadata =
+             MenuItemPresentation::new("existing-row", "Run").with_description("Existing command");
+         let (menu, cx) = cx.add_window_view({
+@@ -406,6 +461,67 @@ mod tests {
+         });
+     }
+ 
++    #[gpui::test]
++    fn prepared_menu_is_inert_and_can_be_withdrawn(cx: &mut gpui::TestAppContext) {
++        cx.update(|cx| cx.set_global(crate::Theme::default()));
++        let invoked = Rc::new(Cell::new(0));
++        let closed = Rc::new(Cell::new(0));
++        let presenter = PopupMenuPresenter::new(|_, _, _| false, {
++            let closed = closed.clone();
++            move |_| closed.set(closed.get() + 1)
++        });
++        let (menu, cx) = cx.add_window_view({
++            let invoked = invoked.clone();
++            move |_, cx| {
++                PopupMenu::new(cx)
++                    .item(
++                        PopupMenuItem::new("Run")
++                            .on_click(move |_, _, _| invoked.set(invoked.get() + 1)),
++                    )
++                    .presenter(presenter)
++            }
++        });
++        cx.update(|window, cx| {
++            menu.update(cx, |menu, cx| {
++                // This owner-only test has no paint callback: record the real
++                // entity identity as render does before its first allocation.
++                menu.presentation
++                    .presenter
++                    .as_ref()
++                    .unwrap()
++                    .entity_id
++                    .set(Some(cx.entity_id().as_u64()));
++                assert!(!menu.is_platform_delegated());
++                assert_eq!(
++                    menu.presented_input(0, PopupMenuInput::Activate(0), window, cx),
++                    Err(MenuInputRefusal::NotPresented)
++                );
++                assert_eq!(invoked.get(), 0);
++                menu.presented_input(0, PopupMenuInput::Dismiss, window, cx)
++                    .unwrap();
++                assert_eq!(
++                    closed.get(),
++                    1,
++                    "preparing a region does not prevent owner withdrawal"
++                );
++                assert_eq!(
++                    menu.presented_input(0, PopupMenuInput::Dismiss, window, cx),
++                    Err(MenuInputRefusal::NotPresented)
++                );
++                assert_eq!(
++                    menu.presented_input(0, PopupMenuInput::Activate(0), window, cx),
++                    Err(MenuInputRefusal::NotPresented)
++                );
++                assert_eq!(invoked.get(), 0);
++                assert_eq!(
++                    closed.get(),
++                    1,
++                    "a closed lease cannot execute or close twice"
++                );
++            })
++        });
++    }
++
+     #[gpui::test]
+     fn custom_rows_require_explicit_owner_metadata_before_delegation(
+         cx: &mut gpui::TestAppContext,
+diff --git a/crates/component/src/popover.rs b/crates/component/src/popover.rs
+index f36b3056..6f8e7075 100644
+--- a/crates/component/src/popover.rs
++++ b/crates/component/src/popover.rs
+@@ -128,6 +128,7 @@ pub struct Popover {
+     mouse_button: MouseButton,
+     appearance: bool,
+     overlay_closable: bool,
++    platform_delegation: Option<Rc<dyn Fn(&App) -> bool>>,
+     on_open_change: Option<Rc<dyn Fn(&bool, &mut Window, &mut App)>>,
+ }
+ 
+@@ -148,12 +149,21 @@ impl Popover {
+             mouse_button: MouseButton::Left,
+             appearance: true,
+             overlay_closable: true,
++            platform_delegation: None,
+             default_open: false,
+             open: None,
+             on_open_change: None,
+         }
+     }
+ 
++    /// Follow the retained content owner's acknowledged platform lease.
++    /// The base keeps its focus and dismissal behavior while omitting its
++    /// duplicate canvas dialog semantics after the native region is prepared.
++    pub fn delegate_platform_when(mut self, delegated: impl Fn(&App) -> bool + 'static) -> Self {
++        self.platform_delegation = Some(Rc::new(delegated));
++        self
++    }
++
+     /// Set the anchor corner of the popover, default is [`Anchor::TopLeft`].
+     ///
+     /// This names the popover's own anchor, not a corner of the trigger.
+@@ -347,6 +357,9 @@ impl RenderOnce for Popover {
+             .mouse_button(self.mouse_button)
+             .default_open(self.default_open)
+             .overlay_closable(self.overlay_closable)
++            .when_some(self.platform_delegation, |this, delegated| {
++                this.delegate_platform_when(move |cx| delegated(cx))
++            })
+             .content(move |state, window, cx| {
+                 v_flex()
+                     .id("content")
+-- 
+2.53.0
+

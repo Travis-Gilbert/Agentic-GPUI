@@ -29,3 +29,7 @@
 0029-physical-tab-navigation.patch
 0030-follow-canonical-history-and-editor-sync.patch
 0031-preserve-editor-tab-navigation-context.patch
+0032-retained-menu-facts-and-delegation.patch
+0033-shared-dock-tab-chrome.patch
+0034-retained-popover-state-observation.patch
+0035-follow-scoped-editing-island-input.patch

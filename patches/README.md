@@ -3,7 +3,7 @@
 This hard fork tracks `longbridge/gpui-kit` tag `v0.7.3`. The files listed in
 `series` are applied in order and are never proposed upstream. The fork pins
 the entire GPUI family to one immutable revision of `Travis-Gilbert/zed`
-(`6d4d90754f7dde3e62afb6fe74a632c0b4660396`) in place of upstream's
+(`8699294895c386bbc44982d04baf8386deb2d1f4`) in place of upstream's
 `gpui-pre =0.3.9` crates.
 
 The replay workflow applies this series to `v0.7.3` for branch validation and
