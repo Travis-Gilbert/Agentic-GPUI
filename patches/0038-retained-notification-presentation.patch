@@ -1,0 +1,965 @@
+From a8bfcb7b10659f3f423267c1bcfe0c265c13d714 Mon Sep 17 00:00:00 2001
+From: Travis Gilbert <1travisgilbert@gmail.com>
+Date: Thu, 15 Oct 2026 15:02:08 -0400
+Subject: [PATCH] feat(notifications): expose retained owner presentation and
+ guarded input
+
+---
+ crates/base/src/lib.rs                        |   2 +-
+ crates/base/src/toast.rs                      |  38 +-
+ crates/component/src/button/button.rs         |  21 +
+ crates/component/src/menu/popup_menu.rs       |   6 +-
+ .../src/menu/popup_menu/presentation.rs       |  42 ++
+ crates/component/src/notification.rs          |  84 +++-
+ .../src/notification/presentation.rs          | 396 ++++++++++++++++++
+ crates/component/src/window_ext.rs            |  32 +-
+ 8 files changed, 607 insertions(+), 14 deletions(-)
+ create mode 100644 crates/component/src/notification/presentation.rs
+
+diff --git a/crates/base/src/lib.rs b/crates/base/src/lib.rs
+index 3d3cc34c..7a4a5e40 100644
+--- a/crates/base/src/lib.rs
++++ b/crates/base/src/lib.rs
+@@ -202,7 +202,7 @@ pub use time_field::{
+     HourCycle, TimeField, TimeFieldEvent, TimeFieldSegment, TimeFieldSegmentState, TimeFieldState,
+     TimePrecision, TimeSegment,
+ };
+-pub use toast::{
++pub use toast::{ToastItemPresentation,
+     Toast, ToastAdvance, ToastManager, ToastMotion, ToastOptions, ToastStack, ToastStackState,
+     ToastTransitionStatus,
+ };
+diff --git a/crates/base/src/toast.rs b/crates/base/src/toast.rs
+index 42d243d6..f083e563 100644
+--- a/crates/base/src/toast.rs
++++ b/crates/base/src/toast.rs
+@@ -68,12 +68,15 @@ pub struct ToastStackState {
+     width: Rc<std::cell::Cell<Pixels>>,
+     hovered: Rc<std::cell::Cell<bool>>,
+     focused: Rc<std::cell::Cell<bool>>,
++    platform_interaction:Rc<std::cell::Cell<bool>>,
+ }
+ 
+ impl ToastStackState {
++    pub fn set_platform_interaction(&self,active:bool){self.platform_interaction.set(active);}
++
+     /// Return whether interaction has expanded the stack.
+     pub fn is_expanded(&self) -> bool {
+-        self.hovered.get() || self.focused.get()
++        self.hovered.get() || self.focused.get()||self.platform_interaction.get()
+     }
+ }
+ 
+@@ -277,6 +280,14 @@ impl<I: Clone + Eq, T> ToastManager<I, T> {
+     }
+ }
+ 
++/// Read-only measurements from the actual stack's spring and visibility policy.
++#[derive(Clone,Debug,Default)]
++pub struct ToastItemPresentation {opacity:Rc<std::cell::Cell<f32>>,visible:Rc<std::cell::Cell<bool>>}
++impl ToastItemPresentation {
++    pub fn opacity(&self)->f32{self.opacity.get()}
++    pub fn is_visible(&self)->bool{self.visible.get()}
++}
++
+ /// A deep toast-stack element that owns measurement, overlap, and expansion motion.
+ #[derive(IntoElement)]
+ pub struct ToastStack {
+@@ -288,6 +299,7 @@ pub struct ToastStack {
+     placement: Anchor,
+     focus_handle: Option<FocusHandle>,
+     children: Vec<(ElementId, AnyElement)>,
++    presentations:std::collections::HashMap<ElementId,ToastItemPresentation>,
+ }
+ 
+ impl ToastStack {
+@@ -303,9 +315,16 @@ impl ToastStack {
+             placement: Anchor::TopRight,
+             focus_handle: None,
+             children: Vec::new(),
++            presentations:Default::default(),
+         }
+     }
+ 
++    /// Observe the real item's stack visibility and opacity without changing
++    /// its layout, springs, focus, or lifecycle authority.
++    pub fn item_with_presentation(mut self,id:impl Into<ElementId>,child:impl IntoElement,presentation:ToastItemPresentation)->Self{
++        let id=id.into();self.presentations.insert(id.clone(),presentation);self.item(id,child)
++    }
++
+     /// Add a stably keyed toast item to the stack.
+     pub fn item(mut self, id: impl Into<ElementId>, child: impl IntoElement) -> Self {
+         self.children.push((id.into(), child.into_any_element()));
+@@ -477,6 +496,7 @@ impl RenderOnce for ToastStack {
+             window,
+             cx,
+         );
++        let presentations=self.presentations;
+         let items = self
+             .children
+             .into_iter()
+@@ -522,6 +542,10 @@ impl RenderOnce for ToastStack {
+                     window,
+                     cx,
+                 );
++                if let Some(presentation)=presentations.get(&item_id){
++                    presentation.opacity.set(opacity);
++                    presentation.visible.set(expanded||rank<collapsed_visible);
++                }
+                 div()
+                     .id(item_id.clone())
+                     .absolute()
+@@ -599,6 +623,7 @@ pub struct Toast {
+     base: crate::ObservedElement<Stateful<Div>>,
+     style: StyleRefinement,
+     transition_status: ToastTransitionStatus,
++    delegated: bool,
+     children: Vec<AnyElement>,
+ }
+ 
+@@ -609,10 +634,18 @@ impl Toast {
+             base: div().id(id).test_support(),
+             style: StyleRefinement::default(),
+             transition_status: ToastTransitionStatus::Starting,
++            delegated: false,
+             children: Vec::new(),
+         }
+     }
+ 
++    /// Omit the canvas announcement only after the actual owner acknowledges
++    /// another platform presentation. Layout and interaction traversal remain.
++    pub fn delegate_platform(mut self, delegated: bool) -> Self {
++        self.delegated = delegated;
++        self
++    }
++
+     /// Set the lifecycle phase used by application-owned toast presentation.
+     pub fn transition_status(mut self, status: ToastTransitionStatus) -> Self {
+         self.transition_status = status;
+@@ -653,9 +686,10 @@ impl StatefulInteractiveElement for Toast {}
+ impl RenderOnce for Toast {
+     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+         self.base
+-            .role(Role::Alert)
++            .when(!self.delegated, |base| base.role(Role::Alert))
+             .children(self.children)
+             .refine_style(&self.style)
++            .when(self.delegated, |base| base.opacity(0.))
+     }
+ }
+ 
+diff --git a/crates/component/src/button/button.rs b/crates/component/src/button/button.rs
+index a8f81f4b..8902f97c 100644
+--- a/crates/component/src/button/button.rs
++++ b/crates/component/src/button/button.rs
+@@ -415,6 +415,27 @@ impl Button {
+             .or_else(|| self.tooltip.as_ref().map(|(tooltip, _)| tooltip.clone()))
+     }
+ 
++    /// Facts and the exact current handler of an ordinary notification action.
++    /// Custom child content has no automatic platform representation.
++    pub(crate) fn notification_action(
++        &self,
++    ) -> Option<(
++        SharedString,
++        Option<SharedString>,
++        bool,
++        Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>,
++    )> {
++        if !self.children.is_empty() {
++            return None;
++        }
++        Some((
++            self.accessible_name()?,
++            self.accessibility_description.clone(),
++            !self.interactive(),
++            self.on_click.clone()?,
++        ))
++    }
++
+     /// Set the icon of the button, if the Button have no label, the button well in Icon Button mode.
+     pub fn icon(mut self, icon: impl Into<ButtonIcon>) -> Self {
+         self.icon = Some(icon.into());
+diff --git a/crates/component/src/menu/popup_menu.rs b/crates/component/src/menu/popup_menu.rs
+index 5e52f179..639db8af 100644
+--- a/crates/component/src/menu/popup_menu.rs
++++ b/crates/component/src/menu/popup_menu.rs
+@@ -1090,8 +1090,10 @@ impl PopupMenu {
+     ///
+     /// The submenu is closed together with its parent, same as macOS menus.
+     fn dismiss(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
++        let focus_moved_away =
++            window.focused(cx).is_some() && !self.focus_handle.contains_focused(window, cx);
+         if let Some(presenter) = &self.presentation.presenter {
+-            presenter.close();
++            presenter.close_with_focus(focus_moved_away);
+         }
+         self.selected_index = None;
+         cx.emit(DismissEvent);
+@@ -1099,8 +1101,6 @@ impl PopupMenu {
+         // Focus back to the previous focused handle, unless the item's click
+         // handler has already moved focus elsewhere (e.g. opened a dialog and
+         // focused its input) -- stealing focus back would break that.
+-        let focus_moved_away =
+-            window.focused(cx).is_some() && !self.focus_handle.contains_focused(window, cx);
+         if !focus_moved_away {
+             if let Some(handle) = self
+                 .previous_focus_handle
+diff --git a/crates/component/src/menu/popup_menu/presentation.rs b/crates/component/src/menu/popup_menu/presentation.rs
+index 5de0f8b8..95a43876 100644
+--- a/crates/component/src/menu/popup_menu/presentation.rs
++++ b/crates/component/src/menu/popup_menu/presentation.rs
+@@ -172,6 +172,7 @@ impl PopupMenuPresentation {
+ pub struct PopupMenuPresenter {
+     pub(super) frame: Rc<dyn Fn(PopupMenuPresentation, &mut Window, &mut App) -> bool>,
+     closed: Rc<dyn Fn(u64)>,
++    focus_closed: Option<Rc<dyn Fn(u64, bool)>>,
+     pub(super) entity_id: Rc<Cell<Option<u64>>>,
+     pub(super) delegated: Rc<Cell<bool>>,
+     is_closed: Rc<Cell<bool>>,
+@@ -184,11 +185,26 @@ impl PopupMenuPresenter {
+         Self {
+             frame: Rc::new(frame),
+             closed: Rc::new(closed),
++            focus_closed: None,
+             entity_id: Rc::default(),
+             delegated: Rc::default(),
+             is_closed: Rc::default(),
+         }
+     }
++    /// Observe the native owner's existing focus decision before its close
++    /// notification. True means an item already moved native focus elsewhere.
++    pub fn on_focus_close(mut self, observer: impl Fn(u64, bool) + 'static) -> Self {
++        self.focus_closed = Some(Rc::new(observer));
++        self
++    }
++    pub(super) fn close_with_focus(&self, moved: bool) {
++        if !self.is_closed.get() {
++            if let (Some(id), Some(observer)) = (self.entity_id.get(), &self.focus_closed) {
++                observer(id, moved);
++            }
++        }
++        self.close();
++    }
+     /// Whether this actual owner has acknowledged a prepared native region.
+     pub fn is_platform_delegated(&self) -> bool {
+         self.delegated.get() && !self.is_closed.get()
+@@ -205,6 +221,7 @@ impl PopupMenuPresenter {
+         Self {
+             frame: self.frame.clone(),
+             closed: self.closed.clone(),
++            focus_closed: self.focus_closed.clone(),
+             entity_id: Rc::default(),
+             delegated: Rc::default(),
+             is_closed: Rc::default(),
+@@ -548,3 +565,28 @@ mod tests {
+         });
+     }
+ }
++
++#[cfg(test)]
++mod focus_restore_tests {
++    use super::*;
++    fn verify_native_close_decision(cx:&mut gpui::TestAppContext,moved:bool){
++        cx.update(|cx|cx.set_global(crate::Theme::default()));
++        let reported=Rc::new(Cell::new(None));
++        let presenter=PopupMenuPresenter::new(|_,_,_|true,|_|{}).on_focus_close({let reported=reported.clone();move |id,moved|reported.set(Some((id,moved)))});
++        let menu_presenter=presenter.clone();
++        let(menu,cx)=cx.add_window_view(move |_,cx|PopupMenu::new(cx).presenter(menu_presenter));
++        let identity=menu.entity_id().as_u64();
++        presenter.delegated.set(true);
++        let other_focus=cx.update(|window,cx|{
++            let focus=menu.read(cx).focus_handle.clone();focus.focus(window,cx);
++            if moved{let other=cx.focus_handle();other.focus(window,cx);Some(other)}else{None}
++        });
++        menu.update_in(cx,|menu,window,cx|{menu.presented_input(menu.presentation.revision,PopupMenuInput::Dismiss,window,cx).unwrap();});
++        assert_eq!(reported.get(),Some((identity,moved)));
++        drop(other_focus);
++    }
++    #[gpui::test]
++    fn escape_reports_the_existing_owner_focus_restore_decision(cx:&mut gpui::TestAppContext){verify_native_close_decision(cx,false);}
++    #[gpui::test]
++    fn action_moved_focus_reports_the_existing_native_refusal_to_restore(cx:&mut gpui::TestAppContext){verify_native_close_decision(cx,true);}
++}
+diff --git a/crates/component/src/notification.rs b/crates/component/src/notification.rs
+index 7eb5764e..6a134f4b 100644
+--- a/crates/component/src/notification.rs
++++ b/crates/component/src/notification.rs
+@@ -1,3 +1,8 @@
++mod presentation;
++pub use presentation::{
++    NotificationActionPresentation, NotificationInput, NotificationInputRefusal,
++    NotificationPresentation, NotificationPresenter, NotificationPresenterFactory,
++};
+ use std::{
+     any::TypeId,
+     borrow::Cow,
+@@ -20,7 +25,8 @@ use gpui_base::{
+ };
+ 
+ use crate::{
+-    ActiveTheme as _, Edges, Icon, IconName, Sizable as _, StyledExt, TITLE_BAR_HEIGHT,
++    ActiveTheme as _, Edges, ElementExt as _, Icon, IconName, Sizable as _, StyledExt,
++    TITLE_BAR_HEIGHT,
+     animation::cubic_bezier,
+     button::{Button, ButtonVariants as _},
+     styled::toast_shadow,
+@@ -130,6 +136,7 @@ pub struct Notification {
+     on_click: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
+     on_close: Option<Rc<dyn Fn(&mut Window, &mut App)>>,
+     transition_status: ToastTransitionStatus,
++    presentation: presentation::PresentationState,
+ }
+ 
+ impl From<String> for Notification {
+@@ -190,6 +197,7 @@ impl Notification {
+             on_click: None,
+             on_close: None,
+             transition_status: ToastTransitionStatus::Starting,
++            presentation: Default::default(),
+         }
+     }
+ 
+@@ -410,6 +418,15 @@ impl Render for Notification {
+             .clone()
+             .map(|builder| builder(self, window, cx).small().mr_3p5());
+ 
++        self.capture_action(action.as_ref());
++        let action_bounds = self.presentation.action_bounds.clone();
++        let dismiss_bounds = self.presentation.dismiss_bounds.clone();
++        let copy_bounds=self.presentation.copy_bounds.clone();
++        let delegated = self
++            .presentation
++            .presenter
++            .as_ref()
++            .is_some_and(NotificationPresenter::is_platform_delegated);
+         let transition_status = self.transition_status;
+         let closing = transition_status == ToastTransitionStatus::Ending;
+         let icon = match self.type_ {
+@@ -419,7 +436,39 @@ impl Render for Notification {
+         let has_icon = icon.is_some();
+         let placement = self.placement.unwrap_or(cx.theme().notification.placement);
+ 
++        let animation_opacity=self.presentation.opacity.clone();
++        let owner = cx.entity().downgrade();
++        let icon_svg = icon.as_ref().and_then(|icon| match icon.source_ref() {
++            crate::icon::IconSource::Data(bytes) => Some(bytes.clone()),
++            crate::icon::IconSource::Path(path) => cx
++                .asset_source()
++                .load(path.as_ref())
++                .ok()
++                .flatten()
++                .map(|bytes| std::sync::Arc::from(bytes.as_ref())),
++        });
++        self.presentation.icon = icon_svg;
++        self.refresh_presentation_revision();
+         BaseToast::new("notification")
++            .delegate_platform(delegated)
++            .on_prepaint(move |bounds, window, cx| {
++                if let Some(owner) = owner.upgrade() {
++                    let (frame, presenter) = owner.update(cx, |note, cx| {
++                        note.presentation.bounds = bounds;
++                        (
++                            note.presentation(cx.entity().downgrade()),
++                            note.presentation.presenter.clone(),
++                        )
++                    });
++                    if let Some(presenter) = presenter {
++                        let complete = frame.is_complete();
++                        let requested = (presenter.frame)(frame, window, cx) && complete;
++                        if presenter.delegated.replace(requested) != requested {
++                            owner.update(cx, |_, cx| cx.notify());
++                        }
++                    }
++                }
++            })
+             .transition_status(transition_status)
+             .h_flex()
+             .group("")
+@@ -440,6 +489,7 @@ impl Render for Notification {
+             })
+             .child(
+                 v_flex()
++                    .on_prepaint(move |bounds,_,_|copy_bounds.set(bounds))
+                     .flex_1()
+                     .overflow_hidden()
+                     .when(has_icon, |this| this.pl_6())
+@@ -451,7 +501,13 @@ impl Render for Notification {
+                     })
+                     .when_some(content, |this, content| this.child(content)),
+             )
+-            .when_some(action, |this, action| this.child(action))
++            .when_some(action, |this, action| {
++                this.child(
++                    action
++                        .when(delegated, |action| action.role(None))
++                        .on_prepaint(move |bounds, _, _| action_bounds.set(bounds)),
++                )
++            })
+             .child(
+                 div()
+                     .absolute()
+@@ -461,6 +517,8 @@ impl Render for Notification {
+                     .group_hover("", |this| this.visible())
+                     .child(
+                         Button::new("close")
++                            .on_prepaint(move |bounds, _, _| dismiss_bounds.set(bounds))
++                            .when(delegated, |button| button.role(None))
+                             .icon(IconName::Close)
+                             .ghost()
+                             .xsmall()
+@@ -492,6 +550,7 @@ impl Render for Notification {
+                 move |this, delta| {
+                     if closing {
+                         let opacity = 1. - delta;
++                        animation_opacity.set(opacity);
+                         let that = this.opacity(opacity).shadow(toast_shadow(opacity.powi(3)));
+                         let y_offset = match placement {
+                             Anchor::TopLeft | Anchor::TopRight | Anchor::TopCenter => {
+@@ -516,6 +575,7 @@ impl Render for Notification {
+                             _ => px(0.),
+                         };
+                         let opacity = delta;
++                        animation_opacity.set(opacity);
+                         // GPUI paints a drop shadow *under* the card and has no
+                         // group compositing, so a card that is still translucent
+                         // does not hide its own shadow and it shows through as a
+@@ -707,6 +767,7 @@ pub struct NotificationList {
+     /// Whether the lifecycle clock is running. The loop clears it as it exits.
+     is_advancing: bool,
+     _subscriptions: HashMap<NotificationId, Subscription>,
++    presenter: Option<NotificationPresenterFactory>,
+ }
+ 
+ impl NotificationList {
+@@ -718,6 +779,7 @@ impl NotificationList {
+             autohide_ids: HashSet::new(),
+             is_advancing: false,
+             _subscriptions: HashMap::new(),
++            presenter: None,
+         }
+     }
+ 
+@@ -763,10 +825,13 @@ impl NotificationList {
+             })
+     }
+ 
+-    fn is_expanded(&self) -> bool {
++    fn is_expanded(&self, cx: &App) -> bool {
+         self.stacks
+             .iter()
+             .any(|(_, stack)| stack.state.is_expanded())
++            || self.notifications.iter().any(|(_, note, _)| {
++                note.read(cx).presentation.hovered || note.read(cx).presentation.focused
++            })
+     }
+ 
+     /// Group the visible notifications by their effective placement, pairing
+@@ -822,7 +887,8 @@ impl NotificationList {
+         window: &mut Window,
+         cx: &mut Context<Self>,
+     ) {
+-        let notification = notification.into();
++        let mut notification = notification.into();
++        notification.presentation.presenter = self.presenter.as_ref().map(|factory| factory());
+         let delivery = notification
+             .delivery
+             .unwrap_or(cx.theme().notification.delivery);
+@@ -905,7 +971,7 @@ impl NotificationList {
+     fn advance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+         let changes = self
+             .notifications
+-            .advance(cx.background_executor().now(), self.is_expanded());
++            .advance(cx.background_executor().now(), self.is_expanded(cx));
+         for id in changes.presented {
+             if let Some(note) = self.notifications.get(&id) {
+                 note.update(cx, |note, cx| note.complete_enter(cx));
+@@ -1041,12 +1107,16 @@ impl Render for NotificationList {
+                     self.stacks.len() - 1
+                 });
+             let stack = &self.stacks[stack_ix].1;
++            stack.state.set_platform_interaction(items.iter().any(|(_,note)|note.read(cx).presentation.hovered||note.read(cx).presentation.focused));
+ 
+             items
+                 .into_iter()
+                 .fold(
+                     ToastStack::new(stack_id, stack.state.clone()),
+-                    |stack, (id, item)| stack.item(format!("{id:?}"), item),
++                    |stack, (id, item)| {
++                        let presentation=item.read(cx).presentation.stack.clone();
++                        stack.item_with_presentation(format!("{id:?}"),item,presentation)
++                    },
+                 )
+                 .placement(anchor)
+                 .focus_handle(stack.focus_handle.clone())
+@@ -1471,7 +1541,7 @@ mod tests {
+             other_focus.focus(window, cx);
+             window.draw(cx).clear(cx);
+         });
+-        assert!(!list.read_with(cx, |list, _| list.is_expanded()));
++        assert!(!list.read_with(cx, |list, cx| list.is_expanded(cx)));
+         cx.background_executor
+             .advance_clock(Duration::from_secs(5) + Duration::from_millis(50));
+         cx.run_until_parked();
+diff --git a/crates/component/src/notification/presentation.rs b/crates/component/src/notification/presentation.rs
+new file mode 100644
+index 00000000..cf0a47d7
+--- /dev/null
++++ b/crates/component/src/notification/presentation.rs
+@@ -0,0 +1,396 @@
++//! A platform lease over a Notification; its list still owns every timer.
++use super::*;
++use gpui::{Bounds, Pixels};
++use std::cell::Cell;
++
++pub type NotificationPresenterFactory = Rc<dyn Fn() -> NotificationPresenter>;
++#[derive(Clone)]
++pub struct NotificationPresenter {
++    pub(super) frame: Rc<dyn Fn(NotificationPresentation, &mut Window, &mut App) -> bool>,
++    closed: Rc<dyn Fn(u64)>,
++    pub(super) delegated: Rc<Cell<bool>>,
++    identity: Rc<Cell<Option<u64>>>,
++}
++impl NotificationPresenter {
++    pub fn new(
++        frame: impl Fn(NotificationPresentation, &mut Window, &mut App) -> bool + 'static,
++        closed: impl Fn(u64) + 'static,
++    ) -> Self {
++        Self {
++            frame: Rc::new(frame),
++            closed: Rc::new(closed),
++            delegated: Rc::default(),
++            identity: Rc::default(),
++        }
++    }
++    pub fn is_platform_delegated(&self) -> bool {
++        self.delegated.get()
++    }
++    fn close(&self) {
++        self.delegated.set(false);
++        if let Some(id) = self.identity.take() {
++            (self.closed)(id);
++        }
++    }
++}
++#[derive(Clone, Debug, PartialEq)]
++pub struct NotificationActionPresentation {
++    pub label: SharedString,
++    pub description: Option<SharedString>,
++    pub disabled: bool,
++    pub bounds: Bounds<Pixels>,
++}
++#[derive(Clone)]
++pub struct NotificationPresentation {
++    pub entity: WeakEntity<Notification>,
++    pub revision: u64,
++    pub bounds: Bounds<Pixels>,
++    pub dismiss_bounds: Bounds<Pixels>,
++    pub copy_bounds: Bounds<Pixels>,
++    pub title: Option<SharedString>,
++    pub message: Option<SharedString>,
++    pub icon_svg: Option<std::sync::Arc<[u8]>>,
++    pub type_: Option<NotificationType>,
++    pub phase: ToastTransitionStatus,
++    pub opacity: f32,
++    pub visible: bool,
++    pub action: Option<NotificationActionPresentation>,
++    pub clickable: bool,
++    complete: bool,
++    delegated: bool,
++}
++impl NotificationPresentation {
++    pub fn is_complete(&self) -> bool {
++        self.complete
++    }
++    pub fn is_platform_delegated(&self) -> bool {
++        self.delegated
++    }
++}
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum NotificationInput {
++    Action,
++    Click,
++    Dismiss,
++    Hover(bool),
++    Focus(bool),
++}
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum NotificationInputRefusal {
++    StaleRevision,
++    NotPresented,
++    TargetAbsent,
++    Disabled,
++}
++#[derive(Default)]
++pub(super) struct PresentationState {
++    pub(super) presenter: Option<NotificationPresenter>,
++    pub(super) bounds: Bounds<Pixels>,
++    pub(super) action_bounds: Rc<Cell<Bounds<Pixels>>>,
++    pub(super) dismiss_bounds: Rc<Cell<Bounds<Pixels>>>,
++    pub(super) copy_bounds: Rc<Cell<Bounds<Pixels>>>,
++    pub(super) revision: u64,
++    pub(super) icon: Option<std::sync::Arc<[u8]>>,
++    pub(super) stack: gpui_base::ToastItemPresentation,
++    pub(super) opacity: Rc<Cell<f32>>,
++    fingerprint: Option<Fingerprint>,
++    action: Option<NotificationActionPresentation>,
++    action_handler: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
++    action_complete: bool,
++    pub(super) hovered: bool,
++    pub(super) focused: bool,
++}
++#[derive(PartialEq)]
++struct Fingerprint {
++    title: Option<SharedString>,
++    message: Option<SharedString>,
++    action: Option<(SharedString, Option<SharedString>, bool)>,
++    clickable: bool,
++    custom_content: bool,
++    kind: Option<String>,
++    icon: Option<std::sync::Arc<[u8]>>,
++}
++impl Notification {
++    pub(super) fn capture_action(&mut self, action: Option<&Button>) {
++        self.presentation.action_complete = action.is_none();
++        self.presentation.action = None;
++        self.presentation.action_handler = None;
++        if let Some((label, description, disabled, handler)) =
++            action.and_then(Button::notification_action)
++        {
++            self.presentation.action = Some(NotificationActionPresentation {
++                label,
++                description,
++                disabled,
++                bounds: self.presentation.action_bounds.get(),
++            });
++            self.presentation.action_handler = Some(handler);
++            self.presentation.action_complete = true;
++        }
++    }
++    pub(super) fn refresh_presentation_revision(&mut self) {
++        let fingerprint = Fingerprint {
++            title: self.title.clone(),
++            message: self.message.clone(),
++            action: self.presentation.action.as_ref().map(|action| {
++                (
++                    action.label.clone(),
++                    action.description.clone(),
++                    action.disabled,
++                )
++            }),
++            clickable: self.on_click.is_some(),
++            custom_content: self.content_builder.is_some(),
++            kind: self.type_.map(|kind| format!("{kind:?}")),
++            icon: self.presentation.icon.clone(),
++        };
++        if self.presentation.fingerprint.as_ref() != Some(&fingerprint) {
++            self.presentation.revision = self.presentation.revision.saturating_add(1);
++            self.presentation.fingerprint = Some(fingerprint);
++        }
++    }
++    pub fn presentation(&self, entity: WeakEntity<Self>) -> NotificationPresentation {
++        if let Some(presenter) = &self.presentation.presenter {
++            presenter.identity.set(Some(entity.entity_id().as_u64()));
++        }
++        NotificationPresentation {
++            entity,
++            revision: self.presentation.revision,
++            bounds: self.presentation.bounds,
++            dismiss_bounds: self.presentation.dismiss_bounds.get(),
++            copy_bounds: self.presentation.copy_bounds.get(),
++            title: self.title.clone(),
++            message: self.message.clone(),
++            icon_svg: self.presentation.icon.clone(),
++            type_: self.type_,
++            phase: self.transition_status,
++            opacity: self.presentation.opacity.get() * self.presentation.stack.opacity(),
++            visible: self.presentation.stack.is_visible(),
++            action: self.presentation.action.clone().map(|mut action| {
++                action.bounds = self.presentation.action_bounds.get();
++                action
++            }),
++            clickable: self.on_click.is_some(),
++            complete: self.content_builder.is_none() && self.presentation.action_complete,
++            delegated: self
++                .presentation
++                .presenter
++                .as_ref()
++                .is_some_and(NotificationPresenter::is_platform_delegated),
++        }
++    }
++    pub fn presented_input(
++        &mut self,
++        revision: u64,
++        input: NotificationInput,
++        window: &mut Window,
++        cx: &mut Context<Self>,
++    ) -> Result<(), NotificationInputRefusal> {
++        if revision != self.presentation.revision {
++            return Err(NotificationInputRefusal::StaleRevision);
++        }
++        if !self
++            .presentation
++            .presenter
++            .as_ref()
++            .is_some_and(NotificationPresenter::is_platform_delegated)
++        {
++            return Err(NotificationInputRefusal::NotPresented);
++        }
++        if self.transition_status == ToastTransitionStatus::Ending {
++            return Err(NotificationInputRefusal::Disabled);
++        }
++        match input {
++            NotificationInput::Action => {
++                let action = self
++                    .presentation
++                    .action
++                    .as_ref()
++                    .ok_or(NotificationInputRefusal::TargetAbsent)?;
++                if action.disabled {
++                    return Err(NotificationInputRefusal::Disabled);
++                }
++                let handler = self
++                    .presentation
++                    .action_handler
++                    .clone()
++                    .ok_or(NotificationInputRefusal::TargetAbsent)?;
++                handler(&ClickEvent::default(), window, cx);
++            }
++            NotificationInput::Click => {
++                let handler = self
++                    .on_click
++                    .clone()
++                    .ok_or(NotificationInputRefusal::TargetAbsent)?;
++                self.dismiss(window, cx);
++                handler(&ClickEvent::default(), window, cx);
++            }
++            NotificationInput::Dismiss => self.dismiss(window, cx),
++            NotificationInput::Hover(active) => self.presentation.hovered = active,
++            NotificationInput::Focus(active) => self.presentation.focused = active,
++        }
++        cx.notify();
++        Ok(())
++    }
++}
++impl Drop for Notification {
++    fn drop(&mut self) {
++        if let Some(presenter) = &self.presentation.presenter {
++            presenter.close();
++        }
++    }
++}
++impl NotificationList {
++    pub fn visible_notifications(&self, cx: &App) -> Vec<Entity<Notification>> {
++        self.grouped(cx)
++            .into_iter()
++            .flat_map(|(_, _, items)| {
++                items
++                    .into_iter()
++                    .map(|(_, note)| note)
++                    .filter(|note| note.read(cx).presentation.stack.is_visible())
++            })
++            .collect()
++    }
++    pub fn set_presenter(
++        &mut self,
++        presenter: Option<NotificationPresenterFactory>,
++        cx: &mut Context<Self>,
++    ) {
++        for (_, note, _) in self.notifications.iter() {
++            let next = presenter.as_ref().map(|factory| factory());
++            note.update(cx, |note, cx| {
++                if let Some(old) = note.presentation.presenter.take() {
++                    old.close();
++                }
++                note.presentation.presenter = next;
++                note.presentation.hovered = false;
++                note.presentation.focused = false;
++                cx.notify();
++            });
++        }
++        self.presenter = presenter;
++        cx.notify();
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::Disableable as _;
++    #[gpui::test]
++    fn notification_receiver_rechecks_revision_and_the_actual_button_before_calling_it(
++        cx: &mut gpui::TestAppContext,
++    ) {
++        cx.update(|cx| cx.set_global(crate::Theme::default()));
++        let calls = Rc::new(Cell::new(0));
++        let (note, cx) = cx.add_window_view(|_, _| Notification::info("Saved"));
++        let presenter = NotificationPresenter::new(|_, _, _| true, |_| {});
++        let revision = note.update(cx, |note, _| {
++            let button = Button::new("existing-action").label("View").on_click({
++                let calls = calls.clone();
++                move |_, _, _| calls.set(calls.get() + 1)
++            });
++            note.capture_action(Some(&button));
++            note.refresh_presentation_revision();
++            note.presentation.presenter = Some(presenter.clone());
++            note.presentation.revision
++        });
++        note.update_in(cx, |note, window, cx| {
++            assert_eq!(
++                note.presented_input(revision, NotificationInput::Action, window, cx),
++                Err(NotificationInputRefusal::NotPresented)
++            );
++            presenter.delegated.set(true);
++            assert_eq!(
++                note.presented_input(revision + 1, NotificationInput::Action, window, cx),
++                Err(NotificationInputRefusal::StaleRevision)
++            );
++            assert_eq!(calls.get(), 0);
++            note.presented_input(revision, NotificationInput::Action, window, cx)
++                .unwrap();
++            assert_eq!(calls.get(), 1);
++            let disabled = Button::new("existing-action")
++                .label("View")
++                .disabled(true)
++                .on_click({
++                    let calls = calls.clone();
++                    move |_, _, _| calls.set(calls.get() + 1)
++                });
++            note.capture_action(Some(&disabled));
++            note.refresh_presentation_revision();
++            assert_eq!(
++                note.presented_input(revision, NotificationInput::Action, window, cx),
++                Err(NotificationInputRefusal::StaleRevision)
++            );
++            assert_eq!(
++                note.presented_input(
++                    note.presentation.revision,
++                    NotificationInput::Action,
++                    window,
++                    cx
++                ),
++                Err(NotificationInputRefusal::Disabled)
++            );
++            assert_eq!(calls.get(), 1);
++        });
++    }
++    struct ListHarness {
++        list: Entity<NotificationList>,
++    }
++    impl Render for ListHarness {
++        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++            div().size_full().child(self.list.clone())
++        }
++    }
++    #[gpui::test]
++    fn platform_hover_pauses_and_resumes_the_existing_notification_clock(
++        cx: &mut gpui::TestAppContext,
++    ) {
++        cx.update(|cx| cx.set_global(crate::Theme::default()));
++        let (root, cx) = cx.add_window_view(|window, cx| ListHarness {
++            list: cx.new(|cx| NotificationList::new(window, cx)),
++        });
++        let list = root.read_with(cx, |root, _| root.list.clone());
++        list.update_in(cx, |list, window, cx| {
++            list.push(Notification::info("Pause this real toast"), window, cx)
++        });
++        cx.background_executor
++            .advance_clock(NOTIFICATION_TRANSITION_DURATION + NOTIFICATION_ADVANCE_INTERVAL);
++        cx.run_until_parked();
++        let note = list.read_with(cx, |list, _| list.notifications()[0].clone());
++        let presenter = NotificationPresenter::new(|_, _, _| true, |_| {});
++        presenter.delegated.set(true);
++        note.update_in(cx, |note, window, cx| {
++            note.presentation.presenter = Some(presenter);
++            note.presented_input(
++                note.presentation.revision,
++                NotificationInput::Hover(true),
++                window,
++                cx,
++            )
++            .unwrap();
++        });
++        cx.background_executor.advance_clock(Duration::from_secs(6));
++        cx.run_until_parked();
++        assert_eq!(
++            note.read_with(cx, |note, _| note.transition_status),
++            ToastTransitionStatus::Present
++        );
++        note.update_in(cx, |note, window, cx| {
++            note.presented_input(
++                note.presentation.revision,
++                NotificationInput::Hover(false),
++                window,
++                cx,
++            )
++            .unwrap();
++        });
++        cx.background_executor.advance_clock(Duration::from_secs(6));
++        cx.run_until_parked();
++        assert_eq!(
++            note.read_with(cx, |note, _| note.transition_status),
++            ToastTransitionStatus::Ending
++        );
++    }
++}
+diff --git a/crates/component/src/window_ext.rs b/crates/component/src/window_ext.rs
+index 7f74a021..bb850646 100644
+--- a/crates/component/src/window_ext.rs
++++ b/crates/component/src/window_ext.rs
+@@ -3,7 +3,7 @@ use crate::{
+     Placement,
+     dialog::{AlertDialog, Dialog},
+     input::AnyInputState,
+-    notification::Notification,
++    notification::{Notification, NotificationPresenterFactory},
+     sheet::Sheet,
+ };
+ use gpui::{App, ElementId, Entity, Window};
+@@ -124,6 +124,17 @@ pub trait WindowExt: Sized {
+     /// Clears all notifications.
+     fn clear_notifications(&mut self, cx: &mut App);
+ 
++    /// Install a presenter on the actual per-window notification list. It
++    /// applies to mounted and future notifications, keeping its lifecycle.
++    fn set_notification_presenter(
++        &mut self,
++        presenter: Option<NotificationPresenterFactory>,
++        cx: &mut App,
++    );
++
++    /// Actual notification entities in the currently rendered native stacks.
++    fn visible_notifications(&mut self, cx: &mut App) -> Rc<Vec<Entity<Notification>>>;
++
+     /// Returns number of notifications.
+     fn notifications(&mut self, cx: &mut App) -> Rc<Vec<Entity<Notification>>>;
+ 
+@@ -242,6 +253,25 @@ impl WindowExt for Window {
+         })
+     }
+ 
++    fn set_notification_presenter(
++        &mut self,
++        presenter: Option<NotificationPresenterFactory>,
++        cx: &mut App,
++    ) {
++        let list = WindowState::read(self, cx).notification.clone();
++        list.update(cx, |list, cx| list.set_presenter(presenter, cx));
++        self.refresh();
++    }
++
++    fn visible_notifications(&mut self, cx: &mut App) -> Rc<Vec<Entity<Notification>>> {
++        Rc::new(
++            WindowState::read(self, cx)
++                .notification
++                .read(cx)
++                .visible_notifications(cx),
++        )
++    }
++
+     #[inline]
+     fn notifications(&mut self, cx: &mut App) -> Rc<Vec<Entity<Notification>>> {
+         Rc::new(
+-- 
+2.53.0
+
