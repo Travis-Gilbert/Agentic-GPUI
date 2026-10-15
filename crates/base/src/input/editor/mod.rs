@@ -184,9 +184,14 @@ impl InputModeKind for EditorMode {
         element: Stateful<Div>,
         entity: &Entity<InputBaseState<Self>>,
         window: &mut Window,
+        tab_navigation: bool,
     ) -> Stateful<Div> {
         element
-            .key_context("Input mode=editor")
+            .key_context(if tab_navigation {
+                "Input mode=editor TabNavigation"
+            } else {
+                "Input mode=editor"
+            })
             .on_action(window.listener_for(entity, InputBaseState::on_action_toggle_code_actions))
             .on_action(window.listener_for(entity, InputBaseState::on_action_show_completions))
             .on_action(window.listener_for(entity, InputBaseState::on_action_go_to_definition))

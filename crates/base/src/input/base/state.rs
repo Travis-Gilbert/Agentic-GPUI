@@ -4894,7 +4894,7 @@ impl<M: InputModeKind> Render for InputBaseState<M> {
 
         // Actions only one mode handles are registered by that mode, where
         // `Self` is concrete enough to name its own entity type.
-        M::register_actions(element, &entity, window)
+        M::register_actions(element, &entity, window, self.tab_navigation)
     }
 }
 

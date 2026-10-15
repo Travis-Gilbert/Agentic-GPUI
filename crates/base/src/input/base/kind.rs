@@ -330,6 +330,7 @@ pub trait InputModeKind: sealed::Sealed + Sized + 'static {
         element: Stateful<Div>,
         _entity: &Entity<InputBaseState<Self>>,
         _window: &mut Window,
+        _tab_navigation: bool,
     ) -> Stateful<Div> {
         element
     }
