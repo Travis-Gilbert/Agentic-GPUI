@@ -172,6 +172,7 @@ impl PopupMenuPresentation {
 pub struct PopupMenuPresenter {
     pub(super) frame: Rc<dyn Fn(PopupMenuPresentation, &mut Window, &mut App) -> bool>,
     closed: Rc<dyn Fn(u64)>,
+    focus_closed: Option<Rc<dyn Fn(u64, bool)>>,
     pub(super) entity_id: Rc<Cell<Option<u64>>>,
     pub(super) delegated: Rc<Cell<bool>>,
     is_closed: Rc<Cell<bool>>,
@@ -184,10 +185,25 @@ impl PopupMenuPresenter {
         Self {
             frame: Rc::new(frame),
             closed: Rc::new(closed),
+            focus_closed: None,
             entity_id: Rc::default(),
             delegated: Rc::default(),
             is_closed: Rc::default(),
         }
+    }
+    /// Observe the native owner's existing focus decision before its close
+    /// notification. True means an item already moved native focus elsewhere.
+    pub fn on_focus_close(mut self, observer: impl Fn(u64, bool) + 'static) -> Self {
+        self.focus_closed = Some(Rc::new(observer));
+        self
+    }
+    pub(super) fn close_with_focus(&self, moved: bool) {
+        if !self.is_closed.get() {
+            if let (Some(id), Some(observer)) = (self.entity_id.get(), &self.focus_closed) {
+                observer(id, moved);
+            }
+        }
+        self.close();
     }
     /// Whether this actual owner has acknowledged a prepared native region.
     pub fn is_platform_delegated(&self) -> bool {
@@ -205,6 +221,7 @@ impl PopupMenuPresenter {
         Self {
             frame: self.frame.clone(),
             closed: self.closed.clone(),
+            focus_closed: self.focus_closed.clone(),
             entity_id: Rc::default(),
             delegated: Rc::default(),
             is_closed: Rc::default(),
@@ -547,4 +564,29 @@ mod tests {
             );
         });
     }
+}
+
+#[cfg(test)]
+mod focus_restore_tests {
+    use super::*;
+    fn verify_native_close_decision(cx:&mut gpui::TestAppContext,moved:bool){
+        cx.update(|cx|cx.set_global(crate::Theme::default()));
+        let reported=Rc::new(Cell::new(None));
+        let presenter=PopupMenuPresenter::new(|_,_,_|true,|_|{}).on_focus_close({let reported=reported.clone();move |id,moved|reported.set(Some((id,moved)))});
+        let menu_presenter=presenter.clone();
+        let(menu,cx)=cx.add_window_view(move |_,cx|PopupMenu::new(cx).presenter(menu_presenter));
+        let identity=menu.entity_id().as_u64();
+        presenter.delegated.set(true);
+        let other_focus=cx.update(|window,cx|{
+            let focus=menu.read(cx).focus_handle.clone();focus.focus(window,cx);
+            if moved{let other=cx.focus_handle();other.focus(window,cx);Some(other)}else{None}
+        });
+        menu.update_in(cx,|menu,window,cx|{menu.presented_input(menu.presentation.revision,PopupMenuInput::Dismiss,window,cx).unwrap();});
+        assert_eq!(reported.get(),Some((identity,moved)));
+        drop(other_focus);
+    }
+    #[gpui::test]
+    fn escape_reports_the_existing_owner_focus_restore_decision(cx:&mut gpui::TestAppContext){verify_native_close_decision(cx,false);}
+    #[gpui::test]
+    fn action_moved_focus_reports_the_existing_native_refusal_to_restore(cx:&mut gpui::TestAppContext){verify_native_close_decision(cx,true);}
 }

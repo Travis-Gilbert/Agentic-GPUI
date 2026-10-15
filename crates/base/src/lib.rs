@@ -202,7 +202,7 @@ pub use time_field::{
     HourCycle, TimeField, TimeFieldEvent, TimeFieldSegment, TimeFieldSegmentState, TimeFieldState,
     TimePrecision, TimeSegment,
 };
-pub use toast::{
+pub use toast::{ToastItemPresentation,
     Toast, ToastAdvance, ToastManager, ToastMotion, ToastOptions, ToastStack, ToastStackState,
     ToastTransitionStatus,
 };

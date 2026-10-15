@@ -1090,8 +1090,10 @@ impl PopupMenu {
     ///
     /// The submenu is closed together with its parent, same as macOS menus.
     fn dismiss(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
+        let focus_moved_away =
+            window.focused(cx).is_some() && !self.focus_handle.contains_focused(window, cx);
         if let Some(presenter) = &self.presentation.presenter {
-            presenter.close();
+            presenter.close_with_focus(focus_moved_away);
         }
         self.selected_index = None;
         cx.emit(DismissEvent);
@@ -1099,8 +1101,6 @@ impl PopupMenu {
         // Focus back to the previous focused handle, unless the item's click
         // handler has already moved focus elsewhere (e.g. opened a dialog and
         // focused its input) -- stealing focus back would break that.
-        let focus_moved_away =
-            window.focused(cx).is_some() && !self.focus_handle.contains_focused(window, cx);
         if !focus_moved_away {
             if let Some(handle) = self
                 .previous_focus_handle

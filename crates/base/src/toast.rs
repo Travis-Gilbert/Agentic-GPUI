@@ -68,12 +68,15 @@ pub struct ToastStackState {
     width: Rc<std::cell::Cell<Pixels>>,
     hovered: Rc<std::cell::Cell<bool>>,
     focused: Rc<std::cell::Cell<bool>>,
+    platform_interaction:Rc<std::cell::Cell<bool>>,
 }
 
 impl ToastStackState {
+    pub fn set_platform_interaction(&self,active:bool){self.platform_interaction.set(active);}
+
     /// Return whether interaction has expanded the stack.
     pub fn is_expanded(&self) -> bool {
-        self.hovered.get() || self.focused.get()
+        self.hovered.get() || self.focused.get()||self.platform_interaction.get()
     }
 }
 
@@ -277,6 +280,14 @@ impl<I: Clone + Eq, T> ToastManager<I, T> {
     }
 }
 
+/// Read-only measurements from the actual stack's spring and visibility policy.
+#[derive(Clone,Debug,Default)]
+pub struct ToastItemPresentation {opacity:Rc<std::cell::Cell<f32>>,visible:Rc<std::cell::Cell<bool>>}
+impl ToastItemPresentation {
+    pub fn opacity(&self)->f32{self.opacity.get()}
+    pub fn is_visible(&self)->bool{self.visible.get()}
+}
+
 /// A deep toast-stack element that owns measurement, overlap, and expansion motion.
 #[derive(IntoElement)]
 pub struct ToastStack {
@@ -288,6 +299,7 @@ pub struct ToastStack {
     placement: Anchor,
     focus_handle: Option<FocusHandle>,
     children: Vec<(ElementId, AnyElement)>,
+    presentations:std::collections::HashMap<ElementId,ToastItemPresentation>,
 }
 
 impl ToastStack {
@@ -303,7 +315,14 @@ impl ToastStack {
             placement: Anchor::TopRight,
             focus_handle: None,
             children: Vec::new(),
+            presentations:Default::default(),
         }
+    }
+
+    /// Observe the real item's stack visibility and opacity without changing
+    /// its layout, springs, focus, or lifecycle authority.
+    pub fn item_with_presentation(mut self,id:impl Into<ElementId>,child:impl IntoElement,presentation:ToastItemPresentation)->Self{
+        let id=id.into();self.presentations.insert(id.clone(),presentation);self.item(id,child)
     }
 
     /// Add a stably keyed toast item to the stack.
@@ -477,6 +496,7 @@ impl RenderOnce for ToastStack {
             window,
             cx,
         );
+        let presentations=self.presentations;
         let items = self
             .children
             .into_iter()
@@ -522,6 +542,10 @@ impl RenderOnce for ToastStack {
                     window,
                     cx,
                 );
+                if let Some(presentation)=presentations.get(&item_id){
+                    presentation.opacity.set(opacity);
+                    presentation.visible.set(expanded||rank<collapsed_visible);
+                }
                 div()
                     .id(item_id.clone())
                     .absolute()
@@ -599,6 +623,7 @@ pub struct Toast {
     base: crate::ObservedElement<Stateful<Div>>,
     style: StyleRefinement,
     transition_status: ToastTransitionStatus,
+    delegated: bool,
     children: Vec<AnyElement>,
 }
 
@@ -609,8 +634,16 @@ impl Toast {
             base: div().id(id).test_support(),
             style: StyleRefinement::default(),
             transition_status: ToastTransitionStatus::Starting,
+            delegated: false,
             children: Vec::new(),
         }
+    }
+
+    /// Omit the canvas announcement only after the actual owner acknowledges
+    /// another platform presentation. Layout and interaction traversal remain.
+    pub fn delegate_platform(mut self, delegated: bool) -> Self {
+        self.delegated = delegated;
+        self
     }
 
     /// Set the lifecycle phase used by application-owned toast presentation.
@@ -653,9 +686,10 @@ impl StatefulInteractiveElement for Toast {}
 impl RenderOnce for Toast {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
         self.base
-            .role(Role::Alert)
+            .when(!self.delegated, |base| base.role(Role::Alert))
             .children(self.children)
             .refine_style(&self.style)
+            .when(self.delegated, |base| base.opacity(0.))
     }
 }
 

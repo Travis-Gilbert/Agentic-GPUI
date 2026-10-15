@@ -1,3 +1,8 @@
+mod presentation;
+pub use presentation::{
+    NotificationActionPresentation, NotificationInput, NotificationInputRefusal,
+    NotificationPresentation, NotificationPresenter, NotificationPresenterFactory,
+};
 use std::{
     any::TypeId,
     borrow::Cow,
@@ -20,7 +25,8 @@ use gpui_base::{
 };
 
 use crate::{
-    ActiveTheme as _, Edges, Icon, IconName, Sizable as _, StyledExt, TITLE_BAR_HEIGHT,
+    ActiveTheme as _, Edges, ElementExt as _, Icon, IconName, Sizable as _, StyledExt,
+    TITLE_BAR_HEIGHT,
     animation::cubic_bezier,
     button::{Button, ButtonVariants as _},
     styled::toast_shadow,
@@ -130,6 +136,7 @@ pub struct Notification {
     on_click: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
     on_close: Option<Rc<dyn Fn(&mut Window, &mut App)>>,
     transition_status: ToastTransitionStatus,
+    presentation: presentation::PresentationState,
 }
 
 impl From<String> for Notification {
@@ -190,6 +197,7 @@ impl Notification {
             on_click: None,
             on_close: None,
             transition_status: ToastTransitionStatus::Starting,
+            presentation: Default::default(),
         }
     }
 
@@ -410,6 +418,15 @@ impl Render for Notification {
             .clone()
             .map(|builder| builder(self, window, cx).small().mr_3p5());
 
+        self.capture_action(action.as_ref());
+        let action_bounds = self.presentation.action_bounds.clone();
+        let dismiss_bounds = self.presentation.dismiss_bounds.clone();
+        let copy_bounds=self.presentation.copy_bounds.clone();
+        let delegated = self
+            .presentation
+            .presenter
+            .as_ref()
+            .is_some_and(NotificationPresenter::is_platform_delegated);
         let transition_status = self.transition_status;
         let closing = transition_status == ToastTransitionStatus::Ending;
         let icon = match self.type_ {
@@ -419,7 +436,39 @@ impl Render for Notification {
         let has_icon = icon.is_some();
         let placement = self.placement.unwrap_or(cx.theme().notification.placement);
 
+        let animation_opacity=self.presentation.opacity.clone();
+        let owner = cx.entity().downgrade();
+        let icon_svg = icon.as_ref().and_then(|icon| match icon.source_ref() {
+            crate::icon::IconSource::Data(bytes) => Some(bytes.clone()),
+            crate::icon::IconSource::Path(path) => cx
+                .asset_source()
+                .load(path.as_ref())
+                .ok()
+                .flatten()
+                .map(|bytes| std::sync::Arc::from(bytes.as_ref())),
+        });
+        self.presentation.icon = icon_svg;
+        self.refresh_presentation_revision();
         BaseToast::new("notification")
+            .delegate_platform(delegated)
+            .on_prepaint(move |bounds, window, cx| {
+                if let Some(owner) = owner.upgrade() {
+                    let (frame, presenter) = owner.update(cx, |note, cx| {
+                        note.presentation.bounds = bounds;
+                        (
+                            note.presentation(cx.entity().downgrade()),
+                            note.presentation.presenter.clone(),
+                        )
+                    });
+                    if let Some(presenter) = presenter {
+                        let complete = frame.is_complete();
+                        let requested = (presenter.frame)(frame, window, cx) && complete;
+                        if presenter.delegated.replace(requested) != requested {
+                            owner.update(cx, |_, cx| cx.notify());
+                        }
+                    }
+                }
+            })
             .transition_status(transition_status)
             .h_flex()
             .group("")
@@ -440,6 +489,7 @@ impl Render for Notification {
             })
             .child(
                 v_flex()
+                    .on_prepaint(move |bounds,_,_|copy_bounds.set(bounds))
                     .flex_1()
                     .overflow_hidden()
                     .when(has_icon, |this| this.pl_6())
@@ -451,7 +501,13 @@ impl Render for Notification {
                     })
                     .when_some(content, |this, content| this.child(content)),
             )
-            .when_some(action, |this, action| this.child(action))
+            .when_some(action, |this, action| {
+                this.child(
+                    action
+                        .when(delegated, |action| action.role(None))
+                        .on_prepaint(move |bounds, _, _| action_bounds.set(bounds)),
+                )
+            })
             .child(
                 div()
                     .absolute()
@@ -461,6 +517,8 @@ impl Render for Notification {
                     .group_hover("", |this| this.visible())
                     .child(
                         Button::new("close")
+                            .on_prepaint(move |bounds, _, _| dismiss_bounds.set(bounds))
+                            .when(delegated, |button| button.role(None))
                             .icon(IconName::Close)
                             .ghost()
                             .xsmall()
@@ -492,6 +550,7 @@ impl Render for Notification {
                 move |this, delta| {
                     if closing {
                         let opacity = 1. - delta;
+                        animation_opacity.set(opacity);
                         let that = this.opacity(opacity).shadow(toast_shadow(opacity.powi(3)));
                         let y_offset = match placement {
                             Anchor::TopLeft | Anchor::TopRight | Anchor::TopCenter => {
@@ -516,6 +575,7 @@ impl Render for Notification {
                             _ => px(0.),
                         };
                         let opacity = delta;
+                        animation_opacity.set(opacity);
                         // GPUI paints a drop shadow *under* the card and has no
                         // group compositing, so a card that is still translucent
                         // does not hide its own shadow and it shows through as a
@@ -707,6 +767,7 @@ pub struct NotificationList {
     /// Whether the lifecycle clock is running. The loop clears it as it exits.
     is_advancing: bool,
     _subscriptions: HashMap<NotificationId, Subscription>,
+    presenter: Option<NotificationPresenterFactory>,
 }
 
 impl NotificationList {
@@ -718,6 +779,7 @@ impl NotificationList {
             autohide_ids: HashSet::new(),
             is_advancing: false,
             _subscriptions: HashMap::new(),
+            presenter: None,
         }
     }
 
@@ -763,10 +825,13 @@ impl NotificationList {
             })
     }
 
-    fn is_expanded(&self) -> bool {
+    fn is_expanded(&self, cx: &App) -> bool {
         self.stacks
             .iter()
             .any(|(_, stack)| stack.state.is_expanded())
+            || self.notifications.iter().any(|(_, note, _)| {
+                note.read(cx).presentation.hovered || note.read(cx).presentation.focused
+            })
     }
 
     /// Group the visible notifications by their effective placement, pairing
@@ -822,7 +887,8 @@ impl NotificationList {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let notification = notification.into();
+        let mut notification = notification.into();
+        notification.presentation.presenter = self.presenter.as_ref().map(|factory| factory());
         let delivery = notification
             .delivery
             .unwrap_or(cx.theme().notification.delivery);
@@ -905,7 +971,7 @@ impl NotificationList {
     fn advance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let changes = self
             .notifications
-            .advance(cx.background_executor().now(), self.is_expanded());
+            .advance(cx.background_executor().now(), self.is_expanded(cx));
         for id in changes.presented {
             if let Some(note) = self.notifications.get(&id) {
                 note.update(cx, |note, cx| note.complete_enter(cx));
@@ -1041,12 +1107,16 @@ impl Render for NotificationList {
                     self.stacks.len() - 1
                 });
             let stack = &self.stacks[stack_ix].1;
+            stack.state.set_platform_interaction(items.iter().any(|(_,note)|note.read(cx).presentation.hovered||note.read(cx).presentation.focused));
 
             items
                 .into_iter()
                 .fold(
                     ToastStack::new(stack_id, stack.state.clone()),
-                    |stack, (id, item)| stack.item(format!("{id:?}"), item),
+                    |stack, (id, item)| {
+                        let presentation=item.read(cx).presentation.stack.clone();
+                        stack.item_with_presentation(format!("{id:?}"),item,presentation)
+                    },
                 )
                 .placement(anchor)
                 .focus_handle(stack.focus_handle.clone())
@@ -1471,7 +1541,7 @@ mod tests {
             other_focus.focus(window, cx);
             window.draw(cx).clear(cx);
         });
-        assert!(!list.read_with(cx, |list, _| list.is_expanded()));
+        assert!(!list.read_with(cx, |list, cx| list.is_expanded(cx)));
         cx.background_executor
             .advance_clock(Duration::from_secs(5) + Duration::from_millis(50));
         cx.run_until_parked();

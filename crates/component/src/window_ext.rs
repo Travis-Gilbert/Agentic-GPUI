@@ -3,7 +3,7 @@ use crate::{
     Placement,
     dialog::{AlertDialog, Dialog},
     input::AnyInputState,
-    notification::Notification,
+    notification::{Notification, NotificationPresenterFactory},
     sheet::Sheet,
 };
 use gpui::{App, ElementId, Entity, Window};
@@ -124,6 +124,17 @@ pub trait WindowExt: Sized {
     /// Clears all notifications.
     fn clear_notifications(&mut self, cx: &mut App);
 
+    /// Install a presenter on the actual per-window notification list. It
+    /// applies to mounted and future notifications, keeping its lifecycle.
+    fn set_notification_presenter(
+        &mut self,
+        presenter: Option<NotificationPresenterFactory>,
+        cx: &mut App,
+    );
+
+    /// Actual notification entities in the currently rendered native stacks.
+    fn visible_notifications(&mut self, cx: &mut App) -> Rc<Vec<Entity<Notification>>>;
+
     /// Returns number of notifications.
     fn notifications(&mut self, cx: &mut App) -> Rc<Vec<Entity<Notification>>>;
 
@@ -240,6 +251,25 @@ impl WindowExt for Window {
         WindowState::update(self, cx, |root, window, cx| {
             root.clear_notifications(window, cx);
         })
+    }
+
+    fn set_notification_presenter(
+        &mut self,
+        presenter: Option<NotificationPresenterFactory>,
+        cx: &mut App,
+    ) {
+        let list = WindowState::read(self, cx).notification.clone();
+        list.update(cx, |list, cx| list.set_presenter(presenter, cx));
+        self.refresh();
+    }
+
+    fn visible_notifications(&mut self, cx: &mut App) -> Rc<Vec<Entity<Notification>>> {
+        Rc::new(
+            WindowState::read(self, cx)
+                .notification
+                .read(cx)
+                .visible_notifications(cx),
+        )
     }
 
     #[inline]

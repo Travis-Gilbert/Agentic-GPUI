@@ -415,6 +415,27 @@ impl Button {
             .or_else(|| self.tooltip.as_ref().map(|(tooltip, _)| tooltip.clone()))
     }
 
+    /// Facts and the exact current handler of an ordinary notification action.
+    /// Custom child content has no automatic platform representation.
+    pub(crate) fn notification_action(
+        &self,
+    ) -> Option<(
+        SharedString,
+        Option<SharedString>,
+        bool,
+        Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>,
+    )> {
+        if !self.children.is_empty() {
+            return None;
+        }
+        Some((
+            self.accessible_name()?,
+            self.accessibility_description.clone(),
+            !self.interactive(),
+            self.on_click.clone()?,
+        ))
+    }
+
     /// Set the icon of the button, if the Button have no label, the button well in Icon Button mode.
     pub fn icon(mut self, icon: impl Into<ButtonIcon>) -> Self {
         self.icon = Some(icon.into());
