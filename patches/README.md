@@ -308,3 +308,9 @@ form, and `text_length_utf16` reports the document's length for a conduit that
 mirrors the whole document. It moves the Zed pin to `1c7e4989`, the editing
 island patch that adds the `set_text_selection` hook. Tested by
 `test_platform_selection_keeps_direction_in_utf16`.
+
+The paired GPUI pin patch (0026) moves Zed to `3f09c4f7`, whose public typed
+`App::start_drag` lets a platform-owned source use the existing GPUI drop
+coordinator. Browser Tab traversal leaves the canvas at either end rather than
+wrapping, with native desktop traversal preserved. No Kit input or component
+behavior changes in this pin move. TheoremWeb consumes the same Zed revision.
