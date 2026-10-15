@@ -299,3 +299,12 @@ to assistive technology rather than only looking dim. The assertion in
 `crates/kit/tests/components.rs` is now `window.find("disabled").disabled() ==
 Some(true)`. TheoremWeb moves its Kit and Zed pins together with this patch, so
 one `gpui` copy stays in its graph.
+
+The platform selection patch implements the input handler's selection setters
+on `InputBaseState`: `set_text_selection` takes a UTF-16 range and its
+direction from the platform (a browser field's backward selection stays
+backward, a caret is never reversed), `set_selected_text_range` is its forward
+form, and `text_length_utf16` reports the document's length for a conduit that
+mirrors the whole document. It moves the Zed pin to `1c7e4989`, the editing
+island patch that adds the `set_text_selection` hook. Tested by
+`test_platform_selection_keeps_direction_in_utf16`.
