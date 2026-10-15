@@ -129,6 +129,7 @@ pub struct Popover {
     appearance: bool,
     overlay_closable: bool,
     platform_delegation: Option<Rc<dyn Fn(&App) -> bool>>,
+    state_observer: Option<Rc<dyn Fn(gpui::WeakEntity<PopoverState>, &mut Window, &mut App)>>,
     on_open_change: Option<Rc<dyn Fn(&bool, &mut Window, &mut App)>>,
 }
 
@@ -150,10 +151,22 @@ impl Popover {
             appearance: true,
             overlay_closable: true,
             platform_delegation: None,
+            state_observer: None,
             default_open: false,
             open: None,
             on_open_change: None,
         }
+    }
+
+    /// Observe the same keyed controller used by the native trigger.
+    /// Keep the weak owner, not a separate open flag; refresh the window after
+    /// an external owner transition so the containing popover is rendered.
+    pub fn on_state_ready(
+        mut self,
+        observer: impl Fn(gpui::WeakEntity<PopoverState>, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.state_observer = Some(Rc::new(observer));
+        self
     }
 
     /// Follow the retained content owner's acknowledged platform lease.
@@ -420,6 +433,9 @@ impl RenderOnce for Popover {
             .when_some(self.open, |this, open| this.open(open))
             .when_some(self.tracked_focus_handle, |this, handle| {
                 this.track_focus(&handle)
+            })
+            .when_some(self.state_observer, |this, observer| {
+                this.on_state_ready(move |state, window, cx| observer(state, window, cx))
             })
             .when_some(self.on_open_change, |this, callback| {
                 this.on_open_change(move |open, window, cx| callback(open, window, cx))

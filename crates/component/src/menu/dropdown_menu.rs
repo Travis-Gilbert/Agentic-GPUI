@@ -3,10 +3,15 @@ use std::rc::Rc;
 use gpui::{
     Anchor, AnyElement, App, Context, DismissEvent, Element, ElementId, Entity, FocusHandle,
     Focusable, GlobalElementId, InspectorElementId, InteractiveElement, IntoElement, LayoutId,
-    RenderOnce, SharedString, Styled, Window, prelude::FluentBuilder,
+    RenderOnce, SharedString, Styled, WeakEntity, Window, prelude::FluentBuilder,
 };
 
-use crate::{Selectable, button::Button, menu::PopupMenu, popover::Popover};
+use crate::{
+    Selectable,
+    button::Button,
+    menu::PopupMenu,
+    popover::{Popover, PopoverState},
+};
 
 /// A dropdown menu trait for buttons and other interactive elements
 pub trait DropdownMenu: Styled + Selectable + InteractiveElement + IntoElement + 'static {
@@ -39,6 +44,7 @@ pub struct DropdownMenuPopover<T: Selectable + IntoElement + 'static> {
     trigger: T,
     builder: Rc<dyn Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu>,
     on_open_change: Option<Rc<dyn Fn(&bool, &mut Window, &mut App)>>,
+    state_observer: Option<Rc<dyn Fn(WeakEntity<PopoverState>, &mut Window, &mut App)>>,
 }
 
 impl<T> DropdownMenuPopover<T>
@@ -57,7 +63,19 @@ where
             trigger,
             builder: Rc::new(builder),
             on_open_change: None,
+            state_observer: None,
         }
+    }
+
+    /// Observe the actual keyed popover controller behind this menu trigger.
+    /// The existing menu still handles row actions and dismissal. No controller
+    /// or open-state copy is constructed for a platform presenter.
+    pub fn on_state_ready(
+        mut self,
+        observer: impl Fn(WeakEntity<PopoverState>, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.state_observer = Some(Rc::new(observer));
+        self
     }
 
     /// Set the anchor corner for the dropdown menu popover.
@@ -122,6 +140,9 @@ where
             })
             .trigger(self.trigger)
             .anchor(self.anchor)
+            .when_some(self.state_observer, |this, observer| {
+                this.on_state_ready(move |state, window, cx| observer(state, window, cx))
+            })
             .when_some(self.on_open_change, |this, callback| {
                 this.on_open_change(move |open, window, cx| callback(open, window, cx))
             })
@@ -352,6 +373,111 @@ mod tests {
                     }),
             )
         }
+    }
+
+    struct ObservedMenuRoot {
+        state: Rc<RefCell<Option<WeakEntity<PopoverState>>>>,
+        menu: Rc<RefCell<Option<WeakEntity<PopupMenu>>>>,
+    }
+    impl Render for ObservedMenuRoot {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let state = self.state.clone();
+            let menu = self.menu.clone();
+            div().size_full().child(
+                Button::new("observed-menu-trigger")
+                    .label("Edit")
+                    .invisible()
+                    .dropdown_menu(move |owner, _, cx| {
+                        *menu.borrow_mut() = Some(cx.weak_entity());
+                        owner.menu("Copy", Box::new(CopyText))
+                    })
+                    .on_state_ready(move |owner, _, _| *state.borrow_mut() = Some(owner)),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn an_observed_weak_controller_opens_the_same_menu_and_expires_with_its_anchor(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(crate::init);
+        let observed = Rc::new(RefCell::new(None::<WeakEntity<PopoverState>>));
+        let menu = Rc::new(RefCell::new(None::<WeakEntity<PopupMenu>>));
+        {
+            let (_, cx) = cx.add_window_view({
+                let state = observed.clone();
+                let menu = menu.clone();
+                move |_, _| ObservedMenuRoot { state, menu }
+            });
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            let controller = observed
+                .borrow()
+                .clone()
+                .expect("the keyed owner is exposed");
+            cx.update(|window, cx| {
+                assert!(!controller.upgrade().unwrap().read(cx).is_open());
+                controller
+                    .update(cx, |state, cx| state.show(window, cx))
+                    .unwrap();
+                // The real keyed state owns the transition; refresh renders the
+                // containing native anchor after an external platform activation.
+                window.refresh();
+                window.draw(cx).clear(cx);
+                window.draw(cx).clear(cx);
+                assert!(controller.upgrade().unwrap().read(cx).is_open());
+                let owner = menu
+                    .borrow()
+                    .as_ref()
+                    .and_then(WeakEntity::upgrade)
+                    .expect("the original builder creates the actual menu");
+                let bounds = owner.read(cx).presentation(owner.downgrade()).bounds();
+                assert!(
+                    bounds.size.width > px(0.) && bounds.size.height > px(0.),
+                    "hiding only the retained trigger preserves the deferred menu allocation"
+                );
+            });
+            cx.simulate_keystrokes("escape");
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                window.draw(cx).clear(cx);
+                assert!(
+                    !controller.upgrade().unwrap().read(cx).is_open(),
+                    "the existing menu Escape path closes its existing popover"
+                );
+                assert!(
+                    menu.borrow()
+                        .as_ref()
+                        .and_then(WeakEntity::upgrade)
+                        .is_none(),
+                    "dismissal releases the actual menu"
+                );
+                controller
+                    .update(cx, |state, cx| state.show(window, cx))
+                    .unwrap();
+                window.refresh();
+                window.draw(cx).clear(cx);
+                window.draw(cx).clear(cx);
+                assert!(
+                    menu.borrow()
+                        .as_ref()
+                        .and_then(WeakEntity::upgrade)
+                        .is_some()
+                );
+                window.remove_window();
+            });
+            cx.run_until_parked();
+            assert!(
+                controller.upgrade().is_none(),
+                "the observation cannot retain the retired anchor"
+            );
+            assert!(
+                menu.borrow()
+                    .as_ref()
+                    .and_then(WeakEntity::upgrade)
+                    .is_none()
+            );
+        }
+        cx.update(|cx| assert!(!gpui_base::GlobalState::is_in_deferred_context(cx)));
     }
 
     /// Opening the menu and closing the window without dismissing it must

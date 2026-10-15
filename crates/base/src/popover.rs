@@ -4,7 +4,7 @@ use gpui::{
     Anchor, AnyElement, App, Context, DismissEvent, ElementId, EventEmitter, FocusHandle,
     Focusable, InteractiveElement as _, IntoElement, KeyBinding, MouseButton, ParentElement as _,
     Render, RenderOnce, Role, StatefulInteractiveElement as _, StyleRefinement, Styled,
-    Subscription, Window, div, prelude::FluentBuilder as _,
+    Subscription, WeakEntity, Window, div, prelude::FluentBuilder as _,
 };
 
 use crate::{
@@ -183,6 +183,7 @@ pub struct Popover {
     mouse_button: MouseButton,
     overlay_closable: bool,
     platform_delegation: Option<Rc<dyn Fn(&App) -> bool>>,
+    state_observer: Option<Rc<dyn Fn(WeakEntity<PopoverState>, &mut Window, &mut App)>>,
     on_open_change: Option<OpenChangeHandler>,
 }
 
@@ -202,6 +203,7 @@ impl Popover {
             mouse_button: MouseButton::Left,
             overlay_closable: true,
             platform_delegation: None,
+            state_observer: None,
             on_open_change: None,
         }
     }
@@ -280,6 +282,18 @@ impl Popover {
         self
     }
 
+    /// Observe the actual keyed controller without extending its lifetime.
+    /// A platform trigger may call its existing `show`/`dismiss` methods and
+    /// refresh the containing window; it must not maintain a second open flag.
+    /// The callback runs during render and must not reenter this view.
+    pub fn on_state_ready(
+        mut self,
+        observer: impl Fn(WeakEntity<PopoverState>, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.state_observer = Some(Rc::new(observer));
+        self
+    }
+
     /// Read the retained content owner's acknowledged presentation lease.
     /// Delegation removes the canvas wrapper role without removing its paint
     /// traversal, action dispatch, focus scope, or dismissal ownership.
@@ -321,6 +335,9 @@ impl RenderOnce for Popover {
             }
         });
 
+        if let Some(observer) = self.state_observer {
+            observer(state.downgrade(), window, cx);
+        }
         let open = state.read(cx).is_open();
         let focus_handle = state.read(cx).focus_handle(cx);
         let Some(trigger) = self.trigger else {
