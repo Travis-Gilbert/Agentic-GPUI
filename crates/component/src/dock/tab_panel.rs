@@ -183,6 +183,87 @@ fn right_top_group(node: &PaneNode) -> Option<NodeId> {
     }
 }
 
+/// Standard controls offered by the installed skin for this actual group.
+/// Panel identities, selection, geometry and accepted operations remain in base.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DockTabChrome {
+    pub visible: bool,
+    pub title_only: bool,
+    pub toolbar_visible: bool,
+    pub zoom_toolbar: bool,
+    pub zoom_menu_enabled: bool,
+    pub close_menu: bool,
+    pub close_buttons: bool,
+    pub left_toggle_open: Option<bool>,
+    pub right_toggle_open: Option<bool>,
+    pub bottom_toggle_open: Option<bool>,
+}
+
+pub(crate) fn tab_chrome(shared: &SkinShared, group: &TabGroupContext, cx: &App) -> DockTabChrome {
+    let visible = group
+        .panels()
+        .iter()
+        .filter(|panel| panel.visible(cx))
+        .collect::<Vec<_>>();
+    let title_only = visible.len() == 1 && shared.panel_style() == PanelStyle::Auto;
+    let toolbar_visible = !group.is_collapsed();
+    let control = zoom_control(group, cx);
+    DockTabChrome {
+        visible: !visible.is_empty()
+            && (!title_only
+                || visible.first().is_some_and(|panel| {
+                    PanelHandle::of(panel).is_none_or(|handle| handle.title_bar(cx))
+                })),
+        title_only,
+        toolbar_visible,
+        zoom_toolbar: toolbar_visible
+            && (group.is_zoomed() || control.is_some_and(|control| control.toolbar_visible())),
+        zoom_menu_enabled: control.is_some_and(|control| control.menu_visible()),
+        close_menu: toolbar_visible && group.is_closable(),
+        close_buttons: toolbar_visible && shared.close_button_visible.get(),
+        left_toggle_open: dock_toggle_state(shared, DockPlacement::Left, group, cx),
+        right_toggle_open: dock_toggle_state(shared, DockPlacement::Right, group, cx),
+        bottom_toggle_open: dock_toggle_state(shared, DockPlacement::Bottom, group, cx),
+    }
+}
+
+fn dock_toggle_state(
+    shared: &SkinShared,
+    placement: DockPlacement,
+    group: &TabGroupContext,
+    cx: &App,
+) -> Option<bool> {
+    if group.is_zoomed() || !shared.is_toggle_button_visible() {
+        return None;
+    }
+
+    let area = shared.area().upgrade()?;
+    let area = area.read(cx);
+    // A dock that does not exist is not collapsible, so this covers the
+    // old `left_dock.is_some()` test too.
+    if !area.is_dock_collapsible(placement) {
+        return None;
+    }
+
+    let designated = match placement {
+        DockPlacement::Left => area
+            .layout(DockPlacement::Center)
+            .and_then(|tree| left_top_group(tree.root())),
+        DockPlacement::Right => area
+            .layout(DockPlacement::Center)
+            .and_then(|tree| right_top_group(tree.root())),
+        DockPlacement::Bottom => area
+            .layout(DockPlacement::Bottom)
+            .and_then(|tree| left_top_group(tree.root())),
+        DockPlacement::Center => None,
+    };
+    if designated != Some(group.node()) {
+        return None;
+    }
+
+    Some(area.is_dock_open(placement))
+}
+
 /// One tab group's appearance.
 ///
 /// Built per group — `DockAreaRenderer::tab_group_renderer` is called once per
@@ -214,35 +295,7 @@ impl TabGroupSkin {
         group: &TabGroupContext,
         cx: &mut App,
     ) -> Option<Button> {
-        if group.is_zoomed() || !self.shared.is_toggle_button_visible() {
-            return None;
-        }
-
-        let area = self.shared.area().upgrade()?;
-        let area = area.read(cx);
-        // A dock that does not exist is not collapsible, so this covers the
-        // old `left_dock.is_some()` test too.
-        if !area.is_dock_collapsible(placement) {
-            return None;
-        }
-
-        let designated = match placement {
-            DockPlacement::Left => area
-                .layout(DockPlacement::Center)
-                .and_then(|tree| left_top_group(tree.root())),
-            DockPlacement::Right => area
-                .layout(DockPlacement::Center)
-                .and_then(|tree| right_top_group(tree.root())),
-            DockPlacement::Bottom => area
-                .layout(DockPlacement::Bottom)
-                .and_then(|tree| left_top_group(tree.root())),
-            DockPlacement::Center => None,
-        };
-        if designated != Some(group.node()) {
-            return None;
-        }
-
-        let is_open = area.is_dock_open(placement);
+        let is_open = dock_toggle_state(&self.shared, placement, group, cx)?;
         let icon = match (placement, is_open) {
             (DockPlacement::Left, true) => IconName::PanelLeft,
             (DockPlacement::Left, false) => IconName::PanelLeftOpen,
@@ -278,16 +331,16 @@ impl TabGroupSkin {
         window: &mut Window,
         cx: &mut App,
     ) -> impl IntoElement {
-        if group.is_collapsed() {
+        let chrome = tab_chrome(&self.shared, group, cx);
+        if !chrome.toolbar_visible {
             return div();
         }
 
         let zoomed = group.is_zoomed();
         let handle = group.active_panel().and_then(PanelHandle::of);
-        let control = zoom_control(group, cx);
-        let toolbar_zoom = control.is_some_and(|control| control.toolbar_visible());
-        let menu_zoom = control.is_some_and(|control| control.menu_visible());
-        let closable = group.is_closable();
+        let toolbar_zoom = chrome.zoom_toolbar;
+        let menu_zoom = chrome.zoom_menu_enabled;
+        let closable = chrome.close_menu;
         let buttons = handle.and_then(|handle| handle.toolbar_buttons(window, cx));
         let panel = handle.map(|handle| handle.panel());
 
@@ -443,6 +496,7 @@ impl TabGroupSkin {
         let has_leading = left_button.is_some() || bottom_button.is_some();
         let is_bottom_dock = bottom_button.is_some();
         let collapsed = group.is_collapsed();
+        let chrome = tab_chrome(&self.shared, group, cx);
 
         let droppable = group.is_droppable();
         let tabs_count = group.panels().len();
@@ -511,8 +565,7 @@ impl TabGroupSkin {
                             // close. Stops propagation so the click closes by id
                             // without also selecting the tab.
                             .when(
-                                !collapsed
-                                    && self.shared.close_button_visible.get()
+                                chrome.close_buttons
                                     && group.is_panel_closable(panel.panel_id(cx), cx),
                                 |this| {
                                     this.suffix(
@@ -758,16 +811,12 @@ impl TabGroupRenderer for TabGroupSkin {
             .map(|(ix, _)| ix)
             .collect();
 
+        let chrome = tab_chrome(&self.shared, group, cx);
+        if !chrome.visible {
+            return Empty.into_any_element();
+        }
         match visible.as_slice() {
-            [] => Empty.into_any_element(),
-            [ix] if self.shared.panel_style() == PanelStyle::Auto => {
-                // A panel that draws its own chrome declines the title bar.
-                let panel = &group.panels()[*ix];
-                if PanelHandle::of(panel).is_some_and(|handle| !handle.title_bar(cx)) {
-                    return Empty.into_any_element();
-                }
-                self.render_title(group, *ix, window, cx)
-            }
+            [ix] if chrome.title_only => self.render_title(group, *ix, window, cx),
             _ => self.render_tabs(group, window, cx),
         }
     }

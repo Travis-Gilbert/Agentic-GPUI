@@ -54,7 +54,7 @@ pub use gpui_base::dock::{
     TabGroupContext, TabGroupEvent, TabGroupRenderer, register_panel,
 };
 pub use panel::*;
-pub use tab_panel::DragPanelPreview;
+pub use tab_panel::{DockTabChrome, DragPanelPreview};
 
 actions!(dock, [ToggleZoom, ClosePanel]);
 
@@ -163,6 +163,12 @@ impl DockSkin {
 
     pub(crate) fn shared(&self) -> &Rc<SkinShared> {
         &self.shared
+    }
+
+    /// Read the same standard-control policy consumed by the native skin.
+    /// A DOM presenter uses this metadata inside base's measured allocation.
+    pub fn tab_chrome(&self, group: &TabGroupContext, cx: &App) -> DockTabChrome {
+        tab_panel::tab_chrome(&self.shared, group, cx)
     }
 
     /// Whether a single-panel tab group draws a plain title or a full tab bar.
