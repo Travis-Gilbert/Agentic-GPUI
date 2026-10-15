@@ -46,6 +46,186 @@ fn diagnostic_highlight_style(
     }
 }
 
+impl<M: InputModeKind> InputBaseState<M> {
+    /// Read the final native text styles for scalar-aligned UTF-8 bytes.
+    ///
+    /// Uses the same highlighter, semantic tokens, application decorations and
+    /// diagnostic palette as native painting. This observes existing analyses;
+    /// it does not parse, edit text, update selection or create history.
+    /// Returns `None` for a masked input or an invalid byte range.
+    pub fn presentation_styles(
+        &self,
+        range: Range<usize>,
+        cx: &App,
+    ) -> Option<Vec<(Range<usize>, HighlightStyle)>> {
+        if self.masked || range.start > range.end || range.end > self.text.len() {
+            return None;
+        }
+        let aligned = |offset| self.text.is_char_boundary(offset);
+        if !aligned(range.start) || !aligned(range.end) {
+            return None;
+        }
+        if range.is_empty() {
+            return Some(Vec::new());
+        }
+        let first = self.text.offset_to_point(range.start).row;
+        let last = self.text.offset_to_point(range.end - 1).row;
+        let lines = (first..=last).collect::<Vec<_>>();
+        let styles =
+            presentation_styles_for_lines(self, &lines, range.clone(), cx).unwrap_or_default();
+        Some(clip_styles_to_ranges(styles, &[range]))
+    }
+}
+
+/// The final style pipeline shared by native painting and retained presenters.
+pub(super) fn presentation_styles_for_lines<M: InputModeKind>(
+    state: &InputBaseState<M>,
+    visible_buffer_lines: &[usize],
+    visible_byte_range: Range<usize>,
+    cx: &App,
+) -> Option<Vec<(Range<usize>, HighlightStyle)>> {
+    let text = &state.text;
+    let is_multi_line = state.is_multi_line();
+
+    let (mut highlighter, diagnostics) = match &state.mode {
+        LayoutMode::CodeEditor {
+            highlighter,
+            diagnostics,
+            ..
+        } => (highlighter.borrow_mut(), diagnostics),
+        _ => {
+            return (!state.masked)
+                .then(|| {
+                    compose_decoration_collections(
+                        Vec::new(),
+                        state.extras.decoration_layers().into_iter(),
+                        visible_byte_range,
+                    )
+                })
+                .flatten();
+        }
+    };
+    let Some(highlighter) = highlighter.as_mut() else {
+        return (!state.masked)
+            .then(|| {
+                compose_decoration_collections(
+                    Vec::new(),
+                    state.extras.decoration_layers().into_iter(),
+                    visible_byte_range,
+                )
+            })
+            .flatten();
+    };
+
+    let mut styles = Vec::with_capacity(visible_buffer_lines.len());
+    // Byte ranges of the flushed line groups; the composed styles are
+    // clipped to these at the end so the resulting runs cover exactly the
+    // visible (non-folded) lines' bytes.
+    let mut group_ranges: Vec<Range<usize>> = Vec::new();
+
+    // Helper to flush a contiguous range of lines. These ranges are disjoint,
+    // so appending avoids repeatedly cloning and recombining prior styles.
+    let mut flush_range = |start_line: usize, end_line: usize, skip: bool, styles: &mut Vec<_>| {
+        let byte_start = text.line_start_offset(start_line);
+        let byte_end = if is_multi_line {
+            // +1 for `\n`
+            text.line_start_offset(end_line + 1)
+        } else {
+            text.line_end_offset(end_line)
+        };
+        let range_styles = if skip {
+            vec![(byte_start..byte_end, HighlightStyle::default())]
+        } else {
+            highlighter.styles(
+                &(byte_start..byte_end),
+                state.editor_style.highlight_styles.as_ref(),
+            )
+        };
+
+        group_ranges.push(byte_start..byte_end);
+        styles.extend(range_styles);
+    };
+
+    // Group contiguous visible lines into ranges and call styles() once per range
+    let mut visible_iter = visible_buffer_lines.iter().peekable();
+    let mut range_start: Option<usize> = None;
+
+    while let Some(&line) = visible_iter.next() {
+        // Check if this line is too long for highlighting
+        let line_len = text.slice_line(line).len();
+        if line_len > MAX_HIGHLIGHT_LINE_LENGTH {
+            // Flush any accumulated range first
+            if let Some(start) = range_start.take() {
+                flush_range(start, line - 1, false, &mut styles);
+            }
+
+            flush_range(line, line, true, &mut styles);
+            continue;
+        }
+
+        range_start.get_or_insert(line);
+
+        // Check if next line is contiguous, if so keep accumulating
+        if visible_iter
+            .peek()
+            .map(|&&next| next == line + 1)
+            .unwrap_or(false)
+        {
+            continue;
+        }
+
+        // Flush the contiguous range
+        let start_line = range_start.take().unwrap();
+        flush_range(start_line, line, false, &mut styles);
+    }
+
+    let diagnostic_styles: Vec<_> = diagnostics
+        .range(visible_byte_range.clone())
+        .map(|entry| {
+            (
+                entry.range.clone(),
+                diagnostic_highlight_style(entry.severity, state.editor_style.diagnostics),
+            )
+        })
+        .collect();
+
+    // Range semantic tokens, resolved from the LSP provider's cached
+    // result through the active highlight theme so it shares the same
+    // colour vocabulary as the tree-sitter path. Empty Vec when no
+    // provider is set, so `combine_highlights` short-circuits.
+    let custom_styles = state.extras.semantic_token_styles(
+        text,
+        &visible_byte_range,
+        state.editor_style.highlight_styles.as_ref(),
+    );
+
+    // hover definition style
+    if let Some(hover_style) = M::hover_definition_style(state, cx) {
+        styles.push(hover_style);
+    }
+
+    // Compose tree-sitter, semantic, application, then diagnostic styles.
+    styles = gpui::combine_highlights(custom_styles, styles).collect();
+    if !state.masked {
+        styles = compose_decoration_collections(
+            styles,
+            state.extras.decoration_layers().into_iter(),
+            visible_byte_range.clone(),
+        )
+        .unwrap_or_default();
+    }
+    styles = gpui::combine_highlights(diagnostic_styles, styles).collect();
+
+    // Some sources reach outside the flushed groups — a diagnostic
+    // straddling the viewport edge, or any range inside a folded region —
+    // which would inject extra bytes into the runs coordinate space and
+    // shift every later run boundary (see `layout_lines`). Clip the
+    // composed styles back to the groups.
+    styles = clip_styles_to_ranges(styles, &group_ranges);
+
+    Some(styles)
+}
+
 const BOTTOM_MARGIN_ROWS: usize = 3;
 pub(super) const RIGHT_MARGIN: Pixels = px(10.);
 pub(super) const LINE_NUMBER_RIGHT_MARGIN: Pixels = px(6.);
@@ -2125,148 +2305,12 @@ impl<M: InputModeKind> TextElement<M> {
         visible_byte_range: Range<usize>,
         cx: &mut App,
     ) -> Option<Vec<(Range<usize>, HighlightStyle)>> {
-        let state = self.state.read(cx);
-        let text = &state.text;
-        let is_multi_line = state.is_multi_line();
-
-        let (mut highlighter, diagnostics) = match &state.mode {
-            LayoutMode::CodeEditor {
-                highlighter,
-                diagnostics,
-                ..
-            } => (highlighter.borrow_mut(), diagnostics),
-            _ => {
-                return (!state.masked)
-                    .then(|| {
-                        compose_decoration_collections(
-                            Vec::new(),
-                            state.extras.decoration_layers().into_iter(),
-                            visible_byte_range,
-                        )
-                    })
-                    .flatten();
-            }
-        };
-        let Some(highlighter) = highlighter.as_mut() else {
-            return (!state.masked)
-                .then(|| {
-                    compose_decoration_collections(
-                        Vec::new(),
-                        state.extras.decoration_layers().into_iter(),
-                        visible_byte_range,
-                    )
-                })
-                .flatten();
-        };
-
-        let mut styles = Vec::with_capacity(visible_buffer_lines.len());
-        // Byte ranges of the flushed line groups; the composed styles are
-        // clipped to these at the end so the resulting runs cover exactly the
-        // visible (non-folded) lines' bytes.
-        let mut group_ranges: Vec<Range<usize>> = Vec::new();
-
-        // Helper to flush a contiguous range of lines. These ranges are disjoint,
-        // so appending avoids repeatedly cloning and recombining prior styles.
-        let mut flush_range =
-            |start_line: usize, end_line: usize, skip: bool, styles: &mut Vec<_>| {
-                let byte_start = text.line_start_offset(start_line);
-                let byte_end = if is_multi_line {
-                    // +1 for `\n`
-                    text.line_start_offset(end_line + 1)
-                } else {
-                    text.line_end_offset(end_line)
-                };
-                let range_styles = if skip {
-                    vec![(byte_start..byte_end, HighlightStyle::default())]
-                } else {
-                    highlighter.styles(
-                        &(byte_start..byte_end),
-                        state.editor_style.highlight_styles.as_ref(),
-                    )
-                };
-
-                group_ranges.push(byte_start..byte_end);
-                styles.extend(range_styles);
-            };
-
-        // Group contiguous visible lines into ranges and call styles() once per range
-        let mut visible_iter = visible_buffer_lines.iter().peekable();
-        let mut range_start: Option<usize> = None;
-
-        while let Some(&line) = visible_iter.next() {
-            // Check if this line is too long for highlighting
-            let line_len = text.slice_line(line).len();
-            if line_len > MAX_HIGHLIGHT_LINE_LENGTH {
-                // Flush any accumulated range first
-                if let Some(start) = range_start.take() {
-                    flush_range(start, line - 1, false, &mut styles);
-                }
-
-                flush_range(line, line, true, &mut styles);
-                continue;
-            }
-
-            range_start.get_or_insert(line);
-
-            // Check if next line is contiguous, if so keep accumulating
-            if visible_iter
-                .peek()
-                .map(|&&next| next == line + 1)
-                .unwrap_or(false)
-            {
-                continue;
-            }
-
-            // Flush the contiguous range
-            let start_line = range_start.take().unwrap();
-            flush_range(start_line, line, false, &mut styles);
-        }
-
-        let diagnostic_styles: Vec<_> = diagnostics
-            .range(visible_byte_range.clone())
-            .map(|entry| {
-                (
-                    entry.range.clone(),
-                    diagnostic_highlight_style(entry.severity, state.editor_style.diagnostics),
-                )
-            })
-            .collect();
-
-        // Range semantic tokens, resolved from the LSP provider's cached
-        // result through the active highlight theme so it shares the same
-        // colour vocabulary as the tree-sitter path. Empty Vec when no
-        // provider is set, so `combine_highlights` short-circuits.
-        let custom_styles = state.extras.semantic_token_styles(
-            text,
-            &visible_byte_range,
-            state.editor_style.highlight_styles.as_ref(),
-        );
-
-        // hover definition style
-        if let Some(hover_style) = M::hover_definition_style(self.state.read(cx), cx) {
-            styles.push(hover_style);
-        }
-
-        // Compose tree-sitter, semantic, application, then diagnostic styles.
-        styles = gpui::combine_highlights(custom_styles, styles).collect();
-        if !state.masked {
-            styles = compose_decoration_collections(
-                styles,
-                state.extras.decoration_layers().into_iter(),
-                visible_byte_range.clone(),
-            )
-            .unwrap_or_default();
-        }
-        styles = gpui::combine_highlights(diagnostic_styles, styles).collect();
-
-        // Some sources reach outside the flushed groups — a diagnostic
-        // straddling the viewport edge, or any range inside a folded region —
-        // which would inject extra bytes into the runs coordinate space and
-        // shift every later run boundary (see `layout_lines`). Clip the
-        // composed styles back to the groups.
-        styles = clip_styles_to_ranges(styles, &group_ranges);
-
-        Some(styles)
+        presentation_styles_for_lines(
+            self.state.read(cx),
+            visible_buffer_lines,
+            visible_byte_range,
+            cx,
+        )
     }
 }
 
@@ -2525,7 +2569,31 @@ impl<M: InputModeKind> Element for TextElement<M> {
             window.text_system().layout_width(font_id, text_size, ' ')
         };
 
+        let line_height = window.line_height();
         self.state.update(cx, |state, cx| {
+            // Capture a single native presentation packet, never a base from
+            // one frame paired with diagnostics/theme styles from another.
+            state.last_rendered_text_style = state
+                .observe_presentation
+                .then(|| state.presentation_styles(0..state.text.len(), cx))
+                .flatten()
+                .map(|highlights| {
+                    let mut style = style.clone();
+                    if state.disabled {
+                        style.color = style.color.opacity(0.5);
+                    }
+                    super::InputRenderedTextStyle {
+                        style,
+                        font_size: text_size,
+                        line_height,
+                        soft_wrap: state.soft_wrap,
+                        wrapping_indent: state.wrapping_indent,
+                        wrap_width: None,
+                        bounds,
+                        expected_text: state.text.to_string(),
+                        highlights,
+                    }
+                });
             state.display_map.set_font(font, text_size, cx);
             state.display_map.ensure_text_prepared(&state.text, cx);
         });
@@ -2584,6 +2652,12 @@ impl<M: InputModeKind> Element for TextElement<M> {
                 state.display_map.set_wrapping_indent(wrapping_indent, cx);
             });
         }
+
+        self.state.update(cx, |state, _| {
+            if let Some(packet) = &mut state.last_rendered_text_style {
+                packet.wrap_width = wrap_width;
+            }
+        });
 
         let line_height = window.line_height();
         let token_elements = self.measure_tokens(
@@ -4244,6 +4318,189 @@ mod tests {
                 point(px(10.5), px(2.5)),
             ]
         );
+    }
+
+    struct DeterministicStyleHighlighter;
+    impl crate::input::InputHighlighter for DeterministicStyleHighlighter {
+        fn language(&self) -> SharedString {
+            "style-pipeline-fixture".into()
+        }
+        fn update(
+            &mut self,
+            _: Option<crate::input::InputEdit>,
+            _: &Rope,
+            _: bool,
+            _: &mut Window,
+            _: &mut Context<EditorState>,
+        ) {
+        }
+        fn styles(
+            &self,
+            range: &Range<usize>,
+            _: &dyn crate::input::HighlightStyleResolver,
+        ) -> Vec<(Range<usize>, HighlightStyle)> {
+            vec![(
+                range.clone(),
+                HighlightStyle {
+                    color: Some(gpui::blue()),
+                    font_weight: Some(gpui::FontWeight::BOLD),
+                    ..Default::default()
+                },
+            )]
+        }
+        fn fold_ranges(&self, _: &Rope) -> Vec<FoldRange> {
+            Vec::new()
+        }
+    }
+
+    #[gpui::test]
+    fn final_presentation_styles_share_native_syntax_decoration_and_diagnostic_authority(
+        cx: &mut TestAppContext,
+    ) {
+        let (editor, window) = decoration_editor(cx, "a😀bc", false);
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.update(|window, cx| {
+            editor.update(cx, |state, cx| {
+                state.create_decorations_collection(
+                    vec![TextDecoration::new(
+                        1..5,
+                        HighlightStyle {
+                            color: Some(gpui::red()),
+                            font_style: Some(gpui::FontStyle::Italic),
+                            ..Default::default()
+                        },
+                    )],
+                    cx,
+                );
+                state.set_presentation_observation(true, cx);
+                let LayoutMode::CodeEditor {
+                    highlighter,
+                    diagnostics,
+                    ..
+                } = &mut state.mode
+                else {
+                    panic!("actual EditorState uses code-editor mode")
+                };
+                *highlighter.borrow_mut() = Some(Box::new(DeterministicStyleHighlighter));
+                diagnostics.push(
+                    crate::input::Diagnostic::new(
+                        crate::input::Position::new(0, 0)..crate::input::Position::new(0, 1),
+                        "warning",
+                    )
+                    .with_severity(crate::input::DiagnosticSeverity::Warning),
+                );
+            });
+            window.draw(cx).clear(cx);
+            let state = editor.read(cx);
+            let value = state.value();
+            let selection = state.selected_range();
+            let history = state.undo_manager.undo_count();
+            let projected = state
+                .presentation_styles(0..7, cx)
+                .expect("supported text styles");
+            let at = |byte| {
+                projected
+                    .iter()
+                    .find(|(range, _)| range.contains(&byte))
+                    .unwrap()
+                    .1
+            };
+            assert_eq!(at(0).color, Some(gpui::blue()));
+            assert_eq!(at(0).font_weight, Some(gpui::FontWeight::BOLD));
+            assert_eq!(
+                at(0).underline.unwrap().color,
+                Some(state.editor_style.diagnostics.warning)
+            );
+            assert!(at(0).underline.unwrap().wavy);
+            assert_eq!(
+                at(1).color,
+                Some(gpui::red()),
+                "actual application decoration refines syntax"
+            );
+            assert_eq!(at(1).font_style, Some(gpui::FontStyle::Italic));
+            assert_eq!(at(1).font_weight, Some(gpui::FontWeight::BOLD));
+            assert_eq!(at(5).color, Some(gpui::blue()));
+            let clipped = state.presentation_styles(1..6, cx).unwrap();
+            assert!(
+                clipped
+                    .iter()
+                    .all(|(range, _)| range.start >= 1 && range.end <= 6)
+            );
+            assert!(
+                state.rendered_text_style().is_some(),
+                "native prepaint supplies the real inherited base style"
+            );
+            assert_eq!(
+                (
+                    state.value(),
+                    state.selected_range(),
+                    state.undo_manager.undo_count()
+                ),
+                (value.clone(), selection, history),
+                "style observation never changes text, selection or history"
+            );
+            let painted = TextElement::new(editor.clone())
+                .highlight_lines(&[0], px(0.), 0..7, cx)
+                .unwrap();
+            assert_eq!(
+                projected, painted,
+                "native paint consumes the same final pipeline"
+            );
+            let captured = editor.read(cx).rendered_text_style().unwrap().clone();
+            assert_eq!(captured.expected_text(), value.as_str());
+            assert_eq!(captured.highlights(), projected.as_slice());
+            assert_eq!(captured.soft_wrap(), editor.read(cx).soft_wrap);
+            assert_eq!(captured.wrapping_indent(), editor.read(cx).wrapping_indent);
+            assert_eq!(
+                captured.bounds().size,
+                editor.read(cx).text_bounds().unwrap().size
+            );
+            assert_eq!(
+                captured.wrap_width(),
+                editor.read(cx).last_layout.as_ref().unwrap().wrap_width
+            );
+            editor.update(cx, |state, cx| {
+                state.set_value("next", window, cx);
+                state.set_soft_wrap(!captured.soft_wrap(), window, cx);
+            });
+            assert_eq!(
+                editor
+                    .read(cx)
+                    .rendered_text_style()
+                    .unwrap()
+                    .expected_text(),
+                value.as_str(),
+                "the old native packet stays internally consistent before the next prepaint"
+            );
+            window.draw(cx).clear(cx);
+            assert_eq!(
+                editor
+                    .read(cx)
+                    .rendered_text_style()
+                    .unwrap()
+                    .expected_text(),
+                "next"
+            );
+            assert_eq!(
+                editor.read(cx).rendered_text_style().unwrap().soft_wrap(),
+                !captured.soft_wrap()
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn presentation_style_ranges_refuse_split_scalars_and_masked_inputs(cx: &mut TestAppContext) {
+        let (editor, window) = decoration_editor(cx, "a😀bc", false);
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.update(|_, cx| {
+            let state = editor.read(cx);
+            assert!(state.presentation_styles(2..5, cx).is_none());
+            assert!(state.presentation_styles(0..8, cx).is_none());
+            assert!(state.presentation_styles(5..4, cx).is_none());
+            assert_eq!(state.presentation_styles(5..5, cx), Some(Vec::new()));
+            editor.update(cx, |state, _| state.masked = true);
+            assert!(editor.read(cx).presentation_styles(0..7, cx).is_none());
+        });
     }
 
     #[test]

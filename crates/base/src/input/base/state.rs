@@ -420,6 +420,7 @@ pub struct InputBaseState<M: InputModeKind> {
     pub(super) replaceable: bool,
     pub(super) soft_wrap: bool,
     tab_navigation: bool,
+    pub(super) observe_presentation: bool,
     pub(super) wrapping_indent: WrappingIndent,
     pub(super) scroll_beyond_last_line: Option<usize>,
     pub(super) cursor_surrounding_lines: Option<usize>,
@@ -434,6 +435,7 @@ pub struct InputBaseState<M: InputModeKind> {
     /// The marked range is the temporary insert text on IME typing.
     pub(super) ime_marked_range: Option<CursorSelection>,
     pub(super) last_layout: Option<LastLayout>,
+    pub(super) last_rendered_text_style: Option<InputRenderedTextStyle>,
     /// Fresh caret geometry stashed during prepaint for caret-anchored popups.
     ///
     /// Popups are positioned in their deferred prepaint, which runs after the
@@ -537,6 +539,58 @@ pub struct InputBaseState<M: InputModeKind> {
     pub(super) auto_scroll: AutoScroll,
 }
 
+/// The actual base text style most recently used by native input prepaint.
+#[derive(Clone, Debug, PartialEq)]
+pub struct InputRenderedTextStyle {
+    pub(super) style: gpui::TextStyle,
+    pub(super) font_size: Pixels,
+    pub(super) line_height: Pixels,
+    pub(super) soft_wrap: bool,
+    pub(super) wrapping_indent: WrappingIndent,
+    pub(super) wrap_width: Option<Pixels>,
+    pub(super) bounds: Bounds<Pixels>,
+    pub(super) expected_text: String,
+    pub(super) highlights: Vec<(Range<usize>, gpui::HighlightStyle)>,
+}
+impl InputRenderedTextStyle {
+    /// Actual native wrapping policy captured in this prepaint.
+    pub fn soft_wrap(&self) -> bool {
+        self.soft_wrap
+    }
+    /// Actual native continuation indentation policy captured in this prepaint.
+    pub fn wrapping_indent(&self) -> WrappingIndent {
+        self.wrapping_indent
+    }
+    /// Actual native content wrap width, after line numbers and right margin.
+    pub fn wrap_width(&self) -> Option<Pixels> {
+        self.wrap_width
+    }
+    /// Actual unscrolled native text element allocation captured in this prepaint.
+    pub fn bounds(&self) -> Bounds<Pixels> {
+        self.bounds
+    }
+    /// Exact canonical text the native prepaint observed with these styles.
+    pub fn expected_text(&self) -> &str {
+        &self.expected_text
+    }
+    /// Final styles captured in the same native prepaint as the base style.
+    pub fn highlights(&self) -> &[(Range<usize>, gpui::HighlightStyle)] {
+        &self.highlights
+    }
+    pub fn style(&self) -> &gpui::TextStyle {
+        &self.style
+    }
+    pub fn font(&self) -> gpui::Font {
+        self.style.font()
+    }
+    pub fn font_size(&self) -> Pixels {
+        self.font_size
+    }
+    pub fn line_height(&self) -> Pixels {
+        self.line_height
+    }
+}
+
 /// Read-only styling data exposed to presentation facades.
 ///
 /// The fields are private and read through the methods below, so that a new
@@ -612,6 +666,26 @@ impl<M: InputModeKind> InputBaseState<M> {
     pub fn cursor_layout(&self) -> Option<(Bounds<Pixels>, Pixels)> {
         let layout = self.last_layout.as_ref()?;
         Some((layout.cursor_bounds?, layout.line_height))
+    }
+
+    /// Opt into a read-only native prepaint presentation packet. Other inputs
+    /// retain their normal clipped painting cost and capture no whole document.
+    pub fn set_presentation_observation(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        if self.observe_presentation != enabled {
+            self.observe_presentation = enabled;
+            if !enabled {
+                self.last_rendered_text_style = None;
+            }
+            cx.notify();
+        }
+    }
+
+    /// The actual native prepaint style, unavailable until this input is painted.
+    pub fn rendered_text_style(&self) -> Option<&InputRenderedTextStyle> {
+        if self.masked || !self.observe_presentation {
+            return None;
+        }
+        self.last_rendered_text_style.as_ref()
     }
 
     /// Caret geometry from the latest prepaint, for caret-anchored popups.
@@ -797,6 +871,7 @@ impl<M: InputModeKind> InputBaseState<M> {
             replaceable: true,
             soft_wrap: true,
             tab_navigation: false,
+            observe_presentation: false,
             wrapping_indent: WrappingIndent::default(),
             scroll_beyond_last_line: None,
             cursor_surrounding_lines: None,
@@ -835,6 +910,7 @@ impl<M: InputModeKind> InputBaseState<M> {
             number_max: None,
             mode: LayoutMode::default(),
             last_layout: None,
+            last_rendered_text_style: None,
             prepaint_caret_geometry: None,
             last_bounds: None,
             last_selected_range: None,
@@ -1428,6 +1504,7 @@ impl<M: InputModeKind> InputBaseState<M> {
     /// Focus the input field.
     pub fn focus(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.focus_handle.focus(window, cx);
+        window.request_text_input_focus(&self.focus_handle);
         self.blink_cursor.update(cx, |cursor, cx| {
             cursor.start(cx);
         });
