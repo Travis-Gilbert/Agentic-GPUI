@@ -1,0 +1,345 @@
+From cfe7e32dfc076477144ce68bc4364c1fe8953dcf Mon Sep 17 00:00:00 2001
+From: Travis Gilbert <1travisgilbert@gmail.com>
+Date: Thu, 15 Oct 2026 14:17:44 -0400
+Subject: [PATCH] feat(dock): expose the retained native panel menu anchor
+
+---
+ crates/component/src/dock/mod.rs       |  12 ++
+ crates/component/src/dock/tab_panel.rs | 269 ++++++++++++++++++++++---
+ 2 files changed, 250 insertions(+), 31 deletions(-)
+
+diff --git a/crates/component/src/dock/mod.rs b/crates/component/src/dock/mod.rs
+index fa9b119f..5b513a5c 100644
+--- a/crates/component/src/dock/mod.rs
++++ b/crates/component/src/dock/mod.rs
+@@ -171,6 +171,18 @@ impl DockSkin {
+         tab_panel::tab_chrome(&self.shared, group, cx)
+     }
+ 
++    /// Keep the existing native panel-menu owner at a browser-measured anchor.
++    /// The caller draws its visible trigger in DOM and invokes only the observed
++    /// actual PopoverState. The deferred menu remains owned by this skin.
++    pub fn tab_menu_anchor(
++        &self,
++        group: &TabGroupContext,
++        presenter: Option<Rc<dyn Fn() -> crate::menu::PopupMenuPresenter>>,
++        ready: impl Fn(WeakEntity<crate::popover::PopoverState>, &mut Window, &mut App) + 'static,
++    ) -> impl gpui::IntoElement {
++        tab_panel::panel_menu_button(group, true, presenter, ready)
++    }
++
+     /// Whether a single-panel tab group draws a plain title or a full tab bar.
+     pub fn panel_style(&self) -> PanelStyle {
+         self.shared.panel_style()
+diff --git a/crates/component/src/dock/tab_panel.rs b/crates/component/src/dock/tab_panel.rs
+index 7f1c49c3..21b78c10 100644
+--- a/crates/component/src/dock/tab_panel.rs
++++ b/crates/component/src/dock/tab_panel.rs
+@@ -32,7 +32,7 @@ use crate::{
+     button::{Button, ButtonCustomVariant, ButtonVariants as _},
+     dock::{ClosePanel, PanelControl, PanelHandle, PanelStyle, SkinShared, ToggleZoom},
+     h_flex,
+-    menu::DropdownMenu as _,
++    menu::{DropdownMenu as _, PopupMenu, PopupMenuPresenter},
+     tab::{Tab, TabBar},
+ };
+ 
+@@ -264,6 +264,62 @@ fn dock_toggle_state(
+     Some(area.is_dock_open(placement))
+ }
+ 
++/// The exact menu used by the native toolbar and its platform-owned trigger.
++/// Keeping the same Popover preserves menu creation, focus and dismissal.
++pub(crate) fn panel_menu_button(
++    group: &TabGroupContext,
++    hidden_trigger: bool,
++    presenter: Option<Rc<dyn Fn() -> PopupMenuPresenter>>,
++    ready: impl Fn(gpui::WeakEntity<crate::popover::PopoverState>, &mut Window, &mut App) + 'static,
++) -> impl IntoElement {
++    let group = group.clone();
++    Button::new("menu")
++        .icon(IconName::Ellipsis)
++        .xsmall()
++        .ghost()
++        .accessibility_label(t!("Dock.PanelMenu"))
++        .tab_stop(false)
++        .when(hidden_trigger, |button| button.invisible())
++        .dropdown_menu(move |menu, window, cx| {
++            populate_panel_menu(menu, &group, window, cx)
++                .when_some(presenter.as_ref(), |menu, factory| {
++                    menu.presenter(factory())
++                })
++        })
++        .anchor(Anchor::TopRight)
++        .on_state_ready(ready)
++}
++
++fn populate_panel_menu(
++    menu: PopupMenu,
++    group: &TabGroupContext,
++    window: &mut Window,
++    cx: &mut Context<PopupMenu>,
++) -> PopupMenu {
++    let zoomed = group.is_zoomed();
++    let menu_zoom = zoom_control(group, cx).is_some_and(|control| control.menu_visible());
++    let closable = group.is_closable();
++    let panel = group
++        .active_panel()
++        .and_then(PanelHandle::of)
++        .map(|handle| handle.panel());
++    menu.when_some(panel, |menu, panel| panel.dropdown_menu(menu, window, cx))
++        .separator()
++        .menu_with_disabled(
++            if zoomed {
++                t!("Dock.Zoom Out")
++            } else {
++                t!("Dock.Zoom In")
++            },
++            Box::new(ToggleZoom),
++            !menu_zoom,
++        )
++        .when(closable, |menu| {
++            menu.separator()
++                .menu(t!("Dock.Close"), Box::new(ClosePanel))
++        })
++}
++
+ /// One tab group's appearance.
+ ///
+ /// Built per group — `DockAreaRenderer::tab_group_renderer` is called once per
+@@ -339,10 +395,7 @@ impl TabGroupSkin {
+         let zoomed = group.is_zoomed();
+         let handle = group.active_panel().and_then(PanelHandle::of);
+         let toolbar_zoom = chrome.zoom_toolbar;
+-        let menu_zoom = chrome.zoom_menu_enabled;
+-        let closable = chrome.close_menu;
+         let buttons = handle.and_then(|handle| handle.toolbar_buttons(window, cx));
+-        let panel = handle.map(|handle| handle.panel());
+ 
+         h_flex()
+             .gap_1()
+@@ -381,33 +434,7 @@ impl TabGroupSkin {
+                     )
+                 },
+             )
+-            .child(
+-                Button::new("menu")
+-                    .icon(IconName::Ellipsis)
+-                    .xsmall()
+-                    .ghost()
+-                    .accessibility_label(t!("Dock.PanelMenu"))
+-                    .tab_stop(false)
+-                    .dropdown_menu(move |menu, window, cx| {
+-                        menu.when_some(panel.clone(), |menu, panel| {
+-                            panel.dropdown_menu(menu, window, cx)
+-                        })
+-                        .separator()
+-                        .menu_with_disabled(
+-                            match zoomed {
+-                                true => t!("Dock.Zoom Out"),
+-                                false => t!("Dock.Zoom In"),
+-                            },
+-                            Box::new(ToggleZoom),
+-                            !menu_zoom,
+-                        )
+-                        .when(closable, |menu| {
+-                            menu.separator()
+-                                .menu(t!("Dock.Close"), Box::new(ClosePanel))
+-                        })
+-                    })
+-                    .anchor(Anchor::TopRight),
+-            )
++            .child(panel_menu_button(group, false, None, |_, _, _| {}))
+     }
+ 
+     /// The one-panel title bar: no tabs, just the title and the controls.
+@@ -997,6 +1024,186 @@ mod tests {
+         (area, log, cx)
+     }
+ 
++    struct PlatformMenuRenderer {
++        skin: Rc<DockSkin>,
++        state: Rc<RefCell<Option<gpui::WeakEntity<crate::popover::PopoverState>>>>,
++        menu: Rc<RefCell<Option<crate::menu::PopupMenuPresentation>>>,
++    }
++    impl DockAreaRenderer for PlatformMenuRenderer {
++        fn frame(&self, window: &mut Window, cx: &mut App) -> Stateful<Div> {
++            self.skin.frame(window, cx)
++        }
++        fn tab_group_renderer(&self) -> Rc<dyn TabGroupRenderer> {
++            Rc::new(Self {
++                skin: self.skin.clone(),
++                state: self.state.clone(),
++                menu: self.menu.clone(),
++            })
++        }
++    }
++    impl TabGroupRenderer for PlatformMenuRenderer {
++        fn frame(
++            &self,
++            group: &TabGroupContext,
++            window: &mut Window,
++            cx: &mut App,
++        ) -> Stateful<Div> {
++            TabGroupSkin::new(self.skin.shared().clone()).frame(group, window, cx)
++        }
++        fn render_tab_bar(
++            &self,
++            group: &TabGroupContext,
++            _: &mut Window,
++            _: &mut App,
++        ) -> AnyElement {
++            let state = self.state.clone();
++            let observed = self.menu.clone();
++            let factory: Rc<dyn Fn() -> PopupMenuPresenter> = Rc::new(move || {
++                let observed = observed.clone();
++                PopupMenuPresenter::new(
++                    move |menu, _, _| {
++                        *observed.borrow_mut() = Some(menu);
++                        true
++                    },
++                    |_| {},
++                )
++            });
++            div()
++                .h(px(30.))
++                .child(
++                    self.skin
++                        .tab_menu_anchor(group, Some(factory), move |owner, _, _| {
++                            *state.borrow_mut() = Some(owner);
++                        }),
++                )
++                .into_any_element()
++        }
++    }
++
++    /// The platform trigger calls the actual retained Popover, and its menu
++    /// invokes the existing tab-group action handlers rather than copied ops.
++    #[gpui::test]
++    fn a_platform_panel_menu_uses_the_native_owner_and_close_action(cx: &mut TestAppContext) {
++        use crate::menu::PopupMenuInput;
++        cx.update(crate::init);
++        let observed = Rc::new(RefCell::new(None));
++        let menu = Rc::new(RefCell::new(None));
++        let (area, cx) = cx.add_window_view({
++            let state = observed.clone();
++            let menu = menu.clone();
++            move |window, cx| {
++                let skin = DockSkin::new(cx);
++                DockArea::new("platform-menu", None, window, cx)
++                    .with_renderer(Rc::new(PlatformMenuRenderer { skin, state, menu }))
++            }
++        });
++        let (first, second) = cx.update(|window, cx| {
++            let first = Probe::new(cx);
++            let second = Probe::new(cx);
++            let layout = DockLayout::tabs()
++                .panel_view(panel_handle(first.clone()), cx)
++                .panel_view(panel_handle(second.clone()), cx);
++            area.update(cx, |area, cx| area.set_center(layout, window, cx));
++            (first, second)
++        });
++        cx.run_until_parked();
++        cx.update(|window, cx| window.draw(cx).clear(cx));
++        let controller = observed.borrow().clone().expect("actual keyed anchor");
++        let open = |cx: &mut VisualTestContext| {
++            cx.update(|window, cx| {
++                let focus = first.read(cx).focus_handle.clone();
++                window.focus(&focus, cx);
++                controller
++                    .update(cx, |owner, cx| owner.show(window, cx))
++                    .unwrap();
++                window.refresh();
++                for _ in 0..3 {
++                    window.draw(cx).clear(cx);
++                }
++            });
++            cx.run_until_parked();
++            cx.update(|window, cx| window.draw(cx).clear(cx));
++        };
++        open(cx);
++        let first_menu_id = menu
++            .borrow()
++            .as_ref()
++            .expect("actual menu allocation")
++            .entity()
++            .entity_id();
++        {
++            let snapshot = menu.borrow();
++            let snapshot = snapshot.as_ref().unwrap();
++            assert!(
++                snapshot.bounds().size.width > px(0.) && snapshot.bounds().size.height > px(0.)
++            );
++            assert!(
++                snapshot.is_platform_delegated(),
++                "existing menu acknowledges its actual presenter"
++            );
++            assert!(
++                snapshot
++                    .rows()
++                    .iter()
++                    .any(|row| row.label().as_ref() == "Zoom In")
++            );
++            assert!(
++                snapshot
++                    .rows()
++                    .iter()
++                    .any(|row| row.label().as_ref() == "Close")
++            );
++        }
++        cx.simulate_keystrokes("escape");
++        cx.run_until_parked();
++        cx.update(|window, cx| {
++            window.draw(cx).clear(cx);
++            assert!(!controller.upgrade().unwrap().read(cx).is_open());
++        });
++        open(cx);
++        let snapshot = menu.borrow().clone().unwrap();
++        assert_ne!(
++            snapshot.entity().entity_id(),
++            first_menu_id,
++            "reopening builds a fresh actual owner"
++        );
++        let close = snapshot
++            .rows()
++            .iter()
++            .find(|row| row.label().as_ref() == "Close")
++            .unwrap()
++            .index();
++        cx.update(|window, cx| {
++            snapshot
++                .entity()
++                .update(cx, |menu, cx| {
++                    menu.presented_input(
++                        snapshot.revision(),
++                        PopupMenuInput::Activate(close),
++                        window,
++                        cx,
++                    )
++                })
++                .unwrap()
++                .unwrap()
++        });
++        cx.run_until_parked();
++        cx.update(|_, cx| {
++            assert!(
++                area.read(cx)
++                    .panel(PanelId::from(first.entity_id()))
++                    .is_none(),
++                "existing ClosePanel action removes the active panel"
++            );
++            assert!(
++                area.read(cx)
++                    .panel(PanelId::from(second.entity_id()))
++                    .is_some(),
++                "other retained panel survives"
++            );
++        });
++    }
++
+     /// The gate carried forward from the old `TabPanel::render`, which wrapped
+     /// `on_drag` in `.when(state.draggable, ..)`. Base does not enforce it:
+     /// `TabGroupContext::drag_panel` answers for any tab in range.
+-- 
+2.53.0
+
