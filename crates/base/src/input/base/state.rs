@@ -4169,6 +4169,48 @@ impl<M: InputModeKind> EntityInputHandler for InputBaseState<M> {
         })
     }
 
+    fn set_selected_text_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_text_selection(
+            UTF16Selection {
+                range: range_utf16,
+                reversed: false,
+            },
+            window,
+            cx,
+        );
+    }
+
+    /// Select a platform range, keeping its direction: a backward selection
+    /// made in a browser field stays backward here, so extending it moves
+    /// the same end. The range is clipped and expanded to character
+    /// boundaries like [`Self::set_selected_range`]; an empty range is a
+    /// caret and is never reversed.
+    fn set_text_selection(
+        &mut self,
+        selection: UTF16Selection,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let range = self.range_from_utf16(&selection.range);
+        self.set_selected_range(range, cx);
+        let active = self.active_selection_mut();
+        active.reversed = selection.reversed && active.start != active.end;
+        cx.notify();
+    }
+
+    fn text_length_utf16(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        Some(self.offset_to_utf16(self.text.len()))
+    }
+
     fn marked_text_range(
         &self,
         _window: &mut Window,
@@ -10961,6 +11003,50 @@ mod tests {
             });
         });
         assert_ne!(input.read_with(&cx, |state, _| state.paste_target()), moved);
+    }
+
+    #[gpui::test]
+    fn test_platform_selection_keeps_direction_in_utf16(cx: &mut TestAppContext) {
+        // "a😀é z": the emoji is two UTF-16 units and four UTF-8 bytes.
+        let input_view = InputView::build_textarea(cx, |state| state.default_value("a😀é z"));
+        let mut visual = VisualTestContext::from_window(input_view.window_handle.into(), cx);
+        visual.update(|window, cx| {
+            input_view.input.update(cx, |state, cx| {
+                assert_eq!(state.text_length_utf16(window, cx), Some(6));
+
+                state.set_text_selection(
+                    UTF16Selection {
+                        range: 1..4,
+                        reversed: true,
+                    },
+                    window,
+                    cx,
+                );
+                let selection = state.selected_text_range(false, window, cx).unwrap();
+                assert_eq!(selection.range, 1..4);
+                assert!(selection.reversed);
+                assert_eq!(state.selected_range(), 1..7);
+
+                // A caret is never reversed, and the range setter is forward.
+                state.set_text_selection(
+                    UTF16Selection {
+                        range: 2..2,
+                        reversed: true,
+                    },
+                    window,
+                    cx,
+                );
+                assert!(
+                    !state
+                        .selected_text_range(false, window, cx)
+                        .unwrap()
+                        .reversed
+                );
+                state.set_selected_text_range(0..3, window, cx);
+                let selection = state.selected_text_range(false, window, cx).unwrap();
+                assert_eq!((selection.range, selection.reversed), (0..3, false));
+            });
+        });
     }
 
     #[gpui::test]
