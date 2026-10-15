@@ -327,3 +327,12 @@ the retained Notification and preserves its list clock. Menu focus-close reports
 the existing owner decision so a DOM invoker restores focus only when the native
 action did not move it. The paired GPUI pin exposes a read-only typed drag payload
 so a retired scope can refuse delayed events for a successor session.
+
+## Reentrant notification delivery (patch 0040)
+
+The associated `Notification::deliver_presented_input` validates the current
+presentation and captures its existing native handler while borrowing the owner,
+then releases that lease before invoking the handler. A normal `cx.listener`
+may reenter the same Notification without a RefCell panic, and delivery retains
+the caller's existing synchronous invocation provenance. The receiver remains
+private so callers cannot accidentally invoke a listener under its owner lease.
