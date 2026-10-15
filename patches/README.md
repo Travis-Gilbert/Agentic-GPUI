@@ -3,7 +3,7 @@
 This hard fork tracks `longbridge/gpui-kit` tag `v0.7.3`. The files listed in
 `series` are applied in order and are never proposed upstream. The fork pins
 the entire GPUI family to one immutable revision of `Travis-Gilbert/zed`
-(`8699294895c386bbc44982d04baf8386deb2d1f4`) in place of upstream's
+(`67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48`) in place of upstream's
 `gpui-pre =0.3.9` crates.
 
 The replay workflow applies this series to `v0.7.3` for branch validation and
@@ -318,3 +318,12 @@ behavior changes in this pin move. TheoremWeb consumes the same Zed revision.
 The paired GPUI pin patch (0027) moves Zed to `dc9632d4`, refusing an editing
 island replacement before changing the active conduit while composition is
 open. It changes no Kit behavior. TheoremWeb consumes the same revision.
+
+## Retained platform owners (patches 0036–0039)
+
+The dock panel menu anchor and native drag preview constructor reuse the actual
+TabGroup/DragPanel owners. Notification presentation delegates guarded input to
+the retained Notification and preserves its list clock. Menu focus-close reports
+the existing owner decision so a DOM invoker restores focus only when the native
+action did not move it. The paired GPUI pin exposes a read-only typed drag payload
+so a retired scope can refuse delayed events for a successor session.
