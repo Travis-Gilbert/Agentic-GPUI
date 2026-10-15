@@ -3,7 +3,7 @@
 This hard fork tracks `longbridge/gpui-kit` tag `v0.7.3`. The files listed in
 `series` are applied in order and are never proposed upstream. The fork pins
 the entire GPUI family to one immutable revision of `Travis-Gilbert/zed`
-(`67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48`) in place of upstream's
+(`7e67ba4d1d82ad4c3e2444c53a76eb6543037747`) in place of upstream's
 `gpui-pre =0.3.9` crates.
 
 The replay workflow applies this series to `v0.7.3` for branch validation and
@@ -336,3 +336,22 @@ then releases that lease before invoking the handler. A normal `cx.listener`
 may reenter the same Notification without a RefCell panic, and delivery retains
 the caller's existing synchronous invocation provenance. The receiver remains
 private so callers cannot accidentally invoke a listener under its owner lease.
+
+
+## Native input, Command and modal presentation (patches 0041–0042)
+
+Opt-in input observation captures exact text, final syntax/decorations/diagnostics,
+base TextStyle, native allocation and wrapping facts in one native prepaint.
+Read-only getters do not parse or edit the draft. Explicit InputState focus
+intents use GPUI's queued current-owner focus request even for the same handle.
+
+Command and modal presenters observe their actual existing retained owners.
+Revision/identity/delegation and capability guards precede delivery to existing
+matching, selection, confirm/cancel and Root/focus handlers. Metadata exposes
+actual native material helpers and weak current/previous focus identity without
+introducing another controller or focus policy. Native fallback remains available
+for content whose presentation cannot be represented.
+
+The actual native input packet tests and actual Command/modal owner regressions
+pass. They establish owner and metadata behavior, not product browser, OS IME,
+glyph/caret/wrap, or deployed acceptance. Those gates remain independent.

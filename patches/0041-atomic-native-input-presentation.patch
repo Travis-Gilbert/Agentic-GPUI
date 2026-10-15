@@ -1,0 +1,1014 @@
+From 684ae4fb8afed2ca1e623281f0806aece2bd3907 Mon Sep 17 00:00:00 2001
+From: Travis Gilbert <1travisgilbert@gmail.com>
+Date: Thu, 15 Oct 2026 17:26:03 -0400
+Subject: [PATCH] feat(input): expose atomic native input presentation
+
+---
+ Cargo.lock                            |  50 +--
+ Cargo.toml                            |  14 +-
+ crates/base/src/input/base/element.rs | 541 +++++++++++++++++++-------
+ crates/base/src/input/base/state.rs   |  77 ++++
+ crates/component/src/input/mod.rs     |  18 +-
+ 5 files changed, 517 insertions(+), 183 deletions(-)
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 974619b1..be0897f5 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1515,7 +1515,7 @@ dependencies = [
+ [[package]]
+ name = "collections"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48#67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
+ dependencies = [
+  "gpui_util",
+  "indexmap",
+@@ -2446,7 +2446,7 @@ dependencies = [
+ [[package]]
+ name = "derive_refineable"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48#67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
+ dependencies = [
+  "proc-macro2",
+  "quote",
+@@ -3854,7 +3854,7 @@ dependencies = [
+ [[package]]
+ name = "gpui"
+ version = "0.2.2"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48#67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
+ dependencies = [
+  "accesskit",
+  "anyhow",
+@@ -4247,7 +4247,7 @@ dependencies = [
+ [[package]]
+ name = "gpui_apple"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48#67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
+ dependencies = [
+  "anyhow",
+  "block",
+@@ -4270,7 +4270,7 @@ dependencies = [
+ [[package]]
+ name = "gpui_linux"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48#67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
+ dependencies = [
+  "accesskit",
+  "accesskit_unix",
+@@ -4316,7 +4316,7 @@ dependencies = [
+ [[package]]
+ name = "gpui_macos"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48#67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
+ dependencies = [
+  "accesskit",
+  "accesskit_macos",
+@@ -4362,7 +4362,7 @@ dependencies = [
+ [[package]]
+ name = "gpui_macros"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48#67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
+ dependencies = [
+  "heck 0.5.0",
+  "proc-macro2",
+@@ -4373,7 +4373,7 @@ dependencies = [
+ [[package]]
+ name = "gpui_platform"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48#67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
+ dependencies = [
+  "console_error_panic_hook",
+  "gpui",
+@@ -4386,7 +4386,7 @@ dependencies = [
+ [[package]]
+ name = "gpui_shared_string"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48#67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
+ dependencies = [
+  "schemars",
+  "serde",
+@@ -4396,7 +4396,7 @@ dependencies = [
+ [[package]]
+ name = "gpui_util"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48#67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
+ dependencies = [
+  "anyhow",
+  "log",
+@@ -4406,7 +4406,7 @@ dependencies = [
+ [[package]]
+ name = "gpui_web"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48#67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
+ dependencies = [
+  "anyhow",
+  "async-channel",
+@@ -4431,7 +4431,7 @@ dependencies = [
+ [[package]]
+ name = "gpui_wgpu"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48#67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
+ dependencies = [
+  "anyhow",
+  "bytemuck",
+@@ -4457,7 +4457,7 @@ dependencies = [
+ [[package]]
+ name = "gpui_windows"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48#67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
+ dependencies = [
+  "accesskit",
+  "accesskit_windows",
+@@ -4820,7 +4820,7 @@ dependencies = [
+ [[package]]
+ name = "http_client"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48#67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
+ dependencies = [
+  "anyhow",
+  "async-compression",
+@@ -4840,7 +4840,7 @@ dependencies = [
+ [[package]]
+ name = "http_client_tls"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48#67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
+ dependencies = [
+  "log",
+  "rustls",
+@@ -6217,7 +6217,7 @@ dependencies = [
+ [[package]]
+ name = "media"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48#67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
+ dependencies = [
+  "anyhow",
+  "bindgen",
+@@ -7416,7 +7416,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
+ [[package]]
+ name = "perf"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48#67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
+ dependencies = [
+  "collections",
+  "serde",
+@@ -8638,7 +8638,7 @@ dependencies = [
+ [[package]]
+ name = "refineable"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48#67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
+ dependencies = [
+  "derive_refineable",
+ ]
+@@ -8705,7 +8705,7 @@ checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
+ [[package]]
+ name = "reqwest_client"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48#67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
+ dependencies = [
+  "anyhow",
+  "bytes",
+@@ -9136,7 +9136,7 @@ dependencies = [
+ [[package]]
+ name = "scheduler"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48#67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
+ dependencies = [
+  "async-task",
+  "backtrace",
+@@ -9883,7 +9883,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
+ [[package]]
+ name = "sum_tree"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48#67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
+ dependencies = [
+  "heapless",
+  "log",
+@@ -11438,7 +11438,7 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
+ [[package]]
+ name = "util_macros"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48#67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
+ dependencies = [
+  "perf",
+  "quote",
+@@ -13328,7 +13328,7 @@ checksum = "34b31d188d9d685a4f9c7b46d6e36631b07058d2cfe190267adce54dc230bf12"
+ [[package]]
+ name = "zlog"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48#67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
+ dependencies = [
+  "anyhow",
+  "chrono",
+@@ -13373,7 +13373,7 @@ dependencies = [
+ [[package]]
+ name = "ztracing"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48#67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
+ dependencies = [
+  "tracing",
+  "tracing-subscriber",
+@@ -13384,7 +13384,7 @@ dependencies = [
+ [[package]]
+ name = "ztracing_macro"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48#67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
+ 
+ [[package]]
+ name = "zune-core"
+diff --git a/Cargo.toml b/Cargo.toml
+index 2ddfa9dc..a8939a68 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -67,12 +67,12 @@ story = { path = "crates/story" }
+ # source (its `oo7 ^0.6` excludes the Zed fork's `oo7 =0.6.0-alpha`), and a
+ # second engine would be a second GPUI type identity. Its `cfg(feature =
+ # "gpui-fast")` code stays inert, declared below so it raises no warning.
+-gpui = { git = "https://github.com/Travis-Gilbert/zed", rev = "67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48" }
+-gpui_platform = { git = "https://github.com/Travis-Gilbert/zed", rev = "67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
+-gpui_web = { git = "https://github.com/Travis-Gilbert/zed", rev = "67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48" }
+-gpui_macros = { git = "https://github.com/Travis-Gilbert/zed", rev = "67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48" }
+-reqwest_client = { git = "https://github.com/Travis-Gilbert/zed", rev = "67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48" }
+-sum-tree = { package = "sum_tree", git = "https://github.com/Travis-Gilbert/zed", rev = "67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48" }
++gpui = { git = "https://github.com/Travis-Gilbert/zed", rev = "07c4b888b3a423de5ef584306cabe99558799559" }
++gpui_platform = { git = "https://github.com/Travis-Gilbert/zed", rev = "07c4b888b3a423de5ef584306cabe99558799559", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
++gpui_web = { git = "https://github.com/Travis-Gilbert/zed", rev = "07c4b888b3a423de5ef584306cabe99558799559" }
++gpui_macros = { git = "https://github.com/Travis-Gilbert/zed", rev = "07c4b888b3a423de5ef584306cabe99558799559" }
++reqwest_client = { git = "https://github.com/Travis-Gilbert/zed", rev = "07c4b888b3a423de5ef584306cabe99558799559" }
++sum-tree = { package = "sum_tree", git = "https://github.com/Travis-Gilbert/zed", rev = "07c4b888b3a423de5ef584306cabe99558799559" }
+ reqwest = { package = "zed-reqwest", git = "https://github.com/zed-industries/reqwest.git", rev = "33bc764aa15ff7b200bf7c93bd96e24878d53e14", version = "0.12.15-zed", default-features = false, features = [
+     "charset",
+     "http2",
+@@ -195,4 +195,4 @@ ignored = ["log", "anyhow", "serde"]
+ [workspace.metadata.theorem-fork]
+ upstream = "https://github.com/longbridge/gpui-kit"
+ upstream_tag = "v0.7.3"
+-zed_rev = "67eb6eab969e3ba41c7ddb047d9fcf16e83d8c48"
++zed_rev = "07c4b888b3a423de5ef584306cabe99558799559"
+diff --git a/crates/base/src/input/base/element.rs b/crates/base/src/input/base/element.rs
+index 2e23301e..133480d4 100644
+--- a/crates/base/src/input/base/element.rs
++++ b/crates/base/src/input/base/element.rs
+@@ -46,6 +46,186 @@ fn diagnostic_highlight_style(
+     }
+ }
+ 
++impl<M: InputModeKind> InputBaseState<M> {
++    /// Read the final native text styles for scalar-aligned UTF-8 bytes.
++    ///
++    /// Uses the same highlighter, semantic tokens, application decorations and
++    /// diagnostic palette as native painting. This observes existing analyses;
++    /// it does not parse, edit text, update selection or create history.
++    /// Returns `None` for a masked input or an invalid byte range.
++    pub fn presentation_styles(
++        &self,
++        range: Range<usize>,
++        cx: &App,
++    ) -> Option<Vec<(Range<usize>, HighlightStyle)>> {
++        if self.masked || range.start > range.end || range.end > self.text.len() {
++            return None;
++        }
++        let aligned = |offset| self.text.is_char_boundary(offset);
++        if !aligned(range.start) || !aligned(range.end) {
++            return None;
++        }
++        if range.is_empty() {
++            return Some(Vec::new());
++        }
++        let first = self.text.offset_to_point(range.start).row;
++        let last = self.text.offset_to_point(range.end - 1).row;
++        let lines = (first..=last).collect::<Vec<_>>();
++        let styles =
++            presentation_styles_for_lines(self, &lines, range.clone(), cx).unwrap_or_default();
++        Some(clip_styles_to_ranges(styles, &[range]))
++    }
++}
++
++/// The final style pipeline shared by native painting and retained presenters.
++pub(super) fn presentation_styles_for_lines<M: InputModeKind>(
++    state: &InputBaseState<M>,
++    visible_buffer_lines: &[usize],
++    visible_byte_range: Range<usize>,
++    cx: &App,
++) -> Option<Vec<(Range<usize>, HighlightStyle)>> {
++    let text = &state.text;
++    let is_multi_line = state.is_multi_line();
++
++    let (mut highlighter, diagnostics) = match &state.mode {
++        LayoutMode::CodeEditor {
++            highlighter,
++            diagnostics,
++            ..
++        } => (highlighter.borrow_mut(), diagnostics),
++        _ => {
++            return (!state.masked)
++                .then(|| {
++                    compose_decoration_collections(
++                        Vec::new(),
++                        state.extras.decoration_layers().into_iter(),
++                        visible_byte_range,
++                    )
++                })
++                .flatten();
++        }
++    };
++    let Some(highlighter) = highlighter.as_mut() else {
++        return (!state.masked)
++            .then(|| {
++                compose_decoration_collections(
++                    Vec::new(),
++                    state.extras.decoration_layers().into_iter(),
++                    visible_byte_range,
++                )
++            })
++            .flatten();
++    };
++
++    let mut styles = Vec::with_capacity(visible_buffer_lines.len());
++    // Byte ranges of the flushed line groups; the composed styles are
++    // clipped to these at the end so the resulting runs cover exactly the
++    // visible (non-folded) lines' bytes.
++    let mut group_ranges: Vec<Range<usize>> = Vec::new();
++
++    // Helper to flush a contiguous range of lines. These ranges are disjoint,
++    // so appending avoids repeatedly cloning and recombining prior styles.
++    let mut flush_range = |start_line: usize, end_line: usize, skip: bool, styles: &mut Vec<_>| {
++        let byte_start = text.line_start_offset(start_line);
++        let byte_end = if is_multi_line {
++            // +1 for `\n`
++            text.line_start_offset(end_line + 1)
++        } else {
++            text.line_end_offset(end_line)
++        };
++        let range_styles = if skip {
++            vec![(byte_start..byte_end, HighlightStyle::default())]
++        } else {
++            highlighter.styles(
++                &(byte_start..byte_end),
++                state.editor_style.highlight_styles.as_ref(),
++            )
++        };
++
++        group_ranges.push(byte_start..byte_end);
++        styles.extend(range_styles);
++    };
++
++    // Group contiguous visible lines into ranges and call styles() once per range
++    let mut visible_iter = visible_buffer_lines.iter().peekable();
++    let mut range_start: Option<usize> = None;
++
++    while let Some(&line) = visible_iter.next() {
++        // Check if this line is too long for highlighting
++        let line_len = text.slice_line(line).len();
++        if line_len > MAX_HIGHLIGHT_LINE_LENGTH {
++            // Flush any accumulated range first
++            if let Some(start) = range_start.take() {
++                flush_range(start, line - 1, false, &mut styles);
++            }
++
++            flush_range(line, line, true, &mut styles);
++            continue;
++        }
++
++        range_start.get_or_insert(line);
++
++        // Check if next line is contiguous, if so keep accumulating
++        if visible_iter
++            .peek()
++            .map(|&&next| next == line + 1)
++            .unwrap_or(false)
++        {
++            continue;
++        }
++
++        // Flush the contiguous range
++        let start_line = range_start.take().unwrap();
++        flush_range(start_line, line, false, &mut styles);
++    }
++
++    let diagnostic_styles: Vec<_> = diagnostics
++        .range(visible_byte_range.clone())
++        .map(|entry| {
++            (
++                entry.range.clone(),
++                diagnostic_highlight_style(entry.severity, state.editor_style.diagnostics),
++            )
++        })
++        .collect();
++
++    // Range semantic tokens, resolved from the LSP provider's cached
++    // result through the active highlight theme so it shares the same
++    // colour vocabulary as the tree-sitter path. Empty Vec when no
++    // provider is set, so `combine_highlights` short-circuits.
++    let custom_styles = state.extras.semantic_token_styles(
++        text,
++        &visible_byte_range,
++        state.editor_style.highlight_styles.as_ref(),
++    );
++
++    // hover definition style
++    if let Some(hover_style) = M::hover_definition_style(state, cx) {
++        styles.push(hover_style);
++    }
++
++    // Compose tree-sitter, semantic, application, then diagnostic styles.
++    styles = gpui::combine_highlights(custom_styles, styles).collect();
++    if !state.masked {
++        styles = compose_decoration_collections(
++            styles,
++            state.extras.decoration_layers().into_iter(),
++            visible_byte_range.clone(),
++        )
++        .unwrap_or_default();
++    }
++    styles = gpui::combine_highlights(diagnostic_styles, styles).collect();
++
++    // Some sources reach outside the flushed groups — a diagnostic
++    // straddling the viewport edge, or any range inside a folded region —
++    // which would inject extra bytes into the runs coordinate space and
++    // shift every later run boundary (see `layout_lines`). Clip the
++    // composed styles back to the groups.
++    styles = clip_styles_to_ranges(styles, &group_ranges);
++
++    Some(styles)
++}
++
+ const BOTTOM_MARGIN_ROWS: usize = 3;
+ pub(super) const RIGHT_MARGIN: Pixels = px(10.);
+ pub(super) const LINE_NUMBER_RIGHT_MARGIN: Pixels = px(6.);
+@@ -2125,148 +2305,12 @@ impl<M: InputModeKind> TextElement<M> {
+         visible_byte_range: Range<usize>,
+         cx: &mut App,
+     ) -> Option<Vec<(Range<usize>, HighlightStyle)>> {
+-        let state = self.state.read(cx);
+-        let text = &state.text;
+-        let is_multi_line = state.is_multi_line();
+-
+-        let (mut highlighter, diagnostics) = match &state.mode {
+-            LayoutMode::CodeEditor {
+-                highlighter,
+-                diagnostics,
+-                ..
+-            } => (highlighter.borrow_mut(), diagnostics),
+-            _ => {
+-                return (!state.masked)
+-                    .then(|| {
+-                        compose_decoration_collections(
+-                            Vec::new(),
+-                            state.extras.decoration_layers().into_iter(),
+-                            visible_byte_range,
+-                        )
+-                    })
+-                    .flatten();
+-            }
+-        };
+-        let Some(highlighter) = highlighter.as_mut() else {
+-            return (!state.masked)
+-                .then(|| {
+-                    compose_decoration_collections(
+-                        Vec::new(),
+-                        state.extras.decoration_layers().into_iter(),
+-                        visible_byte_range,
+-                    )
+-                })
+-                .flatten();
+-        };
+-
+-        let mut styles = Vec::with_capacity(visible_buffer_lines.len());
+-        // Byte ranges of the flushed line groups; the composed styles are
+-        // clipped to these at the end so the resulting runs cover exactly the
+-        // visible (non-folded) lines' bytes.
+-        let mut group_ranges: Vec<Range<usize>> = Vec::new();
+-
+-        // Helper to flush a contiguous range of lines. These ranges are disjoint,
+-        // so appending avoids repeatedly cloning and recombining prior styles.
+-        let mut flush_range =
+-            |start_line: usize, end_line: usize, skip: bool, styles: &mut Vec<_>| {
+-                let byte_start = text.line_start_offset(start_line);
+-                let byte_end = if is_multi_line {
+-                    // +1 for `\n`
+-                    text.line_start_offset(end_line + 1)
+-                } else {
+-                    text.line_end_offset(end_line)
+-                };
+-                let range_styles = if skip {
+-                    vec![(byte_start..byte_end, HighlightStyle::default())]
+-                } else {
+-                    highlighter.styles(
+-                        &(byte_start..byte_end),
+-                        state.editor_style.highlight_styles.as_ref(),
+-                    )
+-                };
+-
+-                group_ranges.push(byte_start..byte_end);
+-                styles.extend(range_styles);
+-            };
+-
+-        // Group contiguous visible lines into ranges and call styles() once per range
+-        let mut visible_iter = visible_buffer_lines.iter().peekable();
+-        let mut range_start: Option<usize> = None;
+-
+-        while let Some(&line) = visible_iter.next() {
+-            // Check if this line is too long for highlighting
+-            let line_len = text.slice_line(line).len();
+-            if line_len > MAX_HIGHLIGHT_LINE_LENGTH {
+-                // Flush any accumulated range first
+-                if let Some(start) = range_start.take() {
+-                    flush_range(start, line - 1, false, &mut styles);
+-                }
+-
+-                flush_range(line, line, true, &mut styles);
+-                continue;
+-            }
+-
+-            range_start.get_or_insert(line);
+-
+-            // Check if next line is contiguous, if so keep accumulating
+-            if visible_iter
+-                .peek()
+-                .map(|&&next| next == line + 1)
+-                .unwrap_or(false)
+-            {
+-                continue;
+-            }
+-
+-            // Flush the contiguous range
+-            let start_line = range_start.take().unwrap();
+-            flush_range(start_line, line, false, &mut styles);
+-        }
+-
+-        let diagnostic_styles: Vec<_> = diagnostics
+-            .range(visible_byte_range.clone())
+-            .map(|entry| {
+-                (
+-                    entry.range.clone(),
+-                    diagnostic_highlight_style(entry.severity, state.editor_style.diagnostics),
+-                )
+-            })
+-            .collect();
+-
+-        // Range semantic tokens, resolved from the LSP provider's cached
+-        // result through the active highlight theme so it shares the same
+-        // colour vocabulary as the tree-sitter path. Empty Vec when no
+-        // provider is set, so `combine_highlights` short-circuits.
+-        let custom_styles = state.extras.semantic_token_styles(
+-            text,
+-            &visible_byte_range,
+-            state.editor_style.highlight_styles.as_ref(),
+-        );
+-
+-        // hover definition style
+-        if let Some(hover_style) = M::hover_definition_style(self.state.read(cx), cx) {
+-            styles.push(hover_style);
+-        }
+-
+-        // Compose tree-sitter, semantic, application, then diagnostic styles.
+-        styles = gpui::combine_highlights(custom_styles, styles).collect();
+-        if !state.masked {
+-            styles = compose_decoration_collections(
+-                styles,
+-                state.extras.decoration_layers().into_iter(),
+-                visible_byte_range.clone(),
+-            )
+-            .unwrap_or_default();
+-        }
+-        styles = gpui::combine_highlights(diagnostic_styles, styles).collect();
+-
+-        // Some sources reach outside the flushed groups — a diagnostic
+-        // straddling the viewport edge, or any range inside a folded region —
+-        // which would inject extra bytes into the runs coordinate space and
+-        // shift every later run boundary (see `layout_lines`). Clip the
+-        // composed styles back to the groups.
+-        styles = clip_styles_to_ranges(styles, &group_ranges);
+-
+-        Some(styles)
++        presentation_styles_for_lines(
++            self.state.read(cx),
++            visible_buffer_lines,
++            visible_byte_range,
++            cx,
++        )
+     }
+ }
+ 
+@@ -2525,7 +2569,31 @@ impl<M: InputModeKind> Element for TextElement<M> {
+             window.text_system().layout_width(font_id, text_size, ' ')
+         };
+ 
++        let line_height = window.line_height();
+         self.state.update(cx, |state, cx| {
++            // Capture a single native presentation packet, never a base from
++            // one frame paired with diagnostics/theme styles from another.
++            state.last_rendered_text_style = state
++                .observe_presentation
++                .then(|| state.presentation_styles(0..state.text.len(), cx))
++                .flatten()
++                .map(|highlights| {
++                    let mut style = style.clone();
++                    if state.disabled {
++                        style.color = style.color.opacity(0.5);
++                    }
++                    super::InputRenderedTextStyle {
++                        style,
++                        font_size: text_size,
++                        line_height,
++                        soft_wrap: state.soft_wrap,
++                        wrapping_indent: state.wrapping_indent,
++                        wrap_width: None,
++                        bounds,
++                        expected_text: state.text.to_string(),
++                        highlights,
++                    }
++                });
+             state.display_map.set_font(font, text_size, cx);
+             state.display_map.ensure_text_prepared(&state.text, cx);
+         });
+@@ -2585,6 +2653,12 @@ impl<M: InputModeKind> Element for TextElement<M> {
+             });
+         }
+ 
++        self.state.update(cx, |state, _| {
++            if let Some(packet) = &mut state.last_rendered_text_style {
++                packet.wrap_width = wrap_width;
++            }
++        });
++
+         let line_height = window.line_height();
+         let token_elements = self.measure_tokens(
+             (bounds.size.width - line_number_width - RIGHT_MARGIN).max(px(1.)),
+@@ -4246,6 +4320,189 @@ mod tests {
+         );
+     }
+ 
++    struct DeterministicStyleHighlighter;
++    impl crate::input::InputHighlighter for DeterministicStyleHighlighter {
++        fn language(&self) -> SharedString {
++            "style-pipeline-fixture".into()
++        }
++        fn update(
++            &mut self,
++            _: Option<crate::input::InputEdit>,
++            _: &Rope,
++            _: bool,
++            _: &mut Window,
++            _: &mut Context<EditorState>,
++        ) {
++        }
++        fn styles(
++            &self,
++            range: &Range<usize>,
++            _: &dyn crate::input::HighlightStyleResolver,
++        ) -> Vec<(Range<usize>, HighlightStyle)> {
++            vec![(
++                range.clone(),
++                HighlightStyle {
++                    color: Some(gpui::blue()),
++                    font_weight: Some(gpui::FontWeight::BOLD),
++                    ..Default::default()
++                },
++            )]
++        }
++        fn fold_ranges(&self, _: &Rope) -> Vec<FoldRange> {
++            Vec::new()
++        }
++    }
++
++    #[gpui::test]
++    fn final_presentation_styles_share_native_syntax_decoration_and_diagnostic_authority(
++        cx: &mut TestAppContext,
++    ) {
++        let (editor, window) = decoration_editor(cx, "a😀bc", false);
++        let mut cx = VisualTestContext::from_window(window.into(), cx);
++        cx.update(|window, cx| {
++            editor.update(cx, |state, cx| {
++                state.create_decorations_collection(
++                    vec![TextDecoration::new(
++                        1..5,
++                        HighlightStyle {
++                            color: Some(gpui::red()),
++                            font_style: Some(gpui::FontStyle::Italic),
++                            ..Default::default()
++                        },
++                    )],
++                    cx,
++                );
++                state.set_presentation_observation(true, cx);
++                let LayoutMode::CodeEditor {
++                    highlighter,
++                    diagnostics,
++                    ..
++                } = &mut state.mode
++                else {
++                    panic!("actual EditorState uses code-editor mode")
++                };
++                *highlighter.borrow_mut() = Some(Box::new(DeterministicStyleHighlighter));
++                diagnostics.push(
++                    crate::input::Diagnostic::new(
++                        crate::input::Position::new(0, 0)..crate::input::Position::new(0, 1),
++                        "warning",
++                    )
++                    .with_severity(crate::input::DiagnosticSeverity::Warning),
++                );
++            });
++            window.draw(cx).clear(cx);
++            let state = editor.read(cx);
++            let value = state.value();
++            let selection = state.selected_range();
++            let history = state.undo_manager.undo_count();
++            let projected = state
++                .presentation_styles(0..7, cx)
++                .expect("supported text styles");
++            let at = |byte| {
++                projected
++                    .iter()
++                    .find(|(range, _)| range.contains(&byte))
++                    .unwrap()
++                    .1
++            };
++            assert_eq!(at(0).color, Some(gpui::blue()));
++            assert_eq!(at(0).font_weight, Some(gpui::FontWeight::BOLD));
++            assert_eq!(
++                at(0).underline.unwrap().color,
++                Some(state.editor_style.diagnostics.warning)
++            );
++            assert!(at(0).underline.unwrap().wavy);
++            assert_eq!(
++                at(1).color,
++                Some(gpui::red()),
++                "actual application decoration refines syntax"
++            );
++            assert_eq!(at(1).font_style, Some(gpui::FontStyle::Italic));
++            assert_eq!(at(1).font_weight, Some(gpui::FontWeight::BOLD));
++            assert_eq!(at(5).color, Some(gpui::blue()));
++            let clipped = state.presentation_styles(1..6, cx).unwrap();
++            assert!(
++                clipped
++                    .iter()
++                    .all(|(range, _)| range.start >= 1 && range.end <= 6)
++            );
++            assert!(
++                state.rendered_text_style().is_some(),
++                "native prepaint supplies the real inherited base style"
++            );
++            assert_eq!(
++                (
++                    state.value(),
++                    state.selected_range(),
++                    state.undo_manager.undo_count()
++                ),
++                (value.clone(), selection, history),
++                "style observation never changes text, selection or history"
++            );
++            let painted = TextElement::new(editor.clone())
++                .highlight_lines(&[0], px(0.), 0..7, cx)
++                .unwrap();
++            assert_eq!(
++                projected, painted,
++                "native paint consumes the same final pipeline"
++            );
++            let captured = editor.read(cx).rendered_text_style().unwrap().clone();
++            assert_eq!(captured.expected_text(), value.as_str());
++            assert_eq!(captured.highlights(), projected.as_slice());
++            assert_eq!(captured.soft_wrap(), editor.read(cx).soft_wrap);
++            assert_eq!(captured.wrapping_indent(), editor.read(cx).wrapping_indent);
++            assert_eq!(
++                captured.bounds().size,
++                editor.read(cx).text_bounds().unwrap().size
++            );
++            assert_eq!(
++                captured.wrap_width(),
++                editor.read(cx).last_layout.as_ref().unwrap().wrap_width
++            );
++            editor.update(cx, |state, cx| {
++                state.set_value("next", window, cx);
++                state.set_soft_wrap(!captured.soft_wrap(), window, cx);
++            });
++            assert_eq!(
++                editor
++                    .read(cx)
++                    .rendered_text_style()
++                    .unwrap()
++                    .expected_text(),
++                value.as_str(),
++                "the old native packet stays internally consistent before the next prepaint"
++            );
++            window.draw(cx).clear(cx);
++            assert_eq!(
++                editor
++                    .read(cx)
++                    .rendered_text_style()
++                    .unwrap()
++                    .expected_text(),
++                "next"
++            );
++            assert_eq!(
++                editor.read(cx).rendered_text_style().unwrap().soft_wrap(),
++                !captured.soft_wrap()
++            );
++        });
++    }
++
++    #[gpui::test]
++    fn presentation_style_ranges_refuse_split_scalars_and_masked_inputs(cx: &mut TestAppContext) {
++        let (editor, window) = decoration_editor(cx, "a😀bc", false);
++        let mut cx = VisualTestContext::from_window(window.into(), cx);
++        cx.update(|_, cx| {
++            let state = editor.read(cx);
++            assert!(state.presentation_styles(2..5, cx).is_none());
++            assert!(state.presentation_styles(0..8, cx).is_none());
++            assert!(state.presentation_styles(5..4, cx).is_none());
++            assert_eq!(state.presentation_styles(5..5, cx), Some(Vec::new()));
++            editor.update(cx, |state, _| state.masked = true);
++            assert!(editor.read(cx).presentation_styles(0..7, cx).is_none());
++        });
++    }
++
+     #[test]
+     fn test_plain_text_decorations_include_unstyled_gaps() {
+         let decoration = HighlightStyle {
+diff --git a/crates/base/src/input/base/state.rs b/crates/base/src/input/base/state.rs
+index 4140f633..0730366e 100644
+--- a/crates/base/src/input/base/state.rs
++++ b/crates/base/src/input/base/state.rs
+@@ -420,6 +420,7 @@ pub struct InputBaseState<M: InputModeKind> {
+     pub(super) replaceable: bool,
+     pub(super) soft_wrap: bool,
+     tab_navigation: bool,
++    pub(super) observe_presentation: bool,
+     pub(super) wrapping_indent: WrappingIndent,
+     pub(super) scroll_beyond_last_line: Option<usize>,
+     pub(super) cursor_surrounding_lines: Option<usize>,
+@@ -434,6 +435,7 @@ pub struct InputBaseState<M: InputModeKind> {
+     /// The marked range is the temporary insert text on IME typing.
+     pub(super) ime_marked_range: Option<CursorSelection>,
+     pub(super) last_layout: Option<LastLayout>,
++    pub(super) last_rendered_text_style: Option<InputRenderedTextStyle>,
+     /// Fresh caret geometry stashed during prepaint for caret-anchored popups.
+     ///
+     /// Popups are positioned in their deferred prepaint, which runs after the
+@@ -537,6 +539,58 @@ pub struct InputBaseState<M: InputModeKind> {
+     pub(super) auto_scroll: AutoScroll,
+ }
+ 
++/// The actual base text style most recently used by native input prepaint.
++#[derive(Clone, Debug, PartialEq)]
++pub struct InputRenderedTextStyle {
++    pub(super) style: gpui::TextStyle,
++    pub(super) font_size: Pixels,
++    pub(super) line_height: Pixels,
++    pub(super) soft_wrap: bool,
++    pub(super) wrapping_indent: WrappingIndent,
++    pub(super) wrap_width: Option<Pixels>,
++    pub(super) bounds: Bounds<Pixels>,
++    pub(super) expected_text: String,
++    pub(super) highlights: Vec<(Range<usize>, gpui::HighlightStyle)>,
++}
++impl InputRenderedTextStyle {
++    /// Actual native wrapping policy captured in this prepaint.
++    pub fn soft_wrap(&self) -> bool {
++        self.soft_wrap
++    }
++    /// Actual native continuation indentation policy captured in this prepaint.
++    pub fn wrapping_indent(&self) -> WrappingIndent {
++        self.wrapping_indent
++    }
++    /// Actual native content wrap width, after line numbers and right margin.
++    pub fn wrap_width(&self) -> Option<Pixels> {
++        self.wrap_width
++    }
++    /// Actual unscrolled native text element allocation captured in this prepaint.
++    pub fn bounds(&self) -> Bounds<Pixels> {
++        self.bounds
++    }
++    /// Exact canonical text the native prepaint observed with these styles.
++    pub fn expected_text(&self) -> &str {
++        &self.expected_text
++    }
++    /// Final styles captured in the same native prepaint as the base style.
++    pub fn highlights(&self) -> &[(Range<usize>, gpui::HighlightStyle)] {
++        &self.highlights
++    }
++    pub fn style(&self) -> &gpui::TextStyle {
++        &self.style
++    }
++    pub fn font(&self) -> gpui::Font {
++        self.style.font()
++    }
++    pub fn font_size(&self) -> Pixels {
++        self.font_size
++    }
++    pub fn line_height(&self) -> Pixels {
++        self.line_height
++    }
++}
++
+ /// Read-only styling data exposed to presentation facades.
+ ///
+ /// The fields are private and read through the methods below, so that a new
+@@ -614,6 +668,26 @@ impl<M: InputModeKind> InputBaseState<M> {
+         Some((layout.cursor_bounds?, layout.line_height))
+     }
+ 
++    /// Opt into a read-only native prepaint presentation packet. Other inputs
++    /// retain their normal clipped painting cost and capture no whole document.
++    pub fn set_presentation_observation(&mut self, enabled: bool, cx: &mut Context<Self>) {
++        if self.observe_presentation != enabled {
++            self.observe_presentation = enabled;
++            if !enabled {
++                self.last_rendered_text_style = None;
++            }
++            cx.notify();
++        }
++    }
++
++    /// The actual native prepaint style, unavailable until this input is painted.
++    pub fn rendered_text_style(&self) -> Option<&InputRenderedTextStyle> {
++        if self.masked || !self.observe_presentation {
++            return None;
++        }
++        self.last_rendered_text_style.as_ref()
++    }
++
+     /// Caret geometry from the latest prepaint, for caret-anchored popups.
+     ///
+     /// Popups positioned in their deferred prepaint read this to anchor to
+@@ -797,6 +871,7 @@ impl<M: InputModeKind> InputBaseState<M> {
+             replaceable: true,
+             soft_wrap: true,
+             tab_navigation: false,
++            observe_presentation: false,
+             wrapping_indent: WrappingIndent::default(),
+             scroll_beyond_last_line: None,
+             cursor_surrounding_lines: None,
+@@ -835,6 +910,7 @@ impl<M: InputModeKind> InputBaseState<M> {
+             number_max: None,
+             mode: LayoutMode::default(),
+             last_layout: None,
++            last_rendered_text_style: None,
+             prepaint_caret_geometry: None,
+             last_bounds: None,
+             last_selected_range: None,
+@@ -1428,6 +1504,7 @@ impl<M: InputModeKind> InputBaseState<M> {
+     /// Focus the input field.
+     pub fn focus(&self, window: &mut Window, cx: &mut Context<Self>) {
+         self.focus_handle.focus(window, cx);
++        window.request_text_input_focus(&self.focus_handle);
+         self.blink_cursor.update(cx, |cursor, cx| {
+             cursor.start(cx);
+         });
+diff --git a/crates/component/src/input/mod.rs b/crates/component/src/input/mod.rs
+index 3f84757a..b6b2bfa8 100644
+--- a/crates/component/src/input/mod.rs
++++ b/crates/component/src/input/mod.rs
+@@ -28,15 +28,15 @@ pub use gpui_base::input::{
+     DeleteToEndOfLine, DeleteToNextWordEnd, DeleteToPreviousWordStart, DisplayMap, DisplayPoint,
+     DocumentColorProvider, DocumentRangeSemanticTokensProvider, EditorState, Enter, Escape,
+     FoldRange, GoToDefinition, HighlightStyleResolver, HoverPopoverState, HoverProvider, Indent,
+-    IndentInline, InputEdit, InputEvent, InputHighlighter, InputHighlighterFactory, InputState,
+-    Lsp, MaskPattern, MoveDown, MoveEnd, MoveHome, MoveLeft, MovePageDown, MovePageUp, MoveRight,
+-    MoveToEnd, MoveToEndOfLine, MoveToNextWord, MoveToPreviousWord, MoveToStart, MoveToStartOfLine,
+-    MoveUp, Outdent, OutdentInline, Paste, Point, PrepaintCaretGeometry, RangeDecoration,
+-    RangeDecorationCollection, RangeDecorationStyle, Redo, Replace, Rope, RopeExt, RopeLines,
+-    Search, SelectAll, SelectToEnd, SelectToEndOfLine, SelectToNextWordEnd,
+-    SelectToPreviousWordStart, SelectToStart, SelectToStartOfLine, Selection, ShowCharacterPalette,
+-    ShowCompletions, ShowDocumentHandler, TabSize, TextDecoration, TextDecorationCollection,
+-    TextareaState, ToggleCodeActions, Undo, WrappingIndent,
++    IndentInline, InputEdit, InputEvent, InputHighlighter, InputHighlighterFactory,
++    InputRenderedTextStyle, InputState, Lsp, MaskPattern, MoveDown, MoveEnd, MoveHome, MoveLeft,
++    MovePageDown, MovePageUp, MoveRight, MoveToEnd, MoveToEndOfLine, MoveToNextWord,
++    MoveToPreviousWord, MoveToStart, MoveToStartOfLine, MoveUp, Outdent, OutdentInline, Paste,
++    Point, PrepaintCaretGeometry, RangeDecoration, RangeDecorationCollection, RangeDecorationStyle,
++    Redo, Replace, Rope, RopeExt, RopeLines, Search, SelectAll, SelectToEnd, SelectToEndOfLine,
++    SelectToNextWordEnd, SelectToPreviousWordStart, SelectToStart, SelectToStartOfLine, Selection,
++    ShowCharacterPalette, ShowCompletions, ShowDocumentHandler, TabSize, TextDecoration,
++    TextDecorationCollection, TextareaState, ToggleCodeActions, Undo, WrappingIndent,
+ };
+ pub use gpui_base::input::{EditorMode, InputMode, InputModeKind, TextareaMode};
+ #[doc(hidden)]
+-- 
+2.53.0
+

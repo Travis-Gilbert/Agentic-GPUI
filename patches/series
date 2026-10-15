@@ -38,3 +38,5 @@
 0038-retained-notification-presentation.patch
 0039-follow-typed-drag-payload.patch
 0040-unleased-notification-listener-delivery.patch
+0041-atomic-native-input-presentation.patch
+0042-retained-command-and-modal-presentation.patch

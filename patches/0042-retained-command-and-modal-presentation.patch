@@ -1,0 +1,2531 @@
+From 0c5aa41e7987e059e2295b34ae7e273465f3cbe7 Mon Sep 17 00:00:00 2001
+From: Travis Gilbert <1travisgilbert@gmail.com>
+Date: Thu, 15 Oct 2026 17:32:17 -0400
+Subject: [PATCH] feat(component): retain command and modal presentation owners
+
+---
+ Cargo.lock                                    |  50 +-
+ Cargo.toml                                    |  14 +-
+ crates/base/src/alert_dialog.rs               |   4 +
+ crates/base/src/dialog.rs                     |  22 +-
+ crates/component/src/button/button.rs         |  69 +-
+ crates/component/src/command/command.rs       |  33 +-
+ crates/component/src/command/mod.rs           |   2 +
+ crates/component/src/command/state.rs         |  46 +-
+ .../src/command/state/presentation.rs         | 513 ++++++++++++++
+ crates/component/src/dialog/alert_dialog.rs   |  98 ++-
+ crates/component/src/dialog/description.rs    |  10 +-
+ crates/component/src/dialog/dialog.rs         | 134 +++-
+ crates/component/src/dialog/mod.rs            |   5 +
+ crates/component/src/dialog/presentation.rs   | 626 ++++++++++++++++++
+ crates/component/src/dialog/title.rs          |  12 +-
+ .../src/menu/popup_menu/presentation.rs       |   4 +
+ crates/component/src/root.rs                  |  85 +--
+ crates/component/src/window_ext.rs            |  22 +-
+ 18 files changed, 1614 insertions(+), 135 deletions(-)
+ create mode 100644 crates/component/src/command/state/presentation.rs
+ create mode 100644 crates/component/src/dialog/presentation.rs
+
+diff --git a/Cargo.lock b/Cargo.lock
+index be0897f5..6d08a008 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1515,7 +1515,7 @@ dependencies = [
+ [[package]]
+ name = "collections"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=7e67ba4d1d82ad4c3e2444c53a76eb6543037747#7e67ba4d1d82ad4c3e2444c53a76eb6543037747"
+ dependencies = [
+  "gpui_util",
+  "indexmap",
+@@ -2446,7 +2446,7 @@ dependencies = [
+ [[package]]
+ name = "derive_refineable"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=7e67ba4d1d82ad4c3e2444c53a76eb6543037747#7e67ba4d1d82ad4c3e2444c53a76eb6543037747"
+ dependencies = [
+  "proc-macro2",
+  "quote",
+@@ -3854,7 +3854,7 @@ dependencies = [
+ [[package]]
+ name = "gpui"
+ version = "0.2.2"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=7e67ba4d1d82ad4c3e2444c53a76eb6543037747#7e67ba4d1d82ad4c3e2444c53a76eb6543037747"
+ dependencies = [
+  "accesskit",
+  "anyhow",
+@@ -4247,7 +4247,7 @@ dependencies = [
+ [[package]]
+ name = "gpui_apple"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=7e67ba4d1d82ad4c3e2444c53a76eb6543037747#7e67ba4d1d82ad4c3e2444c53a76eb6543037747"
+ dependencies = [
+  "anyhow",
+  "block",
+@@ -4270,7 +4270,7 @@ dependencies = [
+ [[package]]
+ name = "gpui_linux"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=7e67ba4d1d82ad4c3e2444c53a76eb6543037747#7e67ba4d1d82ad4c3e2444c53a76eb6543037747"
+ dependencies = [
+  "accesskit",
+  "accesskit_unix",
+@@ -4316,7 +4316,7 @@ dependencies = [
+ [[package]]
+ name = "gpui_macos"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=7e67ba4d1d82ad4c3e2444c53a76eb6543037747#7e67ba4d1d82ad4c3e2444c53a76eb6543037747"
+ dependencies = [
+  "accesskit",
+  "accesskit_macos",
+@@ -4362,7 +4362,7 @@ dependencies = [
+ [[package]]
+ name = "gpui_macros"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=7e67ba4d1d82ad4c3e2444c53a76eb6543037747#7e67ba4d1d82ad4c3e2444c53a76eb6543037747"
+ dependencies = [
+  "heck 0.5.0",
+  "proc-macro2",
+@@ -4373,7 +4373,7 @@ dependencies = [
+ [[package]]
+ name = "gpui_platform"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=7e67ba4d1d82ad4c3e2444c53a76eb6543037747#7e67ba4d1d82ad4c3e2444c53a76eb6543037747"
+ dependencies = [
+  "console_error_panic_hook",
+  "gpui",
+@@ -4386,7 +4386,7 @@ dependencies = [
+ [[package]]
+ name = "gpui_shared_string"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=7e67ba4d1d82ad4c3e2444c53a76eb6543037747#7e67ba4d1d82ad4c3e2444c53a76eb6543037747"
+ dependencies = [
+  "schemars",
+  "serde",
+@@ -4396,7 +4396,7 @@ dependencies = [
+ [[package]]
+ name = "gpui_util"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=7e67ba4d1d82ad4c3e2444c53a76eb6543037747#7e67ba4d1d82ad4c3e2444c53a76eb6543037747"
+ dependencies = [
+  "anyhow",
+  "log",
+@@ -4406,7 +4406,7 @@ dependencies = [
+ [[package]]
+ name = "gpui_web"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=7e67ba4d1d82ad4c3e2444c53a76eb6543037747#7e67ba4d1d82ad4c3e2444c53a76eb6543037747"
+ dependencies = [
+  "anyhow",
+  "async-channel",
+@@ -4431,7 +4431,7 @@ dependencies = [
+ [[package]]
+ name = "gpui_wgpu"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=7e67ba4d1d82ad4c3e2444c53a76eb6543037747#7e67ba4d1d82ad4c3e2444c53a76eb6543037747"
+ dependencies = [
+  "anyhow",
+  "bytemuck",
+@@ -4457,7 +4457,7 @@ dependencies = [
+ [[package]]
+ name = "gpui_windows"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=7e67ba4d1d82ad4c3e2444c53a76eb6543037747#7e67ba4d1d82ad4c3e2444c53a76eb6543037747"
+ dependencies = [
+  "accesskit",
+  "accesskit_windows",
+@@ -4820,7 +4820,7 @@ dependencies = [
+ [[package]]
+ name = "http_client"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=7e67ba4d1d82ad4c3e2444c53a76eb6543037747#7e67ba4d1d82ad4c3e2444c53a76eb6543037747"
+ dependencies = [
+  "anyhow",
+  "async-compression",
+@@ -4840,7 +4840,7 @@ dependencies = [
+ [[package]]
+ name = "http_client_tls"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=7e67ba4d1d82ad4c3e2444c53a76eb6543037747#7e67ba4d1d82ad4c3e2444c53a76eb6543037747"
+ dependencies = [
+  "log",
+  "rustls",
+@@ -6217,7 +6217,7 @@ dependencies = [
+ [[package]]
+ name = "media"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=7e67ba4d1d82ad4c3e2444c53a76eb6543037747#7e67ba4d1d82ad4c3e2444c53a76eb6543037747"
+ dependencies = [
+  "anyhow",
+  "bindgen",
+@@ -7416,7 +7416,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
+ [[package]]
+ name = "perf"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=7e67ba4d1d82ad4c3e2444c53a76eb6543037747#7e67ba4d1d82ad4c3e2444c53a76eb6543037747"
+ dependencies = [
+  "collections",
+  "serde",
+@@ -8638,7 +8638,7 @@ dependencies = [
+ [[package]]
+ name = "refineable"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=7e67ba4d1d82ad4c3e2444c53a76eb6543037747#7e67ba4d1d82ad4c3e2444c53a76eb6543037747"
+ dependencies = [
+  "derive_refineable",
+ ]
+@@ -8705,7 +8705,7 @@ checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
+ [[package]]
+ name = "reqwest_client"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=7e67ba4d1d82ad4c3e2444c53a76eb6543037747#7e67ba4d1d82ad4c3e2444c53a76eb6543037747"
+ dependencies = [
+  "anyhow",
+  "bytes",
+@@ -9136,7 +9136,7 @@ dependencies = [
+ [[package]]
+ name = "scheduler"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=7e67ba4d1d82ad4c3e2444c53a76eb6543037747#7e67ba4d1d82ad4c3e2444c53a76eb6543037747"
+ dependencies = [
+  "async-task",
+  "backtrace",
+@@ -9883,7 +9883,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
+ [[package]]
+ name = "sum_tree"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=7e67ba4d1d82ad4c3e2444c53a76eb6543037747#7e67ba4d1d82ad4c3e2444c53a76eb6543037747"
+ dependencies = [
+  "heapless",
+  "log",
+@@ -11438,7 +11438,7 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
+ [[package]]
+ name = "util_macros"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=7e67ba4d1d82ad4c3e2444c53a76eb6543037747#7e67ba4d1d82ad4c3e2444c53a76eb6543037747"
+ dependencies = [
+  "perf",
+  "quote",
+@@ -13328,7 +13328,7 @@ checksum = "34b31d188d9d685a4f9c7b46d6e36631b07058d2cfe190267adce54dc230bf12"
+ [[package]]
+ name = "zlog"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=7e67ba4d1d82ad4c3e2444c53a76eb6543037747#7e67ba4d1d82ad4c3e2444c53a76eb6543037747"
+ dependencies = [
+  "anyhow",
+  "chrono",
+@@ -13373,7 +13373,7 @@ dependencies = [
+ [[package]]
+ name = "ztracing"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=7e67ba4d1d82ad4c3e2444c53a76eb6543037747#7e67ba4d1d82ad4c3e2444c53a76eb6543037747"
+ dependencies = [
+  "tracing",
+  "tracing-subscriber",
+@@ -13384,7 +13384,7 @@ dependencies = [
+ [[package]]
+ name = "ztracing_macro"
+ version = "0.1.0"
+-source = "git+https://github.com/Travis-Gilbert/zed?rev=07c4b888b3a423de5ef584306cabe99558799559#07c4b888b3a423de5ef584306cabe99558799559"
++source = "git+https://github.com/Travis-Gilbert/zed?rev=7e67ba4d1d82ad4c3e2444c53a76eb6543037747#7e67ba4d1d82ad4c3e2444c53a76eb6543037747"
+ 
+ [[package]]
+ name = "zune-core"
+diff --git a/Cargo.toml b/Cargo.toml
+index a8939a68..81f2b3fb 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -67,12 +67,12 @@ story = { path = "crates/story" }
+ # source (its `oo7 ^0.6` excludes the Zed fork's `oo7 =0.6.0-alpha`), and a
+ # second engine would be a second GPUI type identity. Its `cfg(feature =
+ # "gpui-fast")` code stays inert, declared below so it raises no warning.
+-gpui = { git = "https://github.com/Travis-Gilbert/zed", rev = "07c4b888b3a423de5ef584306cabe99558799559" }
+-gpui_platform = { git = "https://github.com/Travis-Gilbert/zed", rev = "07c4b888b3a423de5ef584306cabe99558799559", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
+-gpui_web = { git = "https://github.com/Travis-Gilbert/zed", rev = "07c4b888b3a423de5ef584306cabe99558799559" }
+-gpui_macros = { git = "https://github.com/Travis-Gilbert/zed", rev = "07c4b888b3a423de5ef584306cabe99558799559" }
+-reqwest_client = { git = "https://github.com/Travis-Gilbert/zed", rev = "07c4b888b3a423de5ef584306cabe99558799559" }
+-sum-tree = { package = "sum_tree", git = "https://github.com/Travis-Gilbert/zed", rev = "07c4b888b3a423de5ef584306cabe99558799559" }
++gpui = { git = "https://github.com/Travis-Gilbert/zed", rev = "7e67ba4d1d82ad4c3e2444c53a76eb6543037747" }
++gpui_platform = { git = "https://github.com/Travis-Gilbert/zed", rev = "7e67ba4d1d82ad4c3e2444c53a76eb6543037747", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
++gpui_web = { git = "https://github.com/Travis-Gilbert/zed", rev = "7e67ba4d1d82ad4c3e2444c53a76eb6543037747" }
++gpui_macros = { git = "https://github.com/Travis-Gilbert/zed", rev = "7e67ba4d1d82ad4c3e2444c53a76eb6543037747" }
++reqwest_client = { git = "https://github.com/Travis-Gilbert/zed", rev = "7e67ba4d1d82ad4c3e2444c53a76eb6543037747" }
++sum-tree = { package = "sum_tree", git = "https://github.com/Travis-Gilbert/zed", rev = "7e67ba4d1d82ad4c3e2444c53a76eb6543037747" }
+ reqwest = { package = "zed-reqwest", git = "https://github.com/zed-industries/reqwest.git", rev = "33bc764aa15ff7b200bf7c93bd96e24878d53e14", version = "0.12.15-zed", default-features = false, features = [
+     "charset",
+     "http2",
+@@ -195,4 +195,4 @@ ignored = ["log", "anyhow", "serde"]
+ [workspace.metadata.theorem-fork]
+ upstream = "https://github.com/longbridge/gpui-kit"
+ upstream_tag = "v0.7.3"
+-zed_rev = "07c4b888b3a423de5ef584306cabe99558799559"
++zed_rev = "7e67ba4d1d82ad4c3e2444c53a76eb6543037747"
+diff --git a/crates/base/src/alert_dialog.rs b/crates/base/src/alert_dialog.rs
+index f85f51b9..81e03bfa 100644
+--- a/crates/base/src/alert_dialog.rs
++++ b/crates/base/src/alert_dialog.rs
+@@ -223,6 +223,10 @@ impl AlertDialog {
+         self.0 = self.0.popup(element);
+         self
+     }
++    pub fn platform_delegated(mut self, value: bool) -> Self {
++        self.0 = self.0.platform_delegated(value);
++        self
++    }
+     pub fn close_on_escape(mut self, value: bool) -> Self {
+         self.0 = self.0.close_on_escape(value);
+         self
+diff --git a/crates/base/src/dialog.rs b/crates/base/src/dialog.rs
+index eb8867fa..ef6d54f4 100644
+--- a/crates/base/src/dialog.rs
++++ b/crates/base/src/dialog.rs
+@@ -94,6 +94,12 @@ pub fn init(cx: &mut App) {
+ }
+ 
+ impl Dialog {
++    /// The platform owns visible modal focus only after presentation acknowledgement.
++    pub fn platform_delegated(mut self, delegated: bool) -> Self {
++        self.platform_delegated = delegated;
++        self
++    }
++
+     pub fn on_ok(
+         mut self,
+         handler: impl Fn(&ClickEvent, &mut Window, &mut App) -> bool + 'static,
+@@ -125,6 +131,7 @@ pub struct Dialog {
+     style: StyleRefinement,
+     focus: FocusHandle,
+     role: Role,
++    platform_delegated: bool,
+     layer: usize,
+     keyboard: bool,
+     overlay_closable: bool,
+@@ -426,6 +433,7 @@ impl Dialog {
+             style: StyleRefinement::default(),
+             focus: cx.focus_handle(),
+             role: Role::Dialog,
++            platform_delegated: false,
+             layer: 0,
+             keyboard: true,
+             overlay_closable: true,
+@@ -560,9 +568,9 @@ impl RenderOnce for Dialog {
+                     .flex()
+                     .items_center()
+                     .justify_center()
+-                    .role(self.role)
++                    .when(!self.platform_delegated, |this| this.role(self.role))
++                    .when(self.platform_delegated, |this| this.opacity(0.))
+                     .track_focus(&self.focus)
+-                    .focus_trap(format!("dialog-{}", self.layer), &self.focus)
+                     .when(self.keyboard, |this| this.key_context(CONTEXT))
+                     .map(|this| {
+                         let request_cancel = request_close.clone();
+@@ -637,7 +645,15 @@ impl RenderOnce for Dialog {
+                     })
+                     .children(self.popup)
+                     .children(self.children)
+-                    .refine_style(&self.style),
++                    .refine_style(&self.style)
++                    .map(|this| {
++                        if self.platform_delegated {
++                            this.into_any_element()
++                        } else {
++                            this.focus_trap(format!("dialog-{}", self.layer), &self.focus)
++                                .into_any_element()
++                        }
++                    }),
+             ),
+         )
+         .with_priority(10 + self.layer)
+diff --git a/crates/component/src/button/button.rs b/crates/component/src/button/button.rs
+index 8902f97c..9c2b9750 100644
+--- a/crates/component/src/button/button.rs
++++ b/crates/component/src/button/button.rs
+@@ -686,13 +686,7 @@ impl RenderOnce for Button {
+             .clone();
+         let is_focused = focus_handle.is_focused(window);
+ 
+-        let rounding = match self.rounded {
+-            ButtonRounded::Small => cx.theme().radius * 0.5,
+-            ButtonRounded::Medium => cx.theme().radius,
+-            ButtonRounded::Large => cx.theme().radius * 2.0,
+-            ButtonRounded::Size(px) => px,
+-            ButtonRounded::None => Pixels::ZERO,
+-        };
++        let rounding = button_rounding(self.rounded, cx);
+ 
+         let root = base
+             .cursor_default()
+@@ -750,7 +744,7 @@ impl RenderOnce for Button {
+             .when(self.border_corners.bottom_right, |this| {
+                 this.rounded_br(rounding)
+             })
+-            .when(self.variant.is_default() || self.outline, |this| {
++            .when(self.variant.draws_border(self.outline), |this| {
+                 this.when(self.border_edges.left, |this| this.border_l_1())
+                     .when(self.border_edges.right, |this| this.border_r_1())
+                     .when(self.border_edges.top, |this| this.border_t_1())
+@@ -946,6 +940,65 @@ struct ButtonVariantStyle {
+     shadow: bool,
+ }
+ 
++fn button_rounding(rounding: ButtonRounded, cx: &App) -> Pixels {
++    match rounding {
++        ButtonRounded::Small => cx.theme().radius * 0.5,
++        ButtonRounded::Medium => cx.theme().radius,
++        ButtonRounded::Large => cx.theme().radius * 2.0,
++        ButtonRounded::Size(px) => px,
++        ButtonRounded::None => Pixels::ZERO,
++    }
++}
++
++/// Native variant colors exposed without a second style policy. A patterned
++/// background has no solid color and must remain on its native realization.
++#[derive(Clone, Debug, PartialEq)]
++pub struct ButtonPresentationStyle {
++    pub background: Option<Hsla>,
++    pub border: Hsla,
++    pub foreground: Hsla,
++    pub underline: bool,
++    pub shadow: bool,
++}
++impl From<ButtonVariantStyle> for ButtonPresentationStyle {
++    fn from(style: ButtonVariantStyle) -> Self {
++        Self {
++            background: style.bg.as_solid(),
++            border: style.border,
++            foreground: style.fg,
++            underline: style.underline,
++            shadow: style.shadow,
++        }
++    }
++}
++#[derive(Clone, Debug, PartialEq)]
++pub struct ButtonPresentationStyles {
++    /// Metadata for the unmodified Button defaults used by DialogButtonProps.
++    pub default_border_width: Pixels,
++    pub default_radius: Pixels,
++    pub default_text: gpui::TextStyleRefinement,
++    pub normal: ButtonPresentationStyle,
++    pub hovered: ButtonPresentationStyle,
++    pub active: ButtonPresentationStyle,
++    pub disabled: ButtonPresentationStyle,
++}
++impl ButtonVariant {
++    fn draws_border(&self, outline: bool) -> bool { self.is_default() || outline }
++    /// The same four functions consumed by the native Button renderer.
++    pub fn presentation_styles(&self, outline: bool, cx: &mut App) -> ButtonPresentationStyles {
++        let mut text = div().button_text_size(Size::default());
++        ButtonPresentationStyles {
++            default_border_width: if self.draws_border(outline) { gpui::px(1.) } else { Pixels::ZERO },
++            default_radius: button_rounding(ButtonRounded::default(), cx),
++            default_text: text.style().text.clone(),
++            normal: self.normal(outline, cx).into(),
++            hovered: self.hovered(outline, cx).into(),
++            active: self.active(outline, cx).into(),
++            disabled: self.disabled(outline, cx).into(),
++        }
++    }
++}
++
+ #[derive(Clone, Copy)]
+ enum ButtonStyleState {
+     Normal,
+diff --git a/crates/component/src/command/command.rs b/crates/component/src/command/command.rs
+index 1bf4222c..17eb7838 100644
+--- a/crates/component/src/command/command.rs
++++ b/crates/component/src/command/command.rs
+@@ -8,6 +8,7 @@ use gpui::{
+ use crate::IndexPath;
+ use crate::command::{
+     item::{CommandEntry, CommandGroup, CommandItem},
++    state::presentation::{CommandPresenterFactory, PresentationGuard},
+     state::{CommandModel, CommandState, OnCancel, OnIndex, OnQuery},
+ };
+ 
+@@ -65,6 +66,7 @@ pub struct Command {
+     on_confirm: Option<Rc<OnIndex>>,
+     on_cancel: Option<Rc<OnCancel>>,
+     options: CommandOptions,
++    presenter: Option<(SharedString, CommandPresenterFactory)>,
+ }
+ 
+ impl Command {
+@@ -80,9 +82,21 @@ impl Command {
+             on_confirm: None,
+             on_cancel: None,
+             options: CommandOptions::default(),
++            presenter: None,
+         }
+     }
+ 
++    /// Observe this existing owner while its actual rendered element lives.
++    /// The shared factory identity distinguishes a replaced platform host.
++    pub fn presenter(
++        mut self,
++        invoker: impl Into<SharedString>,
++        factory: CommandPresenterFactory,
++    ) -> Self {
++        self.presenter = Some((invoker.into(), factory));
++        self
++    }
++
+     /// Add an ungrouped command item.
+     pub fn item(mut self, item: CommandItem) -> Self {
+         self.entries.push(CommandEntry::Item(item));
+@@ -238,7 +252,24 @@ impl Styled for Command {
+ }
+ 
+ impl RenderOnce for Command {
+-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
++    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
++        if let Some((invoker, factory)) = self.presenter {
++            let guard = window.use_keyed_state(
++                gpui::ElementId::NamedInteger(
++                    "command-platform-presentation".into(),
++                    self.state.entity_id().as_u64(),
++                ),
++                cx,
++                |_, _| PresentationGuard::new(factory.clone(), invoker.clone()),
++            );
++            let presenter = guard.update(cx, |guard, _| guard.install(factory, invoker));
++            self.state.update(cx, |state, cx| {
++                state.install_platform_presenter(Some(presenter), cx)
++            });
++        } else {
++            self.state
++                .update(cx, |state, cx| state.install_platform_presenter(None, cx));
++        }
+         let options = self.options;
+         let model = CommandModel {
+             entries: self.entries,
+diff --git a/crates/component/src/command/mod.rs b/crates/component/src/command/mod.rs
+index cfb295ad..21375588 100644
+--- a/crates/component/src/command/mod.rs
++++ b/crates/component/src/command/mod.rs
+@@ -13,3 +13,5 @@ pub use item::{CommandEntry, CommandGroup, CommandItem};
+ pub use state::CommandState;
+ 
+ pub(crate) use state::init;
++
++pub use state::presentation::{CommandPresenter,CommandPresenterFactory,CommandPresentation,CommandRowPresentation,CommandRowKind,CommandInput,CommandInputRefusal};
+diff --git a/crates/component/src/command/state.rs b/crates/component/src/command/state.rs
+index fbe35553..cde532cd 100644
+--- a/crates/component/src/command/state.rs
++++ b/crates/component/src/command/state.rs
+@@ -25,6 +25,8 @@ use crate::{
+     v_flex, v_virtual_list,
+ };
+ 
++pub(super) mod presentation;
++
+ pub(crate) const CONTEXT: &str = "Command";
+ 
+ /// The row a separator occupies: a one-pixel rule with a little air on
+@@ -115,6 +117,7 @@ struct MatchedItem {
+ /// The interaction state of a [`crate::command::Command`] palette: its query,
+ /// focus, scrolling, and highlighted command.
+ pub struct CommandState {
++    presentation: presentation::PresentationState,
+     focus_handle: FocusHandle,
+     query_input: Entity<InputState>,
+     scroll_handle: VirtualListScrollHandle,
+@@ -150,6 +153,7 @@ impl CommandState {
+             vec![cx.subscribe_in(&query_input, window, Self::on_query_input_event)];
+ 
+         Self {
++            presentation: Default::default(),
+             focus_handle: cx.focus_handle(),
+             query_input,
+             scroll_handle: VirtualListScrollHandle::new(),
+@@ -350,6 +354,7 @@ impl CommandState {
+     /// Recompute the visible rows and the matching items for the current query.
+     ///
+     fn update_matches(&mut self, cx: &App) {
++        self.presentation.revision = self.presentation.revision.wrapping_add(1);
+         let query = self.query(cx);
+         let query = query.trim();
+ 
+@@ -772,8 +777,15 @@ impl CommandState {
+         window: &mut Window,
+         cx: &mut Context<Self>,
+     ) -> AnyElement {
++        let bounds = self.presentation.rows.clone();
+         let Some(&CommandRow::Item(matched_ix)) = self.rows.get(row_ix) else {
+-            return self.render_row(row_ix, window, cx);
++            return div()
++                .w_full()
++                .child(self.render_row(row_ix, window, cx))
++                .on_prepaint(move |rect, _, _| {
++                    bounds.borrow_mut().insert(row_ix, rect);
++                })
++                .into_any_element();
+         };
+ 
+         let binding = self.item_binding(matched_ix, window, cx);
+@@ -785,7 +797,13 @@ impl CommandState {
+             self.measure_on_next_frame(window, cx);
+         }
+ 
+-        self.render_item_with_binding(matched_ix, binding, window, cx)
++        div()
++            .w_full()
++            .child(self.render_item_with_binding(matched_ix, binding, window, cx))
++            .on_prepaint(move |rect, _, _| {
++                bounds.borrow_mut().insert(row_ix, rect);
++            })
++            .into_any_element()
+     }
+ 
+     /// The keybinding hint an item shows in its trailing slot. A custom child
+@@ -846,7 +864,9 @@ impl CommandState {
+         self.item_row(selected, window, cx)
+             .id(self.matched[matched_ix].index_path)
+             .test_support()
+-            .role(Role::ListBoxOption)
++            .when(!self.is_platform_delegated(), |this| {
++                this.role(Role::ListBoxOption)
++            })
+             .aria_selected(selected)
+             .when(disabled, |this| this.text_color(muted_foreground))
+             .when(!disabled, |this| {
+@@ -914,12 +934,22 @@ impl Render for CommandState {
+                 .scroll_to_item(row_ix, ScrollStrategy::Nearest);
+         }
+ 
++        self.presentation.rows.borrow_mut().clear();
++        let delegated = self.is_platform_delegated();
++        let query_bounds = self.presentation.query_bounds.clone();
++        let owner = cx.entity().downgrade();
+         let rows_count = self.rows.len();
+         let row_sizes = self.row_sizes.clone();
+         let command_state = cx.entity();
+ 
+         v_flex()
+             .id("command")
++            .on_prepaint({let owner=owner.clone();move |bounds, _, cx| {
++                if let Some(owner) = owner.upgrade() {
++                    owner.update(cx, |state, _| state.presentation.bounds=bounds);
++                }
++            }})
++            .when(delegated, |this| this.opacity(0.))
+             .test_support()
+             .key_context(CONTEXT)
+             .track_focus(&self.focus_handle)
+@@ -947,8 +977,10 @@ impl Render for CommandState {
+                         .px_3()
+                         .border_b_1()
+                         .border_color(cx.theme().border)
++                        .on_prepaint(move |bounds, _, _| query_bounds.set(bounds))
+                         .child(
+                             Input::new(&self.query_input)
++                                .when(delegated, |this| this.role(None::<Role>))
+                                 .prefix(
+                                     Icon::new(IconName::Search)
+                                         .text_color(cx.theme().muted_foreground),
+@@ -961,7 +993,7 @@ impl Render for CommandState {
+             .child(
+                 v_flex()
+                     .id("command-list-container")
+-                    .role(Role::ListBox)
++                    .when(!delegated, |this| this.role(Role::ListBox))
+                     .relative()
+                     .flex_1()
+                     // The rows carry their inset on the virtual list itself so
+@@ -973,6 +1005,7 @@ impl Render for CommandState {
+                         let measure_state = command_state.clone();
+                         move |bounds, window, cx| {
+                             measure_state.update(cx, |state, cx| {
++                                state.presentation.list_bounds = bounds;
+                                 // The list's `p_1` is one quarter rem on each
+                                 // side. Its rem-dependent padding and inherited
+                                 // layout-relevant text style participate in
+@@ -1036,6 +1069,11 @@ impl Render for CommandState {
+             .when_some(self.options.footer.as_ref(), |this, footer| {
+                 this.child(footer(self, window, cx))
+             })
++            // Publish after the actual query/list/header children prepaint.
++            // The native row map is current-frame data, not last frame's rows.
++            .child(gpui::canvas(move|_,window,cx|{
++                if let Some(owner)=owner.upgrade(){owner.update(cx,|state,cx|state.publish_platform(state.presentation.bounds,window,cx));}
++            },|_,(),_,_|{}).absolute().inset_0())
+     }
+ }
+ 
+diff --git a/crates/component/src/command/state/presentation.rs b/crates/component/src/command/state/presentation.rs
+new file mode 100644
+index 00000000..f93109eb
+--- /dev/null
++++ b/crates/component/src/command/state/presentation.rs
+@@ -0,0 +1,513 @@
++//! Optional presentation of the actual command owner. Matching, original
++//! index paths, selection, scroll and callbacks remain in CommandState.
++use super::{CommandRow, CommandState};
++use crate::{
++    IndexPath,
++    actions::{Cancel, Confirm, SelectDown, SelectUp},
++    input::InputState,
++    kbd::Kbd,
++};
++use gpui::{App, Bounds, Context, Entity, Pixels, SharedString, WeakEntity, Window};
++use std::{
++    cell::{Cell, RefCell},
++    collections::BTreeMap,
++    rc::Rc,
++};
++
++pub type CommandPresenterFactory = Rc<dyn Fn(&str) -> CommandPresenter>;
++#[derive(Clone)]
++pub struct CommandPresenter {
++    frame: Rc<dyn Fn(CommandPresentation, &mut Window, &mut App) -> bool>,
++    closed: Rc<dyn Fn(u64)>,
++    delegated: Rc<Cell<bool>>,
++    identity: Rc<Cell<Option<u64>>>,
++    retired: Rc<Cell<bool>>,
++}
++impl CommandPresenter {
++    pub fn new(
++        frame: impl Fn(CommandPresentation, &mut Window, &mut App) -> bool + 'static,
++        closed: impl Fn(u64) + 'static,
++    ) -> Self {
++        Self {
++            frame: Rc::new(frame),
++            closed: Rc::new(closed),
++            delegated: Rc::default(),
++            identity: Rc::default(),
++            retired: Rc::default(),
++        }
++    }
++    pub fn is_platform_delegated(&self) -> bool {
++        self.delegated.get() && !self.retired.get()
++    }
++    fn close(&self) {
++        if !self.retired.replace(true) {
++            self.delegated.set(false);
++            if let Some(id) = self.identity.take() {
++                (self.closed)(id);
++            }
++        }
++    }
++}
++/// A real rendered-element lifetime guard. The query owner can persist while
++/// its popup is closed, so its Entity's Drop is not a popup-close signal.
++pub(crate) struct PresentationGuard {
++    factory: CommandPresenterFactory,
++    invoker: SharedString,
++    presenter: CommandPresenter,
++}
++impl PresentationGuard {
++    pub(crate) fn new(factory: CommandPresenterFactory, invoker: SharedString) -> Self {
++        let presenter = factory(&invoker);
++        Self {
++            factory,
++            invoker,
++            presenter,
++        }
++    }
++    pub(crate) fn install(
++        &mut self,
++        factory: CommandPresenterFactory,
++        invoker: SharedString,
++    ) -> CommandPresenter {
++        if !Rc::ptr_eq(&self.factory, &factory) || self.invoker != invoker {
++            self.presenter.close();
++            self.presenter = factory(&invoker);
++            self.factory = factory;
++            self.invoker = invoker;
++        }
++        self.presenter.clone()
++    }
++}
++impl Drop for PresentationGuard {
++    fn drop(&mut self) {
++        self.presenter.close();
++    }
++}
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum CommandRowKind {
++    Item,
++    Heading,
++    Separator,
++}
++#[derive(Clone, Debug)]
++pub struct CommandRowPresentation {
++    pub id: SharedString,
++    pub kind: CommandRowKind,
++    pub index: Option<IndexPath>,
++    pub label: SharedString,
++    pub checked: bool,
++    pub disabled: bool,
++    pub shortcut: Option<SharedString>,
++    pub icon_svg: Option<std::sync::Arc<[u8]>>,
++    pub bounds: Bounds<Pixels>,
++}
++#[derive(Clone)]
++pub struct CommandPresentation {
++    pub entity: WeakEntity<CommandState>,
++    pub query_input: Entity<InputState>,
++    pub revision: u64,
++    pub query: SharedString,
++    pub searchable: bool,
++    pub placeholder: SharedString,
++    pub loading: bool,
++    pub selected: Option<IndexPath>,
++    pub bounds: Bounds<Pixels>,
++    pub query_bounds: Bounds<Pixels>,
++    pub list_bounds: Bounds<Pixels>,
++    /// The actual native root customization, border gate, and shared row radius.
++    pub bordered: bool,
++    pub style: gpui::StyleRefinement,
++    pub item_radius: Pixels,
++    pub rows: Vec<CommandRowPresentation>,
++    complete: bool,
++    delegated: bool,
++}
++impl CommandPresentation {
++    pub fn is_complete(&self) -> bool {
++        self.complete
++    }
++    pub fn is_platform_delegated(&self) -> bool {
++        self.delegated
++    }
++}
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum CommandInput {
++    Select(IndexPath),
++    Activate(IndexPath),
++    Previous,
++    Next,
++    Confirm,
++    Cancel,
++}
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum CommandInputRefusal {
++    StaleRevision,
++    NotPresented,
++    TargetAbsent,
++    Disabled,
++}
++#[derive(Default)]
++pub(super) struct PresentationState {
++    pub(super) presenter: Option<CommandPresenter>,
++    pub(super) revision: u64,
++    pub(super) bounds: Bounds<Pixels>,
++    pub(super) query_bounds: Rc<Cell<Bounds<Pixels>>>,
++    pub(super) list_bounds: Bounds<Pixels>,
++    pub(super) rows: Rc<RefCell<BTreeMap<usize, Bounds<Pixels>>>>,
++}
++impl CommandState {
++    pub(crate) fn install_platform_presenter(
++        &mut self,
++        presenter: Option<CommandPresenter>,
++        cx: &mut Context<Self>,
++    ) {
++        let before = self.is_platform_delegated();
++        if let Some(previous) = &self.presentation.presenter {
++            if presenter
++                .as_ref()
++                .is_none_or(|next| !Rc::ptr_eq(&previous.delegated, &next.delegated))
++            {
++                previous.close();
++            }
++        }
++        self.presentation.presenter = presenter;
++        if before != self.is_platform_delegated() {
++            cx.notify();
++        }
++    }
++    /// The same InputState that native search uses; a platform editing island
++    /// attaches this owner, rather than keeping a second query text store.
++    pub fn query_input(&self) -> Entity<InputState> {
++        self.query_input.clone()
++    }
++    pub fn is_platform_delegated(&self) -> bool {
++        self.presentation
++            .presenter
++            .as_ref()
++            .is_some_and(CommandPresenter::is_platform_delegated)
++    }
++    pub(super) fn command_presentation(
++        &self,
++        entity: WeakEntity<Self>,
++        window: &Window,
++        cx: &App,
++    ) -> CommandPresentation {
++        let identity = entity.entity_id().as_u64();
++        // An opaque header/footer/item is not silently reconstructed from text.
++        // Structured source descriptors are required before it can delegate.
++        let mut complete = self.options.header.is_none()
++            && self.options.footer.is_none()
++            && self.options.empty.is_none();
++        let measured = self.presentation.rows.borrow();
++        let rows = measured
++            .iter()
++            .filter_map(|(row_ix, bounds)| {
++                let (kind, index, label, checked, disabled, shortcut, icon) =
++                    match self.rows.get(*row_ix)? {
++                        CommandRow::Separator => (
++                            CommandRowKind::Separator,
++                            None,
++                            "".into(),
++                            false,
++                            true,
++                            None,
++                            None,
++                        ),
++                        CommandRow::Heading(label) => (
++                            CommandRowKind::Heading,
++                            None,
++                            label.clone(),
++                            false,
++                            true,
++                            None,
++                            None,
++                        ),
++                        CommandRow::Item(matched_ix) => {
++                            let item = self.item_at(*matched_ix)?;
++                            if item.content.is_some() || item.label_text().is_none() {
++                                complete = false;
++                            }
++                            let shortcut = self
++                                .item_binding(*matched_ix, window, cx)
++                                .map(|key| Kbd::format(key.keystroke()).into());
++                            let icon =
++                                item.icon.as_ref().and_then(|icon| match icon.source_ref() {
++                                    crate::icon::IconSource::Data(bytes) => Some(bytes.clone()),
++                                    crate::icon::IconSource::Path(path) => cx
++                                        .asset_source()
++                                        .load(path.as_ref())
++                                        .ok()
++                                        .flatten()
++                                        .map(|bytes| std::sync::Arc::from(bytes.as_ref())),
++                                });
++                            (
++                                CommandRowKind::Item,
++                                Some(self.matched[*matched_ix].index_path),
++                                item.label_text().cloned().unwrap_or_default(),
++                                item.checked,
++                                item.is_disabled(),
++                                shortcut,
++                                icon,
++                            )
++                        }
++                    };
++                Some(CommandRowPresentation {
++                    id: format!("command-{identity}-row-{row_ix}").into(),
++                    kind,
++                    index,
++                    label,
++                    checked,
++                    disabled,
++                    shortcut,
++                    icon_svg: icon,
++                    bounds: *bounds,
++                })
++            })
++            .collect();
++        CommandPresentation {
++            entity,
++            query_input: self.query_input(),
++            revision: self.presentation.revision,
++            query: self.query(cx),
++            searchable: self.model.searchable,
++            placeholder: self.applied_placeholder.clone(),
++            loading: self.loading,
++            selected: self.selected_index(),
++            bounds: self.presentation.bounds,
++            query_bounds: self.presentation.query_bounds.get(),
++            list_bounds: self.presentation.list_bounds,
++            bordered: self.options.bordered,
++            style: self.options.style.clone(),
++            item_radius: self.item_radius(window, cx),
++            rows,
++            complete,
++            delegated: self.is_platform_delegated(),
++        }
++    }
++    pub fn presented_input(
++        &mut self,
++        revision: u64,
++        input: CommandInput,
++        window: &mut Window,
++        cx: &mut Context<Self>,
++    ) -> Result<(), CommandInputRefusal> {
++        if revision != self.presentation.revision {
++            return Err(CommandInputRefusal::StaleRevision);
++        }
++        if !self.presentation.presenter.as_ref().is_some_and(|p| {
++            !p.retired.get() && (p.is_platform_delegated() || input == CommandInput::Cancel)
++        }) {
++            return Err(CommandInputRefusal::NotPresented);
++        }
++        match input {
++            CommandInput::Select(index) | CommandInput::Activate(index) => {
++                let matched = self
++                    .matched
++                    .iter()
++                    .position(|matched| matched.index_path == index)
++                    .ok_or(CommandInputRefusal::TargetAbsent)?;
++                if self.matched[matched].disabled {
++                    return Err(CommandInputRefusal::Disabled);
++                }
++                self.select(matched, window, cx);
++                if matches!(input, CommandInput::Activate(_)) {
++                    self.confirm(matched, window, cx);
++                }
++            }
++            CommandInput::Previous => self.on_action_select_up(&SelectUp, window, cx),
++            CommandInput::Next => self.on_action_select_down(&SelectDown, window, cx),
++            CommandInput::Confirm => {
++                self.on_action_confirm(&Confirm { secondary: false }, window, cx)
++            }
++            CommandInput::Cancel => self.on_action_cancel(&Cancel, window, cx),
++        }
++        Ok(())
++    }
++    pub(super) fn publish_platform(
++        &mut self,
++        bounds: Bounds<Pixels>,
++        window: &mut Window,
++        cx: &mut Context<Self>,
++    ) {
++        self.presentation.bounds = bounds;
++        let Some(presenter) = self.presentation.presenter.clone() else {
++            return;
++        };
++        presenter.identity.set(Some(cx.entity_id().as_u64()));
++        let frame = self.command_presentation(cx.entity().downgrade(), window, cx);
++        let complete = frame.is_complete();
++        let requested =
++            (presenter.frame)(frame, window, cx) && complete && !presenter.retired.get();
++        if presenter.delegated.replace(requested) != requested {
++            cx.notify();
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::{
++        Disableable as _,
++        command::{Command, CommandItem},
++    };
++    use gpui::{
++        AppContext as _, ParentElement as _, Render, Styled as _, div, prelude::FluentBuilder as _,
++        px,
++    };
++    struct Fixture {
++        state: Entity<CommandState>,
++        factory: CommandPresenterFactory,
++        confirmed: Rc<Cell<u32>>,
++        show: bool,
++        changed: bool,
++        opaque_header: bool,
++    }
++    impl Render for Fixture {
++        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui::IntoElement {
++            let count = self.confirmed.clone();
++            let command = Command::new(&self.state)
++                .item(CommandItem::new().label(if self.changed {
++                    "Changed owner row"
++                } else {
++                    "Owner row"
++                }))
++                .item(CommandItem::new().label("Unavailable row").disabled(true))
++                .on_confirm(move |_, _, _| count.set(count.get() + 1))
++                .presenter("fixture-invoker", self.factory.clone());
++            let command = if self.opaque_header {
++                command.header(|_, _, _| div().child("Opaque header"))
++            } else {
++                command
++            };
++            div()
++                .w(px(360.))
++                .h(px(300.))
++                .when(self.show, |this| this.child(command))
++        }
++    }
++    #[gpui::test]
++    fn platform_command_uses_actual_matching_refusals_and_retained_widget_lifetime(
++        cx: &mut gpui::TestAppContext,
++    ) {
++        cx.update(crate::init);
++        let frames: Rc<RefCell<Vec<CommandPresentation>>> = Rc::default();
++        let closed = Rc::new(Cell::new(0));
++        let confirmed = Rc::new(Cell::new(0));
++        let factory: CommandPresenterFactory = Rc::new({
++            let frames = frames.clone();
++            let closed = closed.clone();
++            move |_| {
++                CommandPresenter::new(
++                    {
++                        let frames = frames.clone();
++                        move |frame, _, _| {
++                            frames.borrow_mut().push(frame);
++                            true
++                        }
++                    },
++                    {
++                        let closed = closed.clone();
++                        move |_| closed.set(closed.get() + 1)
++                    },
++                )
++            }
++        });
++        let (view, cx) = cx.add_window_view(move |window, cx| Fixture {
++            state: cx.new(|cx| CommandState::new(window, cx)),
++            factory,
++            confirmed,
++            show: true,
++            changed: false,
++            opaque_header: false,
++        });
++        cx.run_until_parked();
++        let frame = frames
++            .borrow()
++            .last()
++            .cloned()
++            .expect("actual command prepaint publishes");
++        assert!(frame.is_complete());
++        assert!(
++            frame
++                .rows
++                .iter()
++                .any(|row| row.label.as_ref() == "Owner row"
++                    && row.bounds.size.height > gpui::px(0.))
++        );
++        let revision = frame.revision;
++        let state = frame.entity.upgrade().unwrap();
++        state.update_in(cx, |state, window, cx| {
++            assert_eq!(
++                state.presented_input(
++                    revision,
++                    CommandInput::Activate(IndexPath::new(1)),
++                    window,
++                    cx
++                ),
++                Err(CommandInputRefusal::Disabled)
++            );
++            state
++                .presented_input(
++                    revision,
++                    CommandInput::Activate(IndexPath::new(0)),
++                    window,
++                    cx,
++                )
++                .unwrap();
++        });
++        cx.run_until_parked();
++        assert_eq!(view.read_with(cx, |view, _| view.confirmed.get()), 1);
++        view.update(cx, |view, cx| {
++            view.changed = true;
++            cx.notify();
++        });
++        cx.run_until_parked();
++        state.update_in(cx, |state, window, cx| {
++            assert_eq!(
++                state.presented_input(
++                    revision,
++                    CommandInput::Activate(IndexPath::new(0)),
++                    window,
++                    cx
++                ),
++                Err(CommandInputRefusal::StaleRevision)
++            );
++        });
++        view.update(cx, |view, cx| {
++            view.opaque_header = true;
++            cx.notify();
++        });
++        cx.run_until_parked();
++        assert!(!frames.borrow().last().unwrap().is_complete());
++        assert!(!state.read_with(cx, |state, _| state.is_platform_delegated()));
++        view.update(cx, |view, cx| {
++            view.show = false;
++            cx.notify();
++        });
++        cx.run_until_parked();
++        // Complete the next native frame: element states retire at frame
++        // publication, rather than merely when the view reducer changes.
++        cx.update(|window, cx| {
++            window.simulate_next_frame(cx);
++            window.refresh();
++        });
++        cx.run_until_parked();
++        assert_eq!(
++            closed.get(),
++            1,
++            "retiring the rendered widget closes while query owner still exists"
++        );
++        state.update_in(cx, |state, window, cx| {
++            assert_eq!(
++                state.presented_input(
++                    state.presentation.revision,
++                    CommandInput::Confirm,
++                    window,
++                    cx
++                ),
++                Err(CommandInputRefusal::NotPresented)
++            );
++        });
++    }
++}
+diff --git a/crates/component/src/dialog/alert_dialog.rs b/crates/component/src/dialog/alert_dialog.rs
+index a96e56d3..f953239b 100644
+--- a/crates/component/src/dialog/alert_dialog.rs
++++ b/crates/component/src/dialog/alert_dialog.rs
+@@ -12,6 +12,7 @@ use crate::{
+     },
+     h_flex, v_flex,
+ };
++use gpui_base::ElementExt as _;
+ 
+ /// AlertDialog is a modal dialog that interrupts the user with important content
+ /// and expects a response.
+@@ -90,6 +91,37 @@ impl AlertDialog {
+         }
+     }
+ 
++    pub(crate) fn with_platform_owner(
++        mut self,
++        owner: Option<
++            std::rc::Rc<std::cell::RefCell<super::presentation::DialogPresentationOwner>>,
++        >,
++    ) -> Self {
++        self.base.platform_owner = owner;
++        self
++    }
++    /// The same text feeds native content and its platform descriptor.
++    pub fn title_text(mut self, title: impl Into<SharedString>) -> Self {
++        let title = title.into();
++        self = self.title(title.clone());
++        self.base.platform_text.title = Some(title);
++        self
++    }
++    pub fn description_text(mut self, description: impl Into<SharedString>) -> Self {
++        let description = description.into();
++        self = self.description(description.clone());
++        self.base.platform_text.description = Some(description);
++        self
++    }
++    pub fn presenter(
++        mut self,
++        invoker: impl Into<SharedString>,
++        factory: super::presentation::DialogPresenterFactory,
++    ) -> Self {
++        self.base = self.base.presenter(invoker, factory);
++        self
++    }
++
+     /// Set to use confirm dialog, with OK and Cancel buttons.
+     ///
+     /// The default of [`AlertDialog`] has OK button.
+@@ -168,6 +200,7 @@ impl AlertDialog {
+     #[track_caller]
+     pub fn title(mut self, title: impl IntoElement) -> Self {
+         self.debug_assert_no_trigger();
++        self.base.platform_text.title = None;
+         self.title = Some(title.into_any_element());
+         self
+     }
+@@ -176,6 +209,7 @@ impl AlertDialog {
+     #[track_caller]
+     pub fn description(mut self, description: impl IntoElement) -> Self {
+         self.debug_assert_no_trigger();
++        self.base.platform_text.description = None;
+         self.description = Some(description.into_any_element());
+         self
+     }
+@@ -318,8 +352,32 @@ impl AlertDialog {
+         let has_title = self.icon.is_some() || self.title.is_some();
+         let has_header = has_title || self.description.is_some();
+         let has_footer = self.base.footer.is_some();
+-
+-        self.base
++        let owner = self.base.platform_owner.clone();
++        let delegated = owner
++            .as_ref()
++            .is_some_and(|owner| owner.borrow().delegated());
++        let title_bounds = owner
++            .as_ref()
++            .map(|owner| owner.borrow().title_bounds.clone());
++        let description_bounds = owner
++            .as_ref()
++            .map(|owner| owner.borrow().description_bounds.clone());
++        let confirm_bounds = owner
++            .as_ref()
++            .map(|owner| owner.borrow().confirm_bounds.clone());
++        let cancel_bounds = owner
++            .as_ref()
++            .map(|owner| owner.borrow().cancel_bounds.clone());
++        let mut text = self.base.platform_text.clone();
++        text.alert = true;
++        text.complete = text.title.is_some()
++            && text.description.is_some()
++            && self.icon.is_none()
++            && self.children.is_empty()
++            && !has_footer
++            && self.base.content_builder.is_none();
++        let mut result = self
++            .base
+             .when(has_header, |this| {
+                 this.header(
+                     DialogHeader::new().child(
+@@ -333,10 +391,24 @@ impl AlertDialog {
+                                     .min_w_0()
+                                     .gap_1()
+                                     .when_some(self.title, |this, title| {
+-                                        this.child(DialogTitle::new().child(title))
++                                        this.child(DialogTitle::new().child(title).on_prepaint(
++                                            move |bounds, _, _| {
++                                                if let Some(cell) = title_bounds {
++                                                    cell.set(bounds);
++                                                }
++                                            },
++                                        ))
+                                     })
+                                     .when_some(self.description, |this, desc| {
+-                                        this.child(DialogDescription::new().child(desc))
++                                        this.child(
++                                            DialogDescription::new().child(desc).on_prepaint(
++                                                move |bounds, _, _| {
++                                                    if let Some(cell) = description_bounds {
++                                                        cell.set(bounds);
++                                                    }
++                                                },
++                                            ),
++                                        )
+                                     }),
+                             ),
+                     ),
+@@ -348,11 +420,23 @@ impl AlertDialog {
+                 this.footer(
+                     DialogFooter::new()
+                         .when(button_props.is_cancel_shown(), |this| {
+-                            this.child(button_props.render_cancel(window, cx))
++                            this.child(button_props.render_cancel_observed(
++                                window,
++                                cx,
++                                cancel_bounds,
++                                delegated,
++                            ))
+                         })
+-                        .child(button_props.render_ok(window, cx)),
++                        .child(button_props.render_ok_observed(
++                            window,
++                            cx,
++                            confirm_bounds,
++                            delegated,
++                        )),
+                 )
+-            })
++            });
++        result.platform_text = text;
++        result
+     }
+ }
+ 
+diff --git a/crates/component/src/dialog/description.rs b/crates/component/src/dialog/description.rs
+index 55edab76..a9e4b308 100644
+--- a/crates/component/src/dialog/description.rs
++++ b/crates/component/src/dialog/description.rs
+@@ -22,6 +22,13 @@ pub struct DialogDescription {
+ }
+ 
+ impl DialogDescription {
++    /// The same native body policy used by the retained renderer.
++    pub fn presentation_style(cx: &App) -> StyleRefinement {
++        let mut native = gpui::div()
++            .text_sm()
++            .text_color(cx.theme().muted_foreground);
++        native.style().clone()
++    }
+     pub fn new() -> Self {
+         Self {
+             base: BaseDialogDescription::new(),
+@@ -46,8 +53,7 @@ impl Styled for DialogDescription {
+ impl RenderOnce for DialogDescription {
+     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+         self.base
+-            .text_sm()
+-            .text_color(cx.theme().muted_foreground)
++            .refine_style(&Self::presentation_style(cx))
+             .refine_style(&self.style)
+             .children(self.children)
+     }
+diff --git a/crates/component/src/dialog/dialog.rs b/crates/component/src/dialog/dialog.rs
+index 58deb0b0..33406248 100644
+--- a/crates/component/src/dialog/dialog.rs
++++ b/crates/component/src/dialog/dialog.rs
+@@ -146,34 +146,67 @@ impl DialogButtonProps {
+             .unwrap_or_else(|| Rc::new(|_, _, _| {}))
+     }
+ 
+-    pub(crate) fn render_ok(&self, _: &mut Window, _: &mut App) -> AnyElement {
+-        let ok_text = self
+-            .ok_text
++    pub(crate) fn ok_label(&self) -> SharedString {
++        self.ok_text
+             .clone()
+-            .unwrap_or_else(|| t!("Dialog.ok").into());
+-
+-        DialogButton {
+-            anchor_key: "dialog-ok-anchor",
+-            button: Button::new("ok")
+-                .label(ok_text)
+-                .with_variant(self.ok_variant.unwrap_or(ButtonVariant::Primary)),
+-            action: Rc::new(Confirm { secondary: false }),
+-        }
+-        .into_any_element()
++            .unwrap_or_else(|| t!("Dialog.ok").into())
+     }
+-
+-    pub(crate) fn render_cancel(&self, _: &mut Window, _: &mut App) -> AnyElement {
+-        let cancel_text = self
+-            .cancel_text
++    pub(crate) fn cancel_label(&self) -> SharedString {
++        self.cancel_text
+             .clone()
+-            .unwrap_or_else(|| t!("Dialog.cancel").into());
+-
++            .unwrap_or_else(|| t!("Dialog.cancel").into())
++    }
++    pub(crate) fn render_ok_observed(
++        &self,
++        window: &mut Window,
++        cx: &mut App,
++        bounds: Option<Rc<std::cell::Cell<gpui::Bounds<Pixels>>>>,
++        delegated: bool,
++    ) -> AnyElement {
++        self.render_button(true, window, cx, bounds, delegated)
++    }
++    pub(crate) fn render_cancel_observed(
++        &self,
++        window: &mut Window,
++        cx: &mut App,
++        bounds: Option<Rc<std::cell::Cell<gpui::Bounds<Pixels>>>>,
++        delegated: bool,
++    ) -> AnyElement {
++        self.render_button(false, window, cx, bounds, delegated)
++    }
++    fn render_button(
++        &self,
++        ok: bool,
++        _window: &mut Window,
++        _cx: &mut App,
++        bounds: Option<Rc<std::cell::Cell<gpui::Bounds<Pixels>>>>,
++        delegated: bool,
++    ) -> AnyElement {
++        let label = if ok {
++            self.ok_label()
++        } else {
++            self.cancel_label()
++        };
+         DialogButton {
+-            anchor_key: "dialog-cancel-anchor",
+-            button: Button::new("cancel")
+-                .label(cancel_text)
+-                .with_variant(self.cancel_variant.unwrap_or_default()),
+-            action: Rc::new(Cancel),
++            anchor_key: if ok {
++                "dialog-ok-anchor"
++            } else {
++                "dialog-cancel-anchor"
++            },
++            button: Button::new(if ok { "ok" } else { "cancel" })
++                .label(label)
++                .with_variant(if ok {
++                    self.ok_variant.unwrap_or(ButtonVariant::Primary)
++                } else {
++                    self.cancel_variant.unwrap_or_default()
++                }),
++            action: if ok {
++                Rc::new(Confirm { secondary: false })
++            } else {
++                Rc::new(Cancel)
++            },
++            bounds,
++            delegated,
+         }
+         .into_any_element()
+     }
+@@ -187,12 +220,18 @@ struct DialogButton {
+     anchor_key: &'static str,
+     button: Button,
+     action: Rc<dyn Action>,
++    bounds: Option<Rc<std::cell::Cell<gpui::Bounds<Pixels>>>>,
++    delegated: bool,
+ }
+ 
+ impl RenderOnce for DialogButton {
+     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+         let anchor = DialogDispatchAnchor::new(self.anchor_key, window, cx);
+         self.button
++            .when(self.delegated, |button| button.role(None::<gpui::Role>))
++            .when_some(self.bounds, |button, bounds| {
++                button.on_prepaint(move |allocation, _, _| bounds.set(allocation))
++            })
+             .child(anchor.element())
+             .on_click(move |_, window, cx| anchor.dispatch(&*self.action, window, cx))
+     }
+@@ -208,9 +247,9 @@ pub(crate) struct DialogProps {
+     close_button: bool,
+ 
+     overlay: bool,
+-    overlay_closable: bool,
++    pub(super) overlay_closable: bool,
+     pub(crate) overlay_visible: bool,
+-    keyboard: bool,
++    pub(super) keyboard: bool,
+     entrance: DialogEntrance,
+ }
+ 
+@@ -271,6 +310,9 @@ impl BaseDialogRoot {
+     fn popup(self, element: impl IntoElement) -> Self {
+         map_base_root!(self, popup(element))
+     }
++    fn platform_delegated(self, value: bool) -> Self {
++        map_base_root!(self, platform_delegated(value))
++    }
+     fn on_ok(self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) -> bool + 'static) -> Self {
+         map_base_root!(self, on_ok(handler))
+     }
+@@ -301,6 +343,12 @@ impl IntoElement for BaseDialogRoot {
+ /// A modal to display content in a dialog box.
+ #[derive(IntoElement)]
+ pub struct Dialog {
++    pub(super) platform_presenter:
++        Option<(SharedString, super::presentation::DialogPresenterFactory)>,
++    pub(super) platform_text: super::presentation::DialogText,
++    pub(crate) platform_previous_focus: Option<gpui::WeakFocusHandle>,
++    pub(crate) platform_owner:
++        Option<Rc<std::cell::RefCell<super::presentation::DialogPresentationOwner>>>,
+     base: Option<BaseDialogRoot>,
+     pub(crate) style: StyleRefinement,
+     children: Vec<AnyElement>,
+@@ -327,7 +375,7 @@ pub(crate) fn overlay_color(overlay: bool, cx: &App) -> Hsla {
+     cx.theme().overlay
+ }
+ 
+-fn dialog_shadow(delta: f32) -> Vec<BoxShadow> {
++pub(super) fn dialog_shadow(delta: f32) -> Vec<BoxShadow> {
+     vec![
+         BoxShadow {
+             color: hsla(0., 0., 0., 0.1 * delta),
+@@ -351,6 +399,10 @@ impl Dialog {
+     pub fn new(cx: &mut App) -> Self {
+         Self {
+             base: Some(BaseDialogRoot::Dialog(gpui_base::Dialog::new(cx))),
++            platform_presenter: None,
++            platform_text: Default::default(),
++            platform_previous_focus: None,
++            platform_owner: None,
+             focus_handle: cx.focus_handle(),
+             style: StyleRefinement::default(),
+             trigger: None,
+@@ -366,6 +418,15 @@ impl Dialog {
+         }
+     }
+ 
++    pub fn presenter(
++        mut self,
++        invoker: impl Into<SharedString>,
++        factory: super::presentation::DialogPresenterFactory,
++    ) -> Self {
++        self.platform_presenter = Some((invoker.into(), factory));
++        self
++    }
++
+     /// Sets the trigger element for the dialog.
+     ///
+     /// When a trigger is set, the dialog will render as a trigger button that opens the dialog when clicked.
+@@ -596,6 +657,14 @@ impl RenderOnce for Dialog {
+             return self.render_trigger(trigger, window, cx);
+         }
+ 
++        let platform_owner = self.platform_owner.clone();
++        let platform_animation_owner = platform_owner.clone();
++        let platform_frame = platform_owner.as_ref().and_then(|owner| {
++            super::presentation::DialogPresentationOwner::prepare(owner, &self, window, cx)
++        });
++        let delegated = platform_owner
++            .as_ref()
++            .is_some_and(|owner| owner.borrow().delegated());
+         let layer_ix = self.layer_ix;
+         let selection_scope = self.selection_scope;
+         let on_close = self.button_props.close_handler();
+@@ -682,6 +751,7 @@ impl RenderOnce for Dialog {
+                                     == WindowState::read(window, cx).active_dialogs.len(),
+                             )
+                             .focus_handle(self.focus_handle.clone())
++                            .platform_delegated(delegated)
+                             .close_on_escape(self.props.keyboard)
+                             .close_on_backdrop_press(self.props.overlay_closable)
+                             .dismiss_below_y(TITLE_BAR_HEIGHT)
+@@ -729,6 +799,7 @@ impl RenderOnce for Dialog {
+                                         .px_0()
+                                         .occlude()
+                                         .w(width)
++                                        .on_prepaint({let owner=platform_owner.clone();move|bounds,_,_|{if let Some(owner)=owner{owner.borrow().bounds.set(bounds);}}})
+                                         .when_some(self.props.max_width, |this, w| this.max_w(w))
+                                         .max_h(max_height)
+                                         .child(
+@@ -800,6 +871,9 @@ impl RenderOnce for Dialog {
+                                                         .icon(IconName::Close)
+                                                 })
+                                         }))
++                                        .child(gpui::canvas(move|_,window,cx|{
++                                            if let (Some(owner),Some(frame))=(platform_owner,platform_frame){super::presentation::DialogPresentationOwner::publish(&owner,frame,window,cx);}
++                                        },|_,_,_,_|{}).absolute().size_0())
+                                         .map(|surface| {
+                                             if animated {
+                                                 surface
+@@ -860,14 +934,16 @@ impl RenderOnce for Dialog {
+                                 }),
+                             ),
+                     )
+-                    .map(|layer| {
++                    .map(move |layer| {
+                         if animated {
+                             layer
+-                                .with_animation("fade-in", animation, |layer, delta| {
++                                .with_animation("fade-in", animation, move |layer, delta| {
++                                    if let Some(owner)=&platform_animation_owner{owner.borrow().opacity.set(delta);}
+                                     layer.opacity(delta)
+                                 })
+                                 .into_any_element()
+                         } else {
++                            if let Some(owner)=&platform_animation_owner{owner.borrow().opacity.set(1.);}
+                             layer.into_any_element()
+                         }
+                     }),
+diff --git a/crates/component/src/dialog/mod.rs b/crates/component/src/dialog/mod.rs
+index 44b66433..cfa8e7a8 100644
+--- a/crates/component/src/dialog/mod.rs
++++ b/crates/component/src/dialog/mod.rs
+@@ -2,6 +2,11 @@ mod alert_dialog;
+ mod content;
+ mod description;
+ mod dialog;
++pub(crate) mod presentation;
++pub use presentation::{
++    DialogButtonPresentation, DialogInput, DialogInputRefusal, DialogPresentation, DialogPresenter,
++    DialogPresenterFactory,
++};
+ mod dispatch_anchor;
+ mod entrance;
+ mod footer;
+diff --git a/crates/component/src/dialog/presentation.rs b/crates/component/src/dialog/presentation.rs
+new file mode 100644
+index 00000000..8d85ac58
+--- /dev/null
++++ b/crates/component/src/dialog/presentation.rs
+@@ -0,0 +1,626 @@
++//! A lease over the actual Root ActiveDialog and its native dispatch node.
++use super::dialog::Dialog;
++use crate::ActiveTheme as _;
++use crate::root::WindowState;
++use gpui::{
++    App, Bounds, FocusHandle, Pixels, Refineable as _, SharedString, StyleRefinement, Styled as _,
++    TextStyle, Window,
++};
++use std::{
++    cell::{Cell, RefCell},
++    rc::{Rc, Weak},
++    sync::atomic::{AtomicU64, Ordering},
++};
++
++pub type DialogPresenterFactory = Rc<dyn Fn(&str) -> DialogPresenter>;
++type RestoreFocus = Rc<dyn Fn(u64, &str, &mut Window, &mut App) -> bool>;
++#[derive(Clone)]
++pub struct DialogPresenter {
++    frame: Rc<dyn Fn(DialogPresentation, &mut Window, &mut App) -> bool>,
++    closed: Rc<dyn Fn(u64)>,
++    delegated: Rc<Cell<bool>>,
++    restore_focus: Option<RestoreFocus>,
++}
++impl DialogPresenter {
++    pub fn new(
++        frame: impl Fn(DialogPresentation, &mut Window, &mut App) -> bool + 'static,
++        closed: impl Fn(u64) + 'static,
++    ) -> Self {
++        Self {
++            frame: Rc::new(frame),
++            closed: Rc::new(closed),
++            delegated: Rc::default(),
++            restore_focus: None,
++        }
++    }
++    /// Called by the same Root close/focus-restore path, outside its entity
++    /// lease. Returning true handles the platform focus decision.
++    pub fn on_restore_focus(
++        mut self,
++        restore: impl Fn(u64, &str, &mut Window, &mut App) -> bool + 'static,
++    ) -> Self {
++        self.restore_focus = Some(Rc::new(restore));
++        self
++    }
++    pub fn is_platform_delegated(&self) -> bool {
++        self.delegated.get()
++    }
++}
++pub(crate) struct DialogFocusRestore {
++    pub(crate) previous: Option<FocusHandle>,
++    platform: Option<(u64, SharedString, RestoreFocus)>,
++}
++impl DialogFocusRestore {
++    pub(crate) fn new(
++        owner: &Rc<RefCell<DialogPresentationOwner>>,
++        previous: Option<gpui::WeakFocusHandle>,
++    ) -> Self {
++        let state = owner.borrow();
++        let platform = state
++            .presenter
++            .as_ref()
++            .filter(|presenter| presenter.delegated.get())
++            .and_then(|presenter| presenter.restore_focus.clone())
++            .map(|restore| (state.id, state.invoker.clone(), restore));
++        Self {
++            previous: previous.and_then(|handle| handle.upgrade()),
++            platform,
++        }
++    }
++    pub(crate) fn has_target(&self) -> bool {
++        self.previous.is_some() || self.platform.is_some()
++    }
++    pub(crate) fn apply(self, window: &mut Window, cx: &mut App) {
++        if let Some((id, invoker, restore)) = self.platform {
++            if restore(id, &invoker, window, cx) {
++                return;
++            }
++        }
++        if let Some(previous) = self.previous {
++            window.focus(&previous, cx);
++        }
++    }
++}
++
++#[derive(Clone, Debug, PartialEq)]
++pub struct DialogButtonPresentation {
++    pub label: SharedString,
++    pub danger: bool,
++    pub variant: crate::button::ButtonVariant,
++    pub bounds: Bounds<Pixels>,
++}
++#[derive(Clone)]
++pub struct DialogPresentation {
++    owner: Weak<RefCell<DialogPresentationOwner>>,
++    pub id: u64,
++    pub revision: u64,
++    pub invoker: SharedString,
++    pub previous_focus: Option<gpui::WeakFocusHandle>,
++    pub layer: usize,
++    pub title: SharedString,
++    pub description: SharedString,
++    pub bounds: Bounds<Pixels>,
++    pub title_bounds: Bounds<Pixels>,
++    pub description_bounds: Bounds<Pixels>,
++    pub confirm: DialogButtonPresentation,
++    pub cancel: Option<DialogButtonPresentation>,
++    pub opacity: f32,
++    pub shadows: Vec<gpui::BoxShadow>,
++    pub material: StyleRefinement,
++    pub title_style: TextStyle,
++    pub description_style: TextStyle,
++    pub overlay_color: gpui::Hsla,
++    pub keyboard: bool,
++    pub alert: bool,
++    focus: FocusHandle,
++    complete: bool,
++}
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum DialogInput {
++    Confirm,
++    Cancel,
++    Escape,
++    Outside,
++}
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum DialogInputRefusal {
++    TargetAbsent,
++    StaleRevision,
++    NotPresented,
++    NotAllowed,
++}
++impl DialogPresentation {
++    pub fn is_complete(&self) -> bool {
++        self.complete
++    }
++    pub fn is_platform_delegated(&self) -> bool {
++        self.owner.upgrade().is_some_and(|owner| {
++            owner
++                .borrow()
++                .presenter
++                .as_ref()
++                .is_some_and(DialogPresenter::is_platform_delegated)
++        })
++    }
++    pub fn deliver(
++        &self,
++        input: DialogInput,
++        window: &mut Window,
++        cx: &mut App,
++    ) -> Result<(), DialogInputRefusal> {
++        let owner = self
++            .owner
++            .upgrade()
++            .ok_or(DialogInputRefusal::TargetAbsent)?;
++        if window.has_active_prompt()
++            || !WindowState::try_read(window, cx).is_some_and(|root| {
++                root.active_dialogs
++                    .last()
++                    .is_some_and(|dialog| Rc::ptr_eq(&dialog.presentation, &owner))
++            })
++        {
++            return Err(DialogInputRefusal::NotPresented);
++        }
++        {
++            let current = owner.borrow();
++            if self.revision != current.revision {
++                return Err(DialogInputRefusal::StaleRevision);
++            }
++            if !current
++                .presenter
++                .as_ref()
++                .is_some_and(DialogPresenter::is_platform_delegated)
++                || !self.focus.contains(&self.focus, window)
++            {
++                return Err(DialogInputRefusal::NotPresented);
++            }
++            if matches!(input, DialogInput::Outside)
++                || matches!(input, DialogInput::Escape) && !self.keyboard
++            {
++                return Err(DialogInputRefusal::NotAllowed);
++            }
++            if input == DialogInput::Cancel && self.cancel.is_none() {
++                return Err(DialogInputRefusal::TargetAbsent);
++            }
++        }
++        // This public FocusHandle path dispatches synchronously on the exact
++        // rendered native dialog. Unlike Window::dispatch_action, it does not
++        // defer beyond the caller's invocation provenance scope.
++        match input {
++            DialogInput::Confirm => self.focus.dispatch_action(
++                &gpui_base::actions::Confirm { secondary: false },
++                window,
++                cx,
++            ),
++            DialogInput::Cancel | DialogInput::Escape => {
++                self.focus
++                    .dispatch_action(&gpui_base::actions::Cancel, window, cx)
++            }
++            DialogInput::Outside => unreachable!(),
++        }
++        Ok(())
++    }
++}
++#[derive(Clone, Default, PartialEq)]
++pub(crate) struct DialogText {
++    pub title: Option<SharedString>,
++    pub description: Option<SharedString>,
++    pub alert: bool,
++    pub complete: bool,
++}
++#[derive(Clone, PartialEq)]
++struct Fingerprint {
++    content: DialogText,
++    confirm: SharedString,
++    cancel: Option<SharedString>,
++    danger: bool,
++    keyboard: bool,
++}
++pub(crate) struct DialogPresentationOwner {
++    id: u64,
++    revision: u64,
++    fingerprint: Option<Fingerprint>,
++    factory: Option<DialogPresenterFactory>,
++    invoker: SharedString,
++    presenter: Option<DialogPresenter>,
++    pub opacity: Cell<f32>,
++    pub bounds: Cell<Bounds<Pixels>>,
++    pub title_bounds: Rc<Cell<Bounds<Pixels>>>,
++    pub description_bounds: Rc<Cell<Bounds<Pixels>>>,
++    pub confirm_bounds: Rc<Cell<Bounds<Pixels>>>,
++    pub cancel_bounds: Rc<Cell<Bounds<Pixels>>>,
++}
++impl Default for DialogPresentationOwner {
++    fn default() -> Self {
++        static NEXT: AtomicU64 = AtomicU64::new(1);
++        Self {
++            id: NEXT.fetch_add(1, Ordering::Relaxed),
++            revision: 0,
++            fingerprint: None,
++            factory: None,
++            invoker: SharedString::default(),
++            presenter: None,
++            opacity: Cell::new(1.),
++            bounds: Cell::default(),
++            title_bounds: Rc::default(),
++            description_bounds: Rc::default(),
++            confirm_bounds: Rc::default(),
++            cancel_bounds: Rc::default(),
++        }
++    }
++}
++impl Drop for DialogPresentationOwner {
++    fn drop(&mut self) {
++        if let Some(presenter) = self.presenter.take() {
++            presenter.delegated.set(false);
++            (presenter.closed)(self.id);
++        }
++    }
++}
++impl DialogPresentationOwner {
++    pub(crate) fn install(&mut self, requested: Option<(SharedString, DialogPresenterFactory)>) {
++        let same = requested.as_ref().is_some_and(|(invoker, factory)| {
++            self.invoker == *invoker
++                && self
++                    .factory
++                    .as_ref()
++                    .is_some_and(|old| Rc::ptr_eq(old, factory))
++        });
++        if same {
++            return;
++        }
++        if let Some(previous) = self.presenter.take() {
++            previous.delegated.set(false);
++            (previous.closed)(self.id);
++        }
++        self.factory = None;
++        if let Some((invoker, factory)) = requested {
++            self.presenter = Some(factory(&invoker));
++            self.invoker = invoker;
++            self.factory = Some(factory);
++        }
++    }
++    pub(crate) fn delegated(&self) -> bool {
++        self.presenter
++            .as_ref()
++            .is_some_and(DialogPresenter::is_platform_delegated)
++    }
++    pub(crate) fn prepare(
++        owner: &Rc<RefCell<Self>>,
++        dialog: &Dialog,
++        window: &Window,
++        cx: &App,
++    ) -> Option<DialogPresentation> {
++        let mut state = owner.borrow_mut();
++        state.install(dialog.platform_presenter.clone());
++        let confirm = dialog.button_props.ok_label();
++        let cancel = dialog
++            .button_props
++            .is_cancel_shown()
++            .then(|| dialog.button_props.cancel_label());
++        let danger = matches!(
++            dialog.button_props.ok_variant,
++            Some(crate::button::ButtonVariant::Danger)
++        );
++        let fingerprint = Fingerprint {
++            content: dialog.platform_text.clone(),
++            confirm: confirm.clone(),
++            cancel: cancel.clone(),
++            danger,
++            keyboard: dialog.props.keyboard,
++        };
++        if state.fingerprint.as_ref() != Some(&fingerprint) {
++            state.revision = state.revision.saturating_add(1);
++            state.fingerprint = Some(fingerprint);
++        }
++        state.presenter.as_ref()?;
++        let complete = dialog.platform_text.complete
++            && dialog.platform_text.alert
++            && !dialog.props.overlay_closable;
++        let mut native_material = gpui::div()
++            .bg(cx.theme().tokens.background)
++            .border_1()
++            .border_color(cx.theme().border)
++            .rounded(cx.theme().radius_lg);
++        native_material.style().refine(&dialog.style);
++        let material = native_material.style().clone();
++        let mut inherited = window.text_style();
++        inherited.refine(&material.text);
++        let mut title_style = inherited.clone();
++        title_style.refine(&super::DialogTitle::presentation_style().text);
++        let mut description_style = inherited;
++        description_style.refine(&super::DialogDescription::presentation_style(cx).text);
++        Some(DialogPresentation {
++            owner: Rc::downgrade(owner),
++            id: state.id,
++            revision: state.revision,
++            invoker: state.invoker.clone(),
++            previous_focus: dialog.platform_previous_focus.clone(),
++            layer: dialog.layer_ix,
++            title: dialog.platform_text.title.clone().unwrap_or_default(),
++            description: dialog.platform_text.description.clone().unwrap_or_default(),
++            bounds: state.bounds.get(),
++            title_bounds: state.title_bounds.get(),
++            description_bounds: state.description_bounds.get(),
++            confirm: DialogButtonPresentation {
++                label: confirm,
++                danger,
++                variant: dialog
++                    .button_props
++                    .ok_variant
++                    .unwrap_or(crate::button::ButtonVariant::Primary),
++                bounds: state.confirm_bounds.get(),
++            },
++            cancel: cancel.map(|label| DialogButtonPresentation {
++                label,
++                danger: false,
++                variant: dialog.button_props.cancel_variant.unwrap_or_default(),
++                bounds: state.cancel_bounds.get(),
++            }),
++            opacity: state.opacity.get(),
++            shadows: super::dialog::dialog_shadow(state.opacity.get()),
++            material,
++            title_style,
++            description_style,
++            overlay_color: super::dialog::overlay_color(dialog.props.overlay_visible, cx),
++            keyboard: dialog.props.keyboard,
++            alert: dialog.platform_text.alert,
++            focus: dialog.focus_handle.clone(),
++            complete,
++        })
++    }
++    pub(crate) fn publish(
++        owner: &Rc<RefCell<Self>>,
++        mut frame: DialogPresentation,
++        window: &mut Window,
++        cx: &mut App,
++    ) {
++        let presenter = {
++            let state = owner.borrow();
++            frame.bounds = state.bounds.get();
++            frame.opacity = state.opacity.get();
++            frame.shadows = super::dialog::dialog_shadow(frame.opacity);
++            frame.title_bounds = state.title_bounds.get();
++            frame.description_bounds = state.description_bounds.get();
++            frame.confirm.bounds = state.confirm_bounds.get();
++            if let Some(cancel) = &mut frame.cancel {
++                cancel.bounds = state.cancel_bounds.get();
++            }
++            state.presenter.clone()
++        };
++        if let Some(presenter) = presenter {
++            let complete = frame.complete
++                && frame.bounds.size.width > gpui::px(0.)
++                && frame.confirm.bounds.size.width > gpui::px(0.);
++            let requested = (presenter.frame)(frame, window, cx) && complete;
++            if presenter.delegated.replace(requested) != requested {
++                // Prepaint cannot refresh the window synchronously. The real
++                // Root owner must render its new delegation/focus-trap policy.
++                let _ = WindowState::try_update(window, cx, |_, _, cx| cx.notify());
++            }
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::{WindowExt as _, dialog::DialogButtonProps};
++    use gpui::{TestAppContext, px, size};
++    fn draw(cx: &mut gpui::VisualTestContext) {
++        cx.run_until_parked();
++        cx.update(|window, cx| window.draw(cx).clear(cx));
++    }
++    #[gpui::test]
++    fn platform_alert_dispatches_existing_refusals_and_rechecks_actual_top_owner(
++        cx: &mut TestAppContext,
++    ) {
++        let cx = super::super::dialog::tests::window(cx, size(px(600.), px(500.)));
++        let frames: Rc<RefCell<Vec<DialogPresentation>>> = Rc::default();
++        let admit = Rc::new(Cell::new(false));
++        let attempts = Rc::new(Cell::new(0));
++        let allow = Rc::new(Cell::new(false));
++        let closed = Rc::new(Cell::new(0));
++        let factory: DialogPresenterFactory = Rc::new({
++            let frames = frames.clone();
++            let admit = admit.clone();
++            move |_| {
++                DialogPresenter::new(
++                    {
++                        let frames = frames.clone();
++                        let admit = admit.clone();
++                        move |frame, _, _| {
++                            frames.borrow_mut().push(frame);
++                            admit.get()
++                        }
++                    },
++                    |_| {},
++                )
++            }
++        });
++        cx.update(|window, cx| {
++            window.open_alert_dialog(cx, {
++                let attempts = attempts.clone();
++                let allow = allow.clone();
++                let closed = closed.clone();
++                move |alert, _, _| {
++                    alert
++                        .title_text("Existing confirmation")
++                        .description_text("The retained owner decides.")
++                        .button_props(
++                            DialogButtonProps::default()
++                                .show_cancel(true)
++                                .ok_text("Delete"),
++                        )
++                        .presenter("chat.more", factory.clone())
++                        .on_cancel({
++                            let attempts = attempts.clone();
++                            let allow = allow.clone();
++                            move |_, _, _| {
++                                attempts.set(attempts.get() + 1);
++                                allow.get()
++                            }
++                        })
++                        .on_close({
++                            let closed = closed.clone();
++                            move |_, _, _| closed.set(closed.get() + 1)
++                        })
++                }
++            })
++        });
++        draw(cx);
++        draw(cx);
++        let frame = frames
++            .borrow()
++            .last()
++            .cloned()
++            .expect("actual Root dialog must publish");
++        assert!(frame.is_complete());
++        assert!(frame.bounds.size.width > px(0.));
++        assert!(frame.title_bounds.size.height > px(0.));
++        assert!(frame.description_bounds.size.height > px(0.));
++        assert!(frame.confirm.bounds.size.width > px(0.));
++        assert!(frame.cancel.as_ref().unwrap().bounds.size.width > px(0.));
++        assert_eq!(
++            cx.update(|window, cx| frame.deliver(DialogInput::Cancel, window, cx)),
++            Err(DialogInputRefusal::NotPresented)
++        );
++        admit.set(true);
++        cx.update(|window, _| window.refresh());
++        draw(cx);
++        draw(cx);
++        let frame = frames.borrow().last().unwrap().clone();
++        assert!(frame.is_platform_delegated());
++        assert_eq!(
++            cx.update(|window, cx| frame.deliver(DialogInput::Outside, window, cx)),
++            Err(DialogInputRefusal::NotAllowed)
++        );
++        assert_eq!(attempts.get(), 0);
++        cx.update(|window, cx| frame.deliver(DialogInput::Cancel, window, cx).unwrap());
++        assert_eq!(attempts.get(), 1);
++        assert_eq!(closed.get(), 0);
++        assert!(
++            cx.update(|window, cx| window.has_active_dialog(cx)),
++            "native refusal keeps its actual owner"
++        );
++        cx.update(|window, cx| {
++            window.open_alert_dialog(cx, |alert, _, _| {
++                alert
++                    .title("Native second dialog")
++                    .description("This unpresented owner is topmost.")
++            })
++        });
++        draw(cx);
++        assert_eq!(
++            cx.update(|window, cx| frame.deliver(DialogInput::Confirm, window, cx)),
++            Err(DialogInputRefusal::NotPresented)
++        );
++        cx.update(|window, cx| window.close_dialog(cx));
++        draw(cx);
++        allow.set(true);
++        let current = frames.borrow().last().unwrap().clone();
++        cx.update(|window, cx| current.deliver(DialogInput::Cancel, window, cx).unwrap());
++        assert_eq!(attempts.get(), 2);
++        assert_eq!(closed.get(), 1);
++        assert!(!cx.update(|window, cx| window.has_active_dialog(cx)));
++        assert_eq!(
++            cx.update(|window, cx| current.deliver(DialogInput::Confirm, window, cx)),
++            Err(DialogInputRefusal::TargetAbsent)
++        );
++    }
++    #[gpui::test]
++    fn platform_focus_restore_runs_after_the_actual_root_releases_its_lease(
++        cx: &mut TestAppContext,
++    ) {
++        let cx = super::super::dialog::tests::window(cx, size(px(600.), px(500.)));
++        let restores = Rc::new(Cell::new(0));
++        let frames: Rc<RefCell<Vec<DialogPresentation>>> = Rc::default();
++        let factory: DialogPresenterFactory = Rc::new({
++            let restores = restores.clone();
++            let frames = frames.clone();
++            move |_| {
++                DialogPresenter::new(
++                    {
++                        let frames = frames.clone();
++                        move |frame, _, _| {
++                            frames.borrow_mut().push(frame);
++                            true
++                        }
++                    },
++                    |_| {},
++                )
++                .on_restore_focus({
++                    let restores = restores.clone();
++                    move |_, invoker, window, cx| {
++                        assert_eq!(invoker, "actual-invoker");
++                        restores.set(restores.get() + 1);
++                        // Reentering the same Root from its platform focus callback
++                        // must be safe; a borrowed Root lease would panic here.
++                        window.open_alert_dialog(cx, |alert, _, _| {
++                            alert.title("Replacement native owner")
++                        });
++                        true
++                    }
++                })
++            }
++        });
++        cx.update(|window, cx| {
++            window.open_alert_dialog(cx, move |alert, _, _| {
++                alert
++                    .title_text("Current owner")
++                    .description_text("Actual close path")
++                    .presenter("actual-invoker", factory.clone())
++            })
++        });
++        draw(cx);
++        draw(cx);
++        assert!(frames.borrow().last().unwrap().is_platform_delegated());
++        cx.update(|window, cx| window.close_dialog(cx));
++        assert_eq!(restores.get(), 1);
++        assert!(
++            cx.update(|window, cx| window.has_active_dialog(cx)),
++            "the actual callback reopened the actual Root"
++        );
++        cx.update(|window, cx| window.close_dialog(cx));
++        assert_eq!(
++            restores.get(),
++            1,
++            "closing an unrelated native owner cannot reuse the retired platform focus callback"
++        );
++    }
++
++    #[gpui::test]
++    fn opaque_alert_content_never_yields_native_modal_authority(cx: &mut TestAppContext) {
++        let cx = super::super::dialog::tests::window(cx, size(px(600.), px(500.)));
++        let frames: Rc<RefCell<Vec<DialogPresentation>>> = Rc::default();
++        let factory: DialogPresenterFactory = Rc::new({
++            let frames = frames.clone();
++            move |_| {
++                DialogPresenter::new(
++                    {
++                        let frames = frames.clone();
++                        move |frame, _, _| {
++                            frames.borrow_mut().push(frame);
++                            true
++                        }
++                    },
++                    |_| {},
++                )
++            }
++        });
++        cx.update(|window, cx| {
++            window.open_alert_dialog(cx, move |alert, _, _| {
++                alert
++                    .title("Opaque title element")
++                    .description_text("No inferred descriptor is permitted.")
++                    .presenter("chat.more", factory.clone())
++            })
++        });
++        draw(cx);
++        draw(cx);
++        let frame = frames.borrow().last().unwrap().clone();
++        assert!(!frame.is_complete());
++        assert!(!frame.is_platform_delegated());
++        assert!(cx.update(|window, cx| window.has_active_dialog(cx)));
++    }
++}
+diff --git a/crates/component/src/dialog/title.rs b/crates/component/src/dialog/title.rs
+index b6200ac1..ea58a3e4 100644
+--- a/crates/component/src/dialog/title.rs
++++ b/crates/component/src/dialog/title.rs
+@@ -15,6 +15,14 @@ pub struct DialogTitle {
+ }
+ 
+ impl DialogTitle {
++    /// The same native title policy used by the retained renderer.
++    pub fn presentation_style() -> StyleRefinement {
++        let mut native = gpui::div()
++            .text_base()
++            .font_semibold()
++            .line_height(relative(1.25));
++        native.style().clone()
++    }
+     pub fn new() -> Self {
+         Self {
+             base: BaseDialogTitle::new(),
+@@ -39,9 +47,7 @@ impl Styled for DialogTitle {
+ impl RenderOnce for DialogTitle {
+     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+         self.base
+-            .text_base()
+-            .font_semibold()
+-            .line_height(relative(1.25))
++            .refine_style(&Self::presentation_style())
+             .refine_style(&self.style)
+             .children(self.children)
+     }
+diff --git a/crates/component/src/menu/popup_menu/presentation.rs b/crates/component/src/menu/popup_menu/presentation.rs
+index 95a43876..5e0762d1 100644
+--- a/crates/component/src/menu/popup_menu/presentation.rs
++++ b/crates/component/src/menu/popup_menu/presentation.rs
+@@ -122,6 +122,7 @@ impl MenuRowPresentation {
+ 
+ #[derive(Clone)]
+ pub struct PopupMenuPresentation {
++    focus: gpui::WeakFocusHandle,
+     entity: WeakEntity<PopupMenu>,
+     revision: u64,
+     bounds: Bounds<Pixels>,
+@@ -134,6 +135,8 @@ pub struct PopupMenuPresentation {
+     active_submenu: Option<WeakEntity<PopupMenu>>,
+ }
+ impl PopupMenuPresentation {
++    /// The actual menu dispatch node, including after its owner is retired.
++    pub fn focus(&self) -> gpui::WeakFocusHandle { self.focus.clone() }
+     pub fn entity(&self) -> WeakEntity<PopupMenu> {
+         self.entity.clone()
+     }
+@@ -319,6 +322,7 @@ impl PopupMenu {
+             })
+             .collect();
+         PopupMenuPresentation {
++            focus: self.focus_handle.downgrade(),
+             entity,
+             revision: self.presentation.revision,
+             bounds: self.bounds,
+diff --git a/crates/component/src/root.rs b/crates/component/src/root.rs
+index 78c2aa6a..1fb1af97 100644
+--- a/crates/component/src/root.rs
++++ b/crates/component/src/root.rs
+@@ -15,7 +15,7 @@ use gpui::{
+     prelude::FluentBuilder as _,
+ };
+ use gpui_base::{TextSelection, TextSelectionScopeId};
+-use std::{any::TypeId, rc::Rc};
++use std::{any::TypeId, cell::RefCell, rc::Rc};
+ 
+ pub(crate) fn init(cx: &mut App) {
+     gpui_base::Root::register_plugin::<WindowState>(cx, WindowState::new);
+@@ -46,6 +46,7 @@ pub(crate) struct ActiveSheet {
+ 
+ #[derive(Clone)]
+ pub(crate) struct ActiveDialog {
++    pub(crate) presentation: Rc<RefCell<crate::dialog::presentation::DialogPresentationOwner>>,
+     focus_handle: FocusHandle,
+     /// The previous focused handle before opening the Dialog.
+     previous_focused_handle: Option<WeakFocusHandle>,
+@@ -64,6 +65,7 @@ impl ActiveDialog {
+             focus_handle,
+             previous_focused_handle,
+             selection_scope,
++            presentation: Rc::default(),
+             builder: Rc::new(builder),
+         }
+     }
+@@ -200,14 +202,16 @@ impl WindowState {
+             .enumerate()
+             .map(|(i, active_dialog)| {
+                 let mut dialog = Dialog::new(cx);
+-
++                dialog.platform_owner = Some(active_dialog.presentation.clone());
+                 dialog = (active_dialog.builder)(dialog, window, cx);
++                dialog.platform_owner = Some(active_dialog.presentation.clone());
+ 
+                 // Give the dialog the focus handle, because `dialog` is a temporary value, is not possible to
+                 // keep the focus handle in the dialog.
+                 //
+                 // So we keep the focus handle in the `active_dialog`, this is owned by the `WindowState`.
+                 dialog.focus_handle = active_dialog.focus_handle.clone();
++                dialog.platform_previous_focus = active_dialog.previous_focused_handle.clone();
+                 dialog.selection_scope = active_dialog.selection_scope;
+ 
+                 dialog.layer_ix = i;
+@@ -268,62 +272,67 @@ impl WindowState {
+         cx.notify();
+     }
+ 
+-    fn close_dialog_internal(&mut self) -> Option<FocusHandle> {
++    fn close_dialog_internal(&mut self) -> Option<crate::dialog::presentation::DialogFocusRestore> {
+         self.focused_input = None;
+-        self.active_dialogs
+-            .pop()
+-            .and_then(|d| d.previous_focused_handle)
+-            .and_then(|h| h.upgrade())
++        self.active_dialogs.pop().map(|dialog| {
++            crate::dialog::presentation::DialogFocusRestore::new(
++                &dialog.presentation,
++                dialog.previous_focused_handle,
++            )
++        })
+     }
+-
+-    pub fn close_dialog(&mut self, window: &mut Window, cx: &mut Context<'_, WindowState>) {
+-        if let Some(handle) = self.close_dialog_internal() {
+-            window.focus(&handle, cx);
+-        }
++    pub fn close_dialog(
++        &mut self,
++        window: &mut Window,
++        cx: &mut Context<'_, WindowState>,
++    ) -> Option<crate::dialog::presentation::DialogFocusRestore> {
++        let restore = self.close_dialog_internal();
+         gpui_base::TextSelection::clear(window, cx);
+         cx.notify();
++        restore
+     }
+-
+     pub(crate) fn defer_close_dialog(
+         &mut self,
+         window: &mut Window,
+         cx: &mut Context<'_, WindowState>,
+     ) {
+-        if let Some(handle) = self.close_dialog_internal() {
++        if let Some(restore) = self.close_dialog_internal() {
+             let dialogs_count = self.active_dialogs.len();
+-
+-            // Save for new dialogs opened during animation to maintain focus chain
+-            self.pending_focus_restore = Some(handle.downgrade());
+-
+-            cx.spawn_in(window, async move |this, cx| {
+-                cx.background_executor().timer(*ANIMATION_DURATION).await;
+-                let _ = this.update_in(cx, |this, window, cx| {
+-                    let current_dialogs_count = this.active_dialogs.len();
+-                    // Only restore focus if no new dialogs were opened during animation
+-                    if current_dialogs_count == dialogs_count {
+-                        window.focus(&handle, cx);
++            self.pending_focus_restore = restore.previous.as_ref().map(|handle| handle.downgrade());
++            if restore.has_target() {
++                cx.spawn_in(window, async move |this, cx| {
++                    cx.background_executor().timer(*ANIMATION_DURATION).await;
++                    let restore = this.update_in(cx, |this, _, _| {
++                        let current_dialogs_count = this.active_dialogs.len();
++                        this.pending_focus_restore = None;
++                        (current_dialogs_count == dialogs_count).then_some(restore)
++                    });
++                    if let Ok(Some(restore)) = restore {
++                        let _ = cx.update(|window, cx| restore.apply(window, cx));
+                     }
+-                    this.pending_focus_restore = None;
+-                });
+-            })
+-            .detach();
++                })
++                .detach();
++            }
+         }
+         gpui_base::TextSelection::clear(window, cx);
+         cx.notify();
+     }
+-
+-    pub fn close_all_dialogs(&mut self, window: &mut Window, cx: &mut Context<'_, WindowState>) {
++    pub fn close_all_dialogs(
++        &mut self,
++        window: &mut Window,
++        cx: &mut Context<'_, WindowState>,
++    ) -> Option<crate::dialog::presentation::DialogFocusRestore> {
+         self.focused_input = None;
+-        let previous_focused_handle = self
+-            .active_dialogs
+-            .first()
+-            .and_then(|d| d.previous_focused_handle.clone());
++        let restore = self.active_dialogs.first().map(|dialog| {
++            crate::dialog::presentation::DialogFocusRestore::new(
++                &dialog.presentation,
++                dialog.previous_focused_handle.clone(),
++            )
++        });
+         self.active_dialogs.clear();
+-        if let Some(handle) = previous_focused_handle.and_then(|h| h.upgrade()) {
+-            window.focus(&handle, cx);
+-        }
+         gpui_base::TextSelection::clear(window, cx);
+         cx.notify();
++        restore
+     }
+ 
+     pub fn open_sheet_at<F>(
+diff --git a/crates/component/src/window_ext.rs b/crates/component/src/window_ext.rs
+index bb850646..fa602d04 100644
+--- a/crates/component/src/window_ext.rs
++++ b/crates/component/src/window_ext.rs
+@@ -195,8 +195,9 @@ impl WindowExt for Window {
+     where
+         F: Fn(AlertDialog, &mut Window, &mut App) -> AlertDialog + 'static,
+     {
+-        self.open_dialog(cx, move |_, window, cx| {
+-            build(AlertDialog::new(cx), window, cx).build_surface(window, cx)
++        self.open_dialog(cx, move |dialog, window, cx| {
++            let alert = AlertDialog::new(cx).with_platform_owner(dialog.platform_owner);
++            build(alert, window, cx).build_surface(window, cx)
+         })
+     }
+ 
+@@ -207,16 +208,21 @@ impl WindowExt for Window {
+ 
+     #[inline]
+     fn close_dialog(&mut self, cx: &mut App) {
+-        WindowState::update(self, cx, |root, window, cx| {
+-            root.close_dialog(window, cx);
+-        })
++        let restore =
++            WindowState::update(self, cx, |root, window, cx| root.close_dialog(window, cx));
++        if let Some(restore) = restore {
++            restore.apply(self, cx);
++        }
+     }
+ 
+     #[inline]
+     fn close_all_dialogs(&mut self, cx: &mut App) {
+-        WindowState::update(self, cx, |root, window, cx| {
+-            root.close_all_dialogs(window, cx);
+-        })
++        let restore = WindowState::update(self, cx, |root, window, cx| {
++            root.close_all_dialogs(window, cx)
++        });
++        if let Some(restore) = restore {
++            restore.apply(self, cx);
++        }
+     }
+ 
+     #[inline]
+-- 
+2.53.0
+
