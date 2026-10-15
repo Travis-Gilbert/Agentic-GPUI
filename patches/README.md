@@ -314,3 +314,7 @@ The paired GPUI pin patch (0026) moves Zed to `3f09c4f7`, whose public typed
 coordinator. Browser Tab traversal leaves the canvas at either end rather than
 wrapping, with native desktop traversal preserved. No Kit input or component
 behavior changes in this pin move. TheoremWeb consumes the same Zed revision.
+
+The paired GPUI pin patch (0027) moves Zed to `dc9632d4`, refusing an editing
+island replacement before changing the active conduit while composition is
+open. It changes no Kit behavior. TheoremWeb consumes the same revision.
