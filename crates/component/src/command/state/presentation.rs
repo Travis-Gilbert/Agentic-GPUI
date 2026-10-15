@@ -119,10 +119,46 @@ pub struct CommandPresentation {
     pub style: gpui::StyleRefinement,
     pub item_radius: Pixels,
     pub rows: Vec<CommandRowPresentation>,
+    pub header_actions: Vec<crate::command::CommandHeaderAction>,
     complete: bool,
     delegated: bool,
 }
 impl CommandPresentation {
+    /// Revalidate against the actual retained widget and release its read
+    /// before invoking the exact Button listener, which may reenter it.
+    pub fn deliver_header_action(
+        &self,
+        id: &str,
+        event: &gpui::ClickEvent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<(), CommandInputRefusal> {
+        let owner = self
+            .entity
+            .upgrade()
+            .ok_or(CommandInputRefusal::TargetAbsent)?;
+        let action = {
+            let state = owner.read(cx);
+            if state.presentation.revision != self.revision {
+                return Err(CommandInputRefusal::StaleRevision);
+            }
+            if !state.is_platform_delegated() {
+                return Err(CommandInputRefusal::NotPresented);
+            }
+            let action = state
+                .presentation
+                .header_actions
+                .iter()
+                .find(|action| action.id.as_ref() == id)
+                .ok_or(CommandInputRefusal::TargetAbsent)?;
+            if action.disabled {
+                return Err(CommandInputRefusal::Disabled);
+            }
+            action.clone()
+        };
+        (action.handler)(event, window, cx);
+        Ok(())
+    }
     pub fn is_complete(&self) -> bool {
         self.complete
     }
@@ -154,6 +190,8 @@ pub(super) struct PresentationState {
     pub(super) query_bounds: Rc<Cell<Bounds<Pixels>>>,
     pub(super) list_bounds: Bounds<Pixels>,
     pub(super) rows: Rc<RefCell<BTreeMap<usize, Bounds<Pixels>>>>,
+    pub(super) header_actions: Vec<crate::command::CommandHeaderAction>,
+    pub(super) header_complete: bool,
 }
 impl CommandState {
     pub(crate) fn install_platform_presenter(
@@ -196,6 +234,7 @@ impl CommandState {
         // An opaque header/footer/item is not silently reconstructed from text.
         // Structured source descriptors are required before it can delegate.
         let mut complete = self.options.header.is_none()
+            && self.presentation.header_complete
             && self.options.footer.is_none()
             && self.options.empty.is_none();
         let measured = self.presentation.rows.borrow();
@@ -280,6 +319,12 @@ impl CommandState {
             style: self.options.style.clone(),
             item_radius: self.item_radius(window, cx),
             rows,
+            header_actions: self
+                .presentation
+                .header_actions
+                .iter()
+                .map(|action| action.snapshot())
+                .collect(),
             complete,
             delegated: self.is_platform_delegated(),
         }

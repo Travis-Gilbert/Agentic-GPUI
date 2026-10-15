@@ -436,6 +436,14 @@ impl Button {
         ))
     }
 
+    /// The exact ordinary Button, source styling facts and current handler.
+    pub(crate) fn command_header_action(&mut self)->Option<ButtonHeaderSource>{
+        let (label,description,disabled,handler)=self.notification_action()?;
+        if self.icon.is_some() || self.dropdown_caret || self.loading || self.toggled.is_some() || self.open || self.hover_group.is_some() || self.hover_group_held {return None;}
+        Some(ButtonHeaderSource{id:self.id.clone(),label,description,disabled,selected:self.selected,handler,
+            appearance:ButtonHeaderAppearance{variant:self.variant,outline:self.outline,rounded:self.rounded,size:self.size,selected:self.shows_selected_style(),instance:self.base.style().clone(),content:self.content_style.clone()}})
+    }
+
     /// Set the icon of the button, if the Button have no label, the button well in Icon Button mode.
     pub fn icon(mut self, icon: impl Into<ButtonIcon>) -> Self {
         self.icon = Some(icon.into());
@@ -777,7 +785,7 @@ impl RenderOnce for Button {
                         })
                     })
             })
-            .line_height(relative(1.25))
+            .line_height(button_line_height())
             .refine_style(&instance_style);
 
         let content = h_flex()
@@ -986,7 +994,7 @@ impl ButtonVariant {
     fn draws_border(&self, outline: bool) -> bool { self.is_default() || outline }
     /// The same four functions consumed by the native Button renderer.
     pub fn presentation_styles(&self, outline: bool, cx: &mut App) -> ButtonPresentationStyles {
-        let mut text = div().button_text_size(Size::default());
+        let mut text = div().button_text_size(Size::default()).line_height(button_line_height());
         ButtonPresentationStyles {
             default_border_width: if self.draws_border(outline) { gpui::px(1.) } else { Pixels::ZERO },
             default_radius: button_rounding(ButtonRounded::default(), cx),
@@ -2092,5 +2100,53 @@ mod tests {
                 cx.theme().tokens.button_danger.background.opacity(0.15)
             );
         });
+    }
+}
+
+// Shared native defaults: metadata must not inherit a description's line-height.
+fn button_line_height()->gpui::DefiniteLength{relative(1.25)}
+pub(crate) struct ButtonHeaderSource {
+ pub id:ElementId,pub label:SharedString,pub description:Option<SharedString>,pub disabled:bool,pub selected:bool,
+ pub handler:Rc<dyn Fn(&ClickEvent,&mut Window,&mut App)>,pub appearance:ButtonHeaderAppearance,
+}
+#[derive(Clone)]
+pub(crate) struct ButtonHeaderAppearance {variant:ButtonVariant,outline:bool,rounded:ButtonRounded,size:Size,selected:bool,instance:StyleRefinement,content:StyleRefinement}
+impl ButtonHeaderAppearance {
+ pub(crate) fn styles(&self,cx:&mut App)->ButtonPresentationStyles{
+  let mut styles=self.variant.presentation_styles(self.outline,cx);
+  let mut text=div().button_text_size(self.size).line_height(button_line_height());
+  styles.default_text=text.style().text.clone();styles.default_radius=button_rounding(self.rounded,cx);
+  if self.selected {let selected:ButtonPresentationStyle=self.variant.selected(self.outline,cx).into();styles.normal=selected.clone();styles.hovered=selected.clone();styles.active=selected;}
+  styles
+ }
+ pub(crate) fn instance(&self)->&StyleRefinement{&self.instance}
+ pub(crate) fn content(&self)->&StyleRefinement{&self.content}
+}
+
+#[cfg(test)]
+mod platform_default_text_tests {
+    use super::*;
+    use crate::ElementExt as _;
+    use gpui::{AppContext as _,Context,Render,TestAppContext,Refineable as _,px};
+    use std::cell::RefCell;
+    struct Fixture {native:Rc<RefCell<Option<gpui::TextStyle>>>,projected:Rc<RefCell<Option<gpui::TextStyle>>>}
+    impl Render for Fixture {
+        fn render(&mut self,window:&mut Window,cx:&mut Context<Self>)->impl IntoElement {
+            let mut expected=window.text_style();
+            expected.refine(&ButtonVariant::Default.presentation_styles(false,cx).default_text);
+            *self.projected.borrow_mut()=Some(expected);
+            let native=self.native.clone();
+            div().w(px(300.)).h(px(100.)).child(Button::new("native-default-text-probe").child(
+                div().on_prepaint(move|_,window,_|*native.borrow_mut()=Some(window.text_style())).child("Native button text"),
+            ))
+        }
+    }
+    #[gpui::test]
+    fn platform_default_button_text_matches_actual_native_content_prepaint(cx:&mut TestAppContext){
+        cx.update(crate::init);let native=Rc::new(RefCell::new(None));let projected=Rc::new(RefCell::new(None));let a=native.clone();let b=projected.clone();
+        let (_view,cx)=cx.add_window_view(move|_,_|Fixture{native:a,projected:b});cx.run_until_parked();
+        let native=native.borrow();let projected=projected.borrow();let native=native.as_ref().expect("actual native content prepaint");let projected=projected.as_ref().unwrap();
+        assert_eq!(native.font_size,projected.font_size);
+        assert_eq!(native.line_height,projected.line_height);
     }
 }

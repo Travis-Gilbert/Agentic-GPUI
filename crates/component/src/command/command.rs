@@ -12,6 +12,9 @@ use crate::command::{
     state::{CommandModel, CommandState, OnCancel, OnIndex, OnQuery},
 };
 
+pub(crate) type CommandHeaderSlot =
+    dyn Fn(&CommandState, &mut Window, &mut App) -> super::structured_header::CommandHeader;
+
 pub(crate) type CommandSlot = dyn Fn(&CommandState, &mut Window, &mut App) -> AnyElement;
 
 /// Presentation of a [`Command`], pushed into its state on every render.
@@ -23,6 +26,7 @@ pub(crate) struct CommandOptions {
     pub(crate) max_h: DefiniteLength,
     pub(crate) bordered: bool,
     pub(crate) header: Option<Rc<CommandSlot>>,
+    pub(crate) structured_header: Option<Rc<CommandHeaderSlot>>,
     pub(crate) footer: Option<Rc<CommandSlot>>,
 }
 
@@ -35,6 +39,7 @@ impl Default for CommandOptions {
             max_h: rems(18.75).into(),
             bordered: true,
             header: None,
+            structured_header: None,
             footer: None,
         }
     }
@@ -226,9 +231,21 @@ impl Command {
         F: Fn(&CommandState, &mut Window, &mut App) -> E + 'static,
         E: IntoElement,
     {
+        self.options.structured_header = None;
         self.options.header = Some(Rc::new(move |state, window, cx| {
             f(state, window, cx).into_any_element()
         }));
+        self
+    }
+
+    /// Build a native header with source descriptors from its exact Buttons.
+    pub fn structured_header(
+        mut self,
+        build: impl Fn(&CommandState, &mut Window, &mut App) -> super::structured_header::CommandHeader
+        + 'static,
+    ) -> Self {
+        self.options.header = None;
+        self.options.structured_header = Some(Rc::new(build));
         self
     }
 

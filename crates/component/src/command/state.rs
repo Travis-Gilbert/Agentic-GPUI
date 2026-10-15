@@ -934,6 +934,14 @@ impl Render for CommandState {
                 .scroll_to_item(row_ix, ScrollStrategy::Nearest);
         }
 
+        let header = self.options.structured_header.clone().map(|build|build(self,window,cx));
+        let actions=header.as_ref().map(|header|header.actions.clone()).unwrap_or_default();
+        let before=self.presentation.header_actions.iter().map(|action|action.facts()).collect::<Vec<_>>();
+        let after=actions.iter().map(|action|action.facts()).collect::<Vec<_>>();
+        if before!=after {self.presentation.revision=self.presentation.revision.saturating_add(1);}
+        self.presentation.header_actions=actions;
+        self.presentation.header_complete=header.as_ref().is_none_or(|header|header.complete);
+        let header=header.map(|header|header.element);
         self.presentation.rows.borrow_mut().clear();
         let delegated = self.is_platform_delegated();
         let query_bounds = self.presentation.query_bounds.clone();
@@ -970,6 +978,7 @@ impl Render for CommandState {
             .when_some(self.options.header.as_ref(), |this, header| {
                 this.child(header(self, window, cx))
             })
+            .when_some(header,|this,header|this.child(header))
             .when(self.model.searchable, |this| {
                 this.child(
                     div()

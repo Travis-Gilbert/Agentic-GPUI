@@ -9,3 +9,5 @@ pub use button_group::*;
 pub(crate) use button_icon::*;
 pub use dropdown_button::*;
 pub use toggle::*;
+
+pub(crate) use button::ButtonHeaderAppearance;

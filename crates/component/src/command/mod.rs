@@ -15,3 +15,6 @@ pub use state::CommandState;
 pub(crate) use state::init;
 
 pub use state::presentation::{CommandPresenter,CommandPresenterFactory,CommandPresentation,CommandRowPresentation,CommandRowKind,CommandInput,CommandInputRefusal};
+
+mod structured_header;
+pub use structured_header::{CommandHeader,CommandHeaderAction,CommandHeaderActionKind,CommandHeaderBuilder};
