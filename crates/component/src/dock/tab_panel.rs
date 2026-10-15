@@ -58,6 +58,15 @@ pub struct DragPanelPreview {
     panel: Arc<dyn gpui_base::dock::PanelView>,
 }
 
+impl DragPanelPreview {
+    /// Build the same preview and placeholder size used by native tab drags.
+    /// The retained Dock panel remains the content and identity authority.
+    pub fn new(panel: Arc<dyn gpui_base::dock::PanelView>, drag: &DragPanel) -> Self {
+        drag.set_preview_size(DRAG_PREVIEW_SIZE);
+        Self { panel }
+    }
+}
+
 impl Render for DragPanelPreview {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
@@ -490,10 +499,7 @@ impl TabGroupSkin {
                             move |drag, offset, _, cx| {
                                 cx.stop_propagation();
                                 drag.set_drag_offset(offset);
-                                drag.set_preview_size(DRAG_PREVIEW_SIZE);
-                                cx.new(|_| DragPanelPreview {
-                                    panel: panel.clone(),
-                                })
+                                cx.new(|_| DragPanelPreview::new(panel.clone(), drag))
                             }
                         })
                     }),
@@ -665,10 +671,7 @@ impl TabGroupSkin {
                                         move |drag, offset, _, cx| {
                                             cx.stop_propagation();
                                             drag.set_drag_offset(offset);
-                                            drag.set_preview_size(DRAG_PREVIEW_SIZE);
-                                            cx.new(|_| DragPanelPreview {
-                                                panel: panel.clone(),
-                                            })
+                                            cx.new(|_| DragPanelPreview::new(panel.clone(), drag))
                                         }
                                     })
                                 })
