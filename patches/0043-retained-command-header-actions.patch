@@ -1,0 +1,568 @@
+From 80eaaa48d3dd61c1a0fffbcffa51fe443a3e08a0 Mon Sep 17 00:00:00 2001
+From: Travis Gilbert <1travisgilbert@gmail.com>
+Date: Thu, 15 Oct 2026 18:30:45 -0400
+Subject: [PATCH] feat(command): retain native header action presentation
+
+---
+ crates/component/src/button/button.rs         |  60 +++-
+ crates/component/src/button/mod.rs            |   2 +
+ crates/component/src/command/command.rs       |  17 ++
+ crates/component/src/command/mod.rs           |   3 +
+ crates/component/src/command/state.rs         |   9 +
+ .../src/command/state/presentation.rs         |  45 +++
+ .../src/command/structured_header.rs          | 270 ++++++++++++++++++
+ 7 files changed, 404 insertions(+), 2 deletions(-)
+ create mode 100644 crates/component/src/command/structured_header.rs
+
+diff --git a/crates/component/src/button/button.rs b/crates/component/src/button/button.rs
+index 9c2b9750..17bef91f 100644
+--- a/crates/component/src/button/button.rs
++++ b/crates/component/src/button/button.rs
+@@ -436,6 +436,14 @@ impl Button {
+         ))
+     }
+ 
++    /// The exact ordinary Button, source styling facts and current handler.
++    pub(crate) fn command_header_action(&mut self)->Option<ButtonHeaderSource>{
++        let (label,description,disabled,handler)=self.notification_action()?;
++        if self.icon.is_some() || self.dropdown_caret || self.loading || self.toggled.is_some() || self.open || self.hover_group.is_some() || self.hover_group_held {return None;}
++        Some(ButtonHeaderSource{id:self.id.clone(),label,description,disabled,selected:self.selected,handler,
++            appearance:ButtonHeaderAppearance{variant:self.variant,outline:self.outline,rounded:self.rounded,size:self.size,selected:self.shows_selected_style(),instance:self.base.style().clone(),content:self.content_style.clone()}})
++    }
++
+     /// Set the icon of the button, if the Button have no label, the button well in Icon Button mode.
+     pub fn icon(mut self, icon: impl Into<ButtonIcon>) -> Self {
+         self.icon = Some(icon.into());
+@@ -777,7 +785,7 @@ impl RenderOnce for Button {
+                         })
+                     })
+             })
+-            .line_height(relative(1.25))
++            .line_height(button_line_height())
+             .refine_style(&instance_style);
+ 
+         let content = h_flex()
+@@ -986,7 +994,7 @@ impl ButtonVariant {
+     fn draws_border(&self, outline: bool) -> bool { self.is_default() || outline }
+     /// The same four functions consumed by the native Button renderer.
+     pub fn presentation_styles(&self, outline: bool, cx: &mut App) -> ButtonPresentationStyles {
+-        let mut text = div().button_text_size(Size::default());
++        let mut text = div().button_text_size(Size::default()).line_height(button_line_height());
+         ButtonPresentationStyles {
+             default_border_width: if self.draws_border(outline) { gpui::px(1.) } else { Pixels::ZERO },
+             default_radius: button_rounding(ButtonRounded::default(), cx),
+@@ -2094,3 +2102,51 @@ mod tests {
+         });
+     }
+ }
++
++// Shared native defaults: metadata must not inherit a description's line-height.
++fn button_line_height()->gpui::DefiniteLength{relative(1.25)}
++pub(crate) struct ButtonHeaderSource {
++ pub id:ElementId,pub label:SharedString,pub description:Option<SharedString>,pub disabled:bool,pub selected:bool,
++ pub handler:Rc<dyn Fn(&ClickEvent,&mut Window,&mut App)>,pub appearance:ButtonHeaderAppearance,
++}
++#[derive(Clone)]
++pub(crate) struct ButtonHeaderAppearance {variant:ButtonVariant,outline:bool,rounded:ButtonRounded,size:Size,selected:bool,instance:StyleRefinement,content:StyleRefinement}
++impl ButtonHeaderAppearance {
++ pub(crate) fn styles(&self,cx:&mut App)->ButtonPresentationStyles{
++  let mut styles=self.variant.presentation_styles(self.outline,cx);
++  let mut text=div().button_text_size(self.size).line_height(button_line_height());
++  styles.default_text=text.style().text.clone();styles.default_radius=button_rounding(self.rounded,cx);
++  if self.selected {let selected:ButtonPresentationStyle=self.variant.selected(self.outline,cx).into();styles.normal=selected.clone();styles.hovered=selected.clone();styles.active=selected;}
++  styles
++ }
++ pub(crate) fn instance(&self)->&StyleRefinement{&self.instance}
++ pub(crate) fn content(&self)->&StyleRefinement{&self.content}
++}
++
++#[cfg(test)]
++mod platform_default_text_tests {
++    use super::*;
++    use crate::ElementExt as _;
++    use gpui::{AppContext as _,Context,Render,TestAppContext,Refineable as _,px};
++    use std::cell::RefCell;
++    struct Fixture {native:Rc<RefCell<Option<gpui::TextStyle>>>,projected:Rc<RefCell<Option<gpui::TextStyle>>>}
++    impl Render for Fixture {
++        fn render(&mut self,window:&mut Window,cx:&mut Context<Self>)->impl IntoElement {
++            let mut expected=window.text_style();
++            expected.refine(&ButtonVariant::Default.presentation_styles(false,cx).default_text);
++            *self.projected.borrow_mut()=Some(expected);
++            let native=self.native.clone();
++            div().w(px(300.)).h(px(100.)).child(Button::new("native-default-text-probe").child(
++                div().on_prepaint(move|_,window,_|*native.borrow_mut()=Some(window.text_style())).child("Native button text"),
++            ))
++        }
++    }
++    #[gpui::test]
++    fn platform_default_button_text_matches_actual_native_content_prepaint(cx:&mut TestAppContext){
++        cx.update(crate::init);let native=Rc::new(RefCell::new(None));let projected=Rc::new(RefCell::new(None));let a=native.clone();let b=projected.clone();
++        let (_view,cx)=cx.add_window_view(move|_,_|Fixture{native:a,projected:b});cx.run_until_parked();
++        let native=native.borrow();let projected=projected.borrow();let native=native.as_ref().expect("actual native content prepaint");let projected=projected.as_ref().unwrap();
++        assert_eq!(native.font_size,projected.font_size);
++        assert_eq!(native.line_height,projected.line_height);
++    }
++}
+diff --git a/crates/component/src/button/mod.rs b/crates/component/src/button/mod.rs
+index c0f196ab..588022d7 100644
+--- a/crates/component/src/button/mod.rs
++++ b/crates/component/src/button/mod.rs
+@@ -9,3 +9,5 @@ pub use button_group::*;
+ pub(crate) use button_icon::*;
+ pub use dropdown_button::*;
+ pub use toggle::*;
++
++pub(crate) use button::ButtonHeaderAppearance;
+diff --git a/crates/component/src/command/command.rs b/crates/component/src/command/command.rs
+index 17eb7838..167126f7 100644
+--- a/crates/component/src/command/command.rs
++++ b/crates/component/src/command/command.rs
+@@ -12,6 +12,9 @@ use crate::command::{
+     state::{CommandModel, CommandState, OnCancel, OnIndex, OnQuery},
+ };
+ 
++pub(crate) type CommandHeaderSlot =
++    dyn Fn(&CommandState, &mut Window, &mut App) -> super::structured_header::CommandHeader;
++
+ pub(crate) type CommandSlot = dyn Fn(&CommandState, &mut Window, &mut App) -> AnyElement;
+ 
+ /// Presentation of a [`Command`], pushed into its state on every render.
+@@ -23,6 +26,7 @@ pub(crate) struct CommandOptions {
+     pub(crate) max_h: DefiniteLength,
+     pub(crate) bordered: bool,
+     pub(crate) header: Option<Rc<CommandSlot>>,
++    pub(crate) structured_header: Option<Rc<CommandHeaderSlot>>,
+     pub(crate) footer: Option<Rc<CommandSlot>>,
+ }
+ 
+@@ -35,6 +39,7 @@ impl Default for CommandOptions {
+             max_h: rems(18.75).into(),
+             bordered: true,
+             header: None,
++            structured_header: None,
+             footer: None,
+         }
+     }
+@@ -226,12 +231,24 @@ impl Command {
+         F: Fn(&CommandState, &mut Window, &mut App) -> E + 'static,
+         E: IntoElement,
+     {
++        self.options.structured_header = None;
+         self.options.header = Some(Rc::new(move |state, window, cx| {
+             f(state, window, cx).into_any_element()
+         }));
+         self
+     }
+ 
++    /// Build a native header with source descriptors from its exact Buttons.
++    pub fn structured_header(
++        mut self,
++        build: impl Fn(&CommandState, &mut Window, &mut App) -> super::structured_header::CommandHeader
++        + 'static,
++    ) -> Self {
++        self.options.header = None;
++        self.options.structured_header = Some(Rc::new(build));
++        self
++    }
++
+     /// Render a custom element below the command list.
+     pub fn footer<F, E>(mut self, f: F) -> Self
+     where
+diff --git a/crates/component/src/command/mod.rs b/crates/component/src/command/mod.rs
+index 21375588..8b91eb31 100644
+--- a/crates/component/src/command/mod.rs
++++ b/crates/component/src/command/mod.rs
+@@ -15,3 +15,6 @@ pub use state::CommandState;
+ pub(crate) use state::init;
+ 
+ pub use state::presentation::{CommandPresenter,CommandPresenterFactory,CommandPresentation,CommandRowPresentation,CommandRowKind,CommandInput,CommandInputRefusal};
++
++mod structured_header;
++pub use structured_header::{CommandHeader,CommandHeaderAction,CommandHeaderActionKind,CommandHeaderBuilder};
+diff --git a/crates/component/src/command/state.rs b/crates/component/src/command/state.rs
+index cde532cd..0ce1b8fb 100644
+--- a/crates/component/src/command/state.rs
++++ b/crates/component/src/command/state.rs
+@@ -934,6 +934,14 @@ impl Render for CommandState {
+                 .scroll_to_item(row_ix, ScrollStrategy::Nearest);
+         }
+ 
++        let header = self.options.structured_header.clone().map(|build|build(self,window,cx));
++        let actions=header.as_ref().map(|header|header.actions.clone()).unwrap_or_default();
++        let before=self.presentation.header_actions.iter().map(|action|action.facts()).collect::<Vec<_>>();
++        let after=actions.iter().map(|action|action.facts()).collect::<Vec<_>>();
++        if before!=after {self.presentation.revision=self.presentation.revision.saturating_add(1);}
++        self.presentation.header_actions=actions;
++        self.presentation.header_complete=header.as_ref().is_none_or(|header|header.complete);
++        let header=header.map(|header|header.element);
+         self.presentation.rows.borrow_mut().clear();
+         let delegated = self.is_platform_delegated();
+         let query_bounds = self.presentation.query_bounds.clone();
+@@ -970,6 +978,7 @@ impl Render for CommandState {
+             .when_some(self.options.header.as_ref(), |this, header| {
+                 this.child(header(self, window, cx))
+             })
++            .when_some(header,|this,header|this.child(header))
+             .when(self.model.searchable, |this| {
+                 this.child(
+                     div()
+diff --git a/crates/component/src/command/state/presentation.rs b/crates/component/src/command/state/presentation.rs
+index f93109eb..f2d3bde4 100644
+--- a/crates/component/src/command/state/presentation.rs
++++ b/crates/component/src/command/state/presentation.rs
+@@ -119,10 +119,46 @@ pub struct CommandPresentation {
+     pub style: gpui::StyleRefinement,
+     pub item_radius: Pixels,
+     pub rows: Vec<CommandRowPresentation>,
++    pub header_actions: Vec<crate::command::CommandHeaderAction>,
+     complete: bool,
+     delegated: bool,
+ }
+ impl CommandPresentation {
++    /// Revalidate against the actual retained widget and release its read
++    /// before invoking the exact Button listener, which may reenter it.
++    pub fn deliver_header_action(
++        &self,
++        id: &str,
++        event: &gpui::ClickEvent,
++        window: &mut Window,
++        cx: &mut App,
++    ) -> Result<(), CommandInputRefusal> {
++        let owner = self
++            .entity
++            .upgrade()
++            .ok_or(CommandInputRefusal::TargetAbsent)?;
++        let action = {
++            let state = owner.read(cx);
++            if state.presentation.revision != self.revision {
++                return Err(CommandInputRefusal::StaleRevision);
++            }
++            if !state.is_platform_delegated() {
++                return Err(CommandInputRefusal::NotPresented);
++            }
++            let action = state
++                .presentation
++                .header_actions
++                .iter()
++                .find(|action| action.id.as_ref() == id)
++                .ok_or(CommandInputRefusal::TargetAbsent)?;
++            if action.disabled {
++                return Err(CommandInputRefusal::Disabled);
++            }
++            action.clone()
++        };
++        (action.handler)(event, window, cx);
++        Ok(())
++    }
+     pub fn is_complete(&self) -> bool {
+         self.complete
+     }
+@@ -154,6 +190,8 @@ pub(super) struct PresentationState {
+     pub(super) query_bounds: Rc<Cell<Bounds<Pixels>>>,
+     pub(super) list_bounds: Bounds<Pixels>,
+     pub(super) rows: Rc<RefCell<BTreeMap<usize, Bounds<Pixels>>>>,
++    pub(super) header_actions: Vec<crate::command::CommandHeaderAction>,
++    pub(super) header_complete: bool,
+ }
+ impl CommandState {
+     pub(crate) fn install_platform_presenter(
+@@ -196,6 +234,7 @@ impl CommandState {
+         // An opaque header/footer/item is not silently reconstructed from text.
+         // Structured source descriptors are required before it can delegate.
+         let mut complete = self.options.header.is_none()
++            && self.presentation.header_complete
+             && self.options.footer.is_none()
+             && self.options.empty.is_none();
+         let measured = self.presentation.rows.borrow();
+@@ -280,6 +319,12 @@ impl CommandState {
+             style: self.options.style.clone(),
+             item_radius: self.item_radius(window, cx),
+             rows,
++            header_actions: self
++                .presentation
++                .header_actions
++                .iter()
++                .map(|action| action.snapshot())
++                .collect(),
+             complete,
+             delegated: self.is_platform_delegated(),
+         }
+diff --git a/crates/component/src/command/structured_header.rs b/crates/component/src/command/structured_header.rs
+new file mode 100644
+index 00000000..6e47f749
+--- /dev/null
++++ b/crates/component/src/command/structured_header.rs
+@@ -0,0 +1,270 @@
++//! Typed facts for a custom header built from the same ordinary Buttons.
++//! The caller still builds the actual native header and semantic wrappers.
++use crate::ElementExt as _;
++use crate::button::Button;
++use gpui::{
++    AnyElement, App, Bounds, ClickEvent, ElementId, IntoElement as _, ParentElement as _, Pixels,
++    SharedString, Styled as _, Window, div,
++};
++use std::{cell::Cell, rc::Rc};
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum CommandHeaderActionKind {
++    Button,
++    Radio,
++}
++#[derive(Clone)]
++pub struct CommandHeaderAction {
++    pub id: SharedString,
++    pub label: SharedString,
++    pub description: Option<SharedString>,
++    pub disabled: bool,
++    pub selected: bool,
++    pub(crate) appearance: crate::button::ButtonHeaderAppearance,
++    pub kind: CommandHeaderActionKind,
++    pub(crate) bounds: Rc<Cell<Bounds<Pixels>>>,
++    pub(crate) handler: Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>,
++}
++impl CommandHeaderAction {
++    pub fn styles(&self, cx: &mut App) -> crate::button::ButtonPresentationStyles {
++        self.appearance.styles(cx)
++    }
++    pub fn instance_style(&self) -> &gpui::StyleRefinement {
++        self.appearance.instance()
++    }
++    pub fn content_style(&self) -> &gpui::StyleRefinement {
++        self.appearance.content()
++    }
++
++    pub fn bounds(&self) -> Bounds<Pixels> {
++        self.bounds.get()
++    }
++    pub(crate) fn snapshot(&self) -> Self {
++        let mut value = self.clone();
++        value.bounds = Rc::new(Cell::new(self.bounds.get()));
++        value
++    }
++    pub(crate) fn facts(
++        &self,
++    ) -> (
++        SharedString,
++        SharedString,
++        Option<SharedString>,
++        bool,
++        bool,
++        CommandHeaderActionKind,
++    ) {
++        (
++            self.id.clone(),
++            self.label.clone(),
++            self.description.clone(),
++            self.disabled,
++            self.selected,
++            self.kind,
++        )
++    }
++}
++pub struct CommandHeader {
++    pub(crate) element: AnyElement,
++    pub(crate) actions: Vec<CommandHeaderAction>,
++    pub(crate) complete: bool,
++}
++/// A construction resource, consumed into the actual Command render. It owns
++/// no visibility, selection, query, callback routing or matching state.
++pub struct CommandHeaderBuilder {
++    actions: Vec<CommandHeaderAction>,
++    complete: bool,
++}
++impl Default for CommandHeaderBuilder {
++    fn default() -> Self {
++        Self {
++            actions: Vec::new(),
++            complete: true,
++        }
++    }
++}
++impl CommandHeaderBuilder {
++    pub fn new() -> Self {
++        Self::default()
++    }
++    /// Capture this exact ordinary Button's handler before its one native
++    /// render. Opaque/custom children make the whole header native-only.
++    pub fn button(&mut self, id: impl Into<SharedString>, button: Button) -> AnyElement {
++        self.button_kind(id, button, CommandHeaderActionKind::Button)
++    }
++    pub fn radio(&mut self, id: impl Into<SharedString>, button: Button) -> AnyElement {
++        self.button_kind(id, button, CommandHeaderActionKind::Radio)
++    }
++    fn button_kind(
++        &mut self,
++        id: impl Into<SharedString>,
++        mut button: Button,
++        kind: CommandHeaderActionKind,
++    ) -> AnyElement {
++        let id = id.into();
++        let facts = button.command_header_action();
++        match facts {
++            Some(source) if source.id == ElementId::Name(id.clone()) => {
++                let bounds = Rc::new(Cell::new(Bounds::default()));
++                self.actions.push(CommandHeaderAction {
++                    id,
++                    label: source.label,
++                    description: source.description,
++                    disabled: source.disabled,
++                    selected: source.selected,
++                    appearance: source.appearance,
++                    kind,
++                    bounds: bounds.clone(),
++                    handler: source.handler,
++                });
++                div()
++                    .flex_none()
++                    .on_prepaint(move |actual, _, _| bounds.set(actual))
++                    .child(button)
++                    .into_any_element()
++            }
++            _ => {
++                self.complete = false;
++                button.into_any_element()
++            }
++        }
++    }
++    pub fn finish(self, element: impl gpui::IntoElement) -> CommandHeader {
++        CommandHeader {
++            element: element.into_any_element(),
++            actions: self.actions,
++            complete: self.complete,
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::{
++        Disableable as _,Selectable as _,
++        command::{
++            Command, CommandInputRefusal, CommandItem, CommandPresentation, CommandPresenter,
++            CommandPresenterFactory, CommandState,
++        },
++    };
++    use gpui::{
++        AppContext as _, Context, Entity, ParentElement as _, Render, TestAppContext,
++        prelude::FluentBuilder as _, px,
++    };
++    use std::cell::RefCell;
++    struct Fixture {
++        state: Entity<CommandState>,
++        factory: CommandPresenterFactory,
++        count: Rc<Cell<u32>>,
++        show: bool,
++        disabled: bool,
++    }
++    impl Render for Fixture {
++        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui::IntoElement {
++            let target = self.state.downgrade();
++            let count = self.count.clone();
++            let disabled = self.disabled;
++            let command = Command::new(&self.state)
++                .item(CommandItem::new().label("Native owner row"))
++                .structured_header(move |_, _, _| {
++                    let target = target.clone();
++                    let count = count.clone();
++                    let mut header = CommandHeaderBuilder::new();
++                    let button = header.radio(
++                        "header.place",
++                        Button::new("header.place")
++                            .label("Add beside")
++                            .selected(true)
++                            .disabled(disabled)
++                            .on_click(move |_, _, cx| {
++                                // This is the actual Button listener, intentionally reentering the
++                                // SAME retained CommandState that provides its presentation lease.
++                                target.upgrade().unwrap().update(cx, |state, cx| {
++                                    let _ = state.query(cx);
++                                    count.set(count.get() + 1);
++                                });
++                            }),
++                    );
++                    header.finish(crate::h_flex().p_1().child(button))
++                })
++                .presenter("header-invoker", self.factory.clone());
++            div()
++                .w(px(360.))
++                .h(px(280.))
++                .when(self.show, |this| this.child(command))
++        }
++    }
++    #[gpui::test]
++    fn structured_command_header_invokes_current_button_outside_command_lease(
++        cx: &mut TestAppContext,
++    ) {
++        cx.update(crate::init);
++        let frames: Rc<RefCell<Vec<CommandPresentation>>> = Rc::default();
++        let captured = frames.clone();
++        let factory: CommandPresenterFactory = Rc::new(move |_| {
++            let frames = captured.clone();
++            CommandPresenter::new(
++                move |frame, _, _| {
++                    frames.borrow_mut().push(frame);
++                    true
++                },
++                |_| {},
++            )
++        });
++        let (view, cx) = cx.add_window_view(move |window, cx| Fixture {
++            state: cx.new(|cx| CommandState::new(window, cx)),
++            factory,
++            count: Rc::new(Cell::new(0)),
++            show: true,
++            disabled: false,
++        });
++        cx.run_until_parked();
++        let first = frames.borrow().last().cloned().unwrap();
++        assert!(first.is_complete());
++        assert_eq!(first.header_actions.len(), 1);
++        assert_eq!(first.header_actions[0].label.as_ref(), "Add beside");
++        assert!(first.header_actions[0].selected);
++        assert_eq!(first.header_actions[0].kind, CommandHeaderActionKind::Radio);
++        assert!(first.header_actions[0].bounds().size.width > px(0.));
++        cx.update(|window, cx| {
++            first
++                .deliver_header_action("header.place", &ClickEvent::default(), window, cx)
++                .unwrap()
++        });
++        assert_eq!(view.read_with(cx, |view, _| view.count.get()), 1);
++        view.update(cx, |view, cx| {
++            view.disabled = true;
++            cx.notify();
++        });
++        cx.run_until_parked();
++        let disabled = frames.borrow().last().cloned().unwrap();
++        cx.update(|window, cx| {
++            assert_eq!(
++                first.deliver_header_action("header.place", &ClickEvent::default(), window, cx),
++                Err(CommandInputRefusal::StaleRevision)
++            );
++            assert_eq!(
++                disabled.deliver_header_action("header.place", &ClickEvent::default(), window, cx),
++                Err(CommandInputRefusal::Disabled)
++            );
++        });
++        assert_eq!(view.read_with(cx, |view, _| view.count.get()), 1);
++        view.update(cx, |view, cx| {
++            view.show = false;
++            cx.notify();
++        });
++        cx.run_until_parked();
++        cx.update(|window, cx| {
++            window.simulate_next_frame(cx);
++            window.refresh();
++        });
++        cx.run_until_parked();
++        cx.update(|window, cx| {
++            assert_eq!(
++                disabled.deliver_header_action("header.place", &ClickEvent::default(), window, cx),
++                Err(CommandInputRefusal::NotPresented)
++            )
++        });
++        assert_eq!(view.read_with(cx, |view, _| view.count.get()), 1);
++    }
++}
+-- 
+2.53.0
+

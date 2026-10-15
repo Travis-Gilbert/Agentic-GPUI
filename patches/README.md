@@ -355,3 +355,18 @@ for content whose presentation cannot be represented.
 The actual native input packet tests and actual Command/modal owner regressions
 pass. They establish owner and metadata behavior, not product browser, OS IME,
 glyph/caret/wrap, or deployed acceptance. Those gates remain independent.
+
+## Native Command header actions (patch 0043)
+
+An opt-in builder observes the same ordinary Button before its one native render,
+retaining its actual label, state, style facts and handler. The actual CommandState
+keeps the rendered header resource, advances its presentation revision on changes,
+and validates current/disabled/retired delivery before releasing its read lease
+and invoking that existing handler. Opaque headers retain native presentation.
+The native Button renderer and read-only defaults share the same line-height helper.
+
+The seven source paths match the qualified external native Command suite (37 tests)
+and two focused owner/actual Button prepaint tests byte for byte. The actual fork
+Component library check passes against the paired GPUI revision. A redundant cold
+focused rerun was stopped before tests executed; it supplies no additional result.
+Product browser header placement and full overlay acceptance remain separate.
