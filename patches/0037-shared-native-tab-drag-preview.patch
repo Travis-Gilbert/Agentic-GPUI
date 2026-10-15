@@ -1,0 +1,56 @@
+From 4fff72ac3da7332e8b76bd3163ec7a8bcc681d92 Mon Sep 17 00:00:00 2001
+From: Travis Gilbert <1travisgilbert@gmail.com>
+Date: Thu, 15 Oct 2026 14:28:27 -0400
+Subject: [PATCH] refactor(dock): share the native tab drag preview constructor
+
+---
+ crates/component/src/dock/tab_panel.rs | 19 +++++++++++--------
+ 1 file changed, 11 insertions(+), 8 deletions(-)
+
+diff --git a/crates/component/src/dock/tab_panel.rs b/crates/component/src/dock/tab_panel.rs
+index 21b78c10..8a0239ef 100644
+--- a/crates/component/src/dock/tab_panel.rs
++++ b/crates/component/src/dock/tab_panel.rs
+@@ -58,6 +58,15 @@ pub struct DragPanelPreview {
+     panel: Arc<dyn gpui_base::dock::PanelView>,
+ }
+ 
++impl DragPanelPreview {
++    /// Build the same preview and placeholder size used by native tab drags.
++    /// The retained Dock panel remains the content and identity authority.
++    pub fn new(panel: Arc<dyn gpui_base::dock::PanelView>, drag: &DragPanel) -> Self {
++        drag.set_preview_size(DRAG_PREVIEW_SIZE);
++        Self { panel }
++    }
++}
++
+ impl Render for DragPanelPreview {
+     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+         div()
+@@ -490,10 +499,7 @@ impl TabGroupSkin {
+                             move |drag, offset, _, cx| {
+                                 cx.stop_propagation();
+                                 drag.set_drag_offset(offset);
+-                                drag.set_preview_size(DRAG_PREVIEW_SIZE);
+-                                cx.new(|_| DragPanelPreview {
+-                                    panel: panel.clone(),
+-                                })
++                                cx.new(|_| DragPanelPreview::new(panel.clone(), drag))
+                             }
+                         })
+                     }),
+@@ -665,10 +671,7 @@ impl TabGroupSkin {
+                                         move |drag, offset, _, cx| {
+                                             cx.stop_propagation();
+                                             drag.set_drag_offset(offset);
+-                                            drag.set_preview_size(DRAG_PREVIEW_SIZE);
+-                                            cx.new(|_| DragPanelPreview {
+-                                                panel: panel.clone(),
+-                                            })
++                                            cx.new(|_| DragPanelPreview::new(panel.clone(), drag))
+                                         }
+                                     })
+                                 })
+-- 
+2.53.0
+
