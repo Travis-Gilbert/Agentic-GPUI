@@ -179,13 +179,30 @@ impl Notification {
                 .is_some_and(NotificationPresenter::is_platform_delegated),
         }
     }
-    pub fn presented_input(
+    /// Deliver an existing native listener after releasing the notification lease.
+    pub fn deliver_presented_input(
+        owner: &Entity<Self>,
+        revision: u64,
+        input: NotificationInput,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<(), NotificationInputRefusal> {
+        let handler = owner.update(cx, |note, cx| {
+            note.prepare_presented_input(revision, input, window, cx)
+        })?;
+        if let Some(handler) = handler {
+            handler(&ClickEvent::default(), window, cx);
+        }
+        Ok(())
+    }
+    fn prepare_presented_input(
         &mut self,
         revision: u64,
         input: NotificationInput,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Result<(), NotificationInputRefusal> {
+    ) -> Result<Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>, NotificationInputRefusal>
+    {
         if revision != self.presentation.revision {
             return Err(NotificationInputRefusal::StaleRevision);
         }
@@ -200,7 +217,7 @@ impl Notification {
         if self.transition_status == ToastTransitionStatus::Ending {
             return Err(NotificationInputRefusal::Disabled);
         }
-        match input {
+        let handler = match input {
             NotificationInput::Action => {
                 let action = self
                     .presentation
@@ -215,7 +232,7 @@ impl Notification {
                     .action_handler
                     .clone()
                     .ok_or(NotificationInputRefusal::TargetAbsent)?;
-                handler(&ClickEvent::default(), window, cx);
+                Some(handler)
             }
             NotificationInput::Click => {
                 let handler = self
@@ -223,14 +240,23 @@ impl Notification {
                     .clone()
                     .ok_or(NotificationInputRefusal::TargetAbsent)?;
                 self.dismiss(window, cx);
-                handler(&ClickEvent::default(), window, cx);
+                Some(handler)
             }
-            NotificationInput::Dismiss => self.dismiss(window, cx),
-            NotificationInput::Hover(active) => self.presentation.hovered = active,
-            NotificationInput::Focus(active) => self.presentation.focused = active,
-        }
+            NotificationInput::Dismiss => {
+                self.dismiss(window, cx);
+                None
+            }
+            NotificationInput::Hover(active) => {
+                self.presentation.hovered = active;
+                None
+            }
+            NotificationInput::Focus(active) => {
+                self.presentation.focused = active;
+                None
+            }
+        };
         cx.notify();
-        Ok(())
+        Ok(handler)
     }
 }
 impl Drop for Notification {
@@ -298,17 +324,22 @@ mod tests {
         });
         note.update_in(cx, |note, window, cx| {
             assert_eq!(
-                note.presented_input(revision, NotificationInput::Action, window, cx),
+                note.prepare_presented_input(revision, NotificationInput::Action, window, cx)
+                    .map(|_| ()),
                 Err(NotificationInputRefusal::NotPresented)
             );
             presenter.delegated.set(true);
             assert_eq!(
-                note.presented_input(revision + 1, NotificationInput::Action, window, cx),
+                note.prepare_presented_input(revision + 1, NotificationInput::Action, window, cx)
+                    .map(|_| ()),
                 Err(NotificationInputRefusal::StaleRevision)
             );
             assert_eq!(calls.get(), 0);
-            note.presented_input(revision, NotificationInput::Action, window, cx)
+            let handler = note
+                .prepare_presented_input(revision, NotificationInput::Action, window, cx)
+                .unwrap()
                 .unwrap();
+            handler(&ClickEvent::default(), window, cx);
             assert_eq!(calls.get(), 1);
             let disabled = Button::new("existing-action")
                 .label("View")
@@ -320,20 +351,58 @@ mod tests {
             note.capture_action(Some(&disabled));
             note.refresh_presentation_revision();
             assert_eq!(
-                note.presented_input(revision, NotificationInput::Action, window, cx),
+                note.prepare_presented_input(revision, NotificationInput::Action, window, cx)
+                    .map(|_| ()),
                 Err(NotificationInputRefusal::StaleRevision)
             );
             assert_eq!(
-                note.presented_input(
+                note.prepare_presented_input(
                     note.presentation.revision,
                     NotificationInput::Action,
                     window,
                     cx
-                ),
+                )
+                .map(|_| ()),
                 Err(NotificationInputRefusal::Disabled)
             );
             assert_eq!(calls.get(), 1);
         });
+    }
+    #[gpui::test]
+    fn platform_notification_action_releases_owner_lease_before_existing_context_listener(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| cx.set_global(crate::Theme::default()));
+        let (note, cx) = cx.add_window_view(|_, _| Notification::info("Before owner action"));
+        let presenter = NotificationPresenter::new(|_, _, _| true, |_| {});
+        presenter.delegated.set(true);
+        let revision = note.update(cx, |note, cx| {
+            let action = Button::new("existing-owner-action")
+                .label("Update owner")
+                .on_click(cx.listener(|note, _, _, cx| {
+                    note.message = Some("After owner action".into());
+                    cx.notify();
+                }));
+            note.capture_action(Some(&action));
+            note.refresh_presentation_revision();
+            note.presentation.presenter = Some(presenter);
+            note.presentation.revision
+        });
+        cx.update(|window, cx| {
+            Notification::deliver_presented_input(
+                &note,
+                revision,
+                NotificationInput::Action,
+                window,
+                cx,
+            )
+            .unwrap()
+        });
+        assert_eq!(
+            note.read_with(cx, |note, _| note.message.clone())
+                .as_deref(),
+            Some("After owner action")
+        );
     }
     struct ListHarness {
         list: Entity<NotificationList>,
@@ -363,7 +432,7 @@ mod tests {
         presenter.delegated.set(true);
         note.update_in(cx, |note, window, cx| {
             note.presentation.presenter = Some(presenter);
-            note.presented_input(
+            note.prepare_presented_input(
                 note.presentation.revision,
                 NotificationInput::Hover(true),
                 window,
@@ -378,7 +447,7 @@ mod tests {
             ToastTransitionStatus::Present
         );
         note.update_in(cx, |note, window, cx| {
-            note.presented_input(
+            note.prepare_presented_input(
                 note.presentation.revision,
                 NotificationInput::Hover(false),
                 window,
