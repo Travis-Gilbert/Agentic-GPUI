@@ -28,3 +28,4 @@
 0028-retained-popup-presentation.patch
 0029-physical-tab-navigation.patch
 0030-follow-canonical-history-and-editor-sync.patch
+0031-preserve-editor-tab-navigation-context.patch

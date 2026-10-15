@@ -1,0 +1,60 @@
+From 304b62a269a9616162ac80e69434774db190e1d9 Mon Sep 17 00:00:00 2001
+From: Travis Gilbert <1travisgilbert@gmail.com>
+Date: Thu, 15 Oct 2026 13:30:30 -0400
+Subject: [PATCH] fix(input): preserve Tab navigation in editor mode key
+ context
+
+---
+ crates/base/src/input/base/kind.rs  | 1 +
+ crates/base/src/input/base/state.rs | 2 +-
+ crates/base/src/input/editor/mod.rs | 7 ++++++-
+ 3 files changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/crates/base/src/input/base/kind.rs b/crates/base/src/input/base/kind.rs
+index 9f93e8ee..215e6d5e 100644
+--- a/crates/base/src/input/base/kind.rs
++++ b/crates/base/src/input/base/kind.rs
+@@ -330,6 +330,7 @@ pub trait InputModeKind: sealed::Sealed + Sized + 'static {
+         element: Stateful<Div>,
+         _entity: &Entity<InputBaseState<Self>>,
+         _window: &mut Window,
++        _tab_navigation: bool,
+     ) -> Stateful<Div> {
+         element
+     }
+diff --git a/crates/base/src/input/base/state.rs b/crates/base/src/input/base/state.rs
+index 030a7ea5..4140f633 100644
+--- a/crates/base/src/input/base/state.rs
++++ b/crates/base/src/input/base/state.rs
+@@ -4894,7 +4894,7 @@ impl<M: InputModeKind> Render for InputBaseState<M> {
+ 
+         // Actions only one mode handles are registered by that mode, where
+         // `Self` is concrete enough to name its own entity type.
+-        M::register_actions(element, &entity, window)
++        M::register_actions(element, &entity, window, self.tab_navigation)
+     }
+ }
+ 
+diff --git a/crates/base/src/input/editor/mod.rs b/crates/base/src/input/editor/mod.rs
+index e5bf1883..907ecb26 100644
+--- a/crates/base/src/input/editor/mod.rs
++++ b/crates/base/src/input/editor/mod.rs
+@@ -184,9 +184,14 @@ impl InputModeKind for EditorMode {
+         element: Stateful<Div>,
+         entity: &Entity<InputBaseState<Self>>,
+         window: &mut Window,
++        tab_navigation: bool,
+     ) -> Stateful<Div> {
+         element
+-            .key_context("Input mode=editor")
++            .key_context(if tab_navigation {
++                "Input mode=editor TabNavigation"
++            } else {
++                "Input mode=editor"
++            })
+             .on_action(window.listener_for(entity, InputBaseState::on_action_toggle_code_actions))
+             .on_action(window.listener_for(entity, InputBaseState::on_action_show_completions))
+             .on_action(window.listener_for(entity, InputBaseState::on_action_go_to_definition))
+-- 
+2.53.0
+
