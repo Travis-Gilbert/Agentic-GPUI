@@ -14,6 +14,7 @@ pub(crate) struct MenuItemElement {
     style: StyleRefinement,
     disabled: bool,
     selected: bool,
+    delegate_platform: bool,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_hover: Option<Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
@@ -29,10 +30,17 @@ impl MenuItemElement {
             style: StyleRefinement::default(),
             disabled: false,
             selected: false,
+            delegate_platform: false,
             on_click: None,
             on_hover: None,
             children: SmallVec::new(),
         }
+    }
+
+    /// Set ListItem as the selected item style.
+    pub(crate) fn delegate_platform(mut self, delegated: bool) -> Self {
+        self.delegate_platform = delegated;
+        self
     }
 
     /// Set ListItem as the selected item style.
@@ -94,7 +102,7 @@ impl RenderOnce for MenuItemElement {
         h_flex()
             .id(self.id)
             .test_support()
-            .role(Role::MenuItem)
+            .when(!self.delegate_platform, |this| this.role(Role::MenuItem))
             .when_some(self.aria_label, |this, label| this.aria_label(label))
             .aria_selected(self.selected)
             .gap_x_1()

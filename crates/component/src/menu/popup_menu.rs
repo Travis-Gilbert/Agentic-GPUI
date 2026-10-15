@@ -16,6 +16,12 @@ use gpui_base::TestSupportExt as _;
 
 use std::rc::Rc;
 
+mod presentation;
+pub use presentation::{
+    MenuInputRefusal, MenuItemPresentation, MenuRowKind, MenuRowPresentation, PopupMenuInput,
+    PopupMenuPresentation, PopupMenuPresenter, PresentedMenuItem,
+};
+
 const CONTEXT: &str = "PopupMenu";
 
 pub fn init(cx: &mut App) {
@@ -280,6 +286,7 @@ impl PopupMenuItem {
 }
 
 pub struct PopupMenu {
+    presentation: presentation::PresentationState,
     pub(crate) focus_handle: FocusHandle,
     pub(crate) menu_items: Vec<PopupMenuItem>,
     /// The focus handle of Entity to handle actions.
@@ -330,9 +337,18 @@ pub struct PopupMenu {
     _subscriptions: Vec<Subscription>,
 }
 
+impl Drop for PopupMenu {
+    fn drop(&mut self) {
+        if let Some(presenter) = &self.presentation.presenter {
+            presenter.close();
+        }
+    }
+}
+
 impl PopupMenu {
     pub(crate) fn new(cx: &mut App) -> Self {
         Self {
+            presentation: Default::default(),
             focus_handle: cx.focus_handle(),
             action_context: None,
             previous_focus_handle: None,
@@ -758,10 +774,14 @@ impl PopupMenu {
         cx: &mut Context<Self>,
         f: impl FnOnce(Self, &mut Window, &mut Context<Self>) -> Self,
     ) {
+        let revision = self.presentation.revision.saturating_add(1);
         let mut menu = std::mem::replace(self, Self::new(cx));
         menu.menu_items.clear();
+        menu.presentation.metadata.clear();
+        menu.presentation.bounds.borrow_mut().clear();
         menu.selected_index = None;
         *self = f(menu, window, cx);
+        self.presentation.revision = revision;
         cx.notify();
     }
 
@@ -941,7 +961,10 @@ impl PopupMenu {
     fn select_down(&mut self, _: &SelectDown, _: &mut Window, cx: &mut Context<Self>) {
         cx.stop_propagation();
         let Some(ix) = self.selected_index else {
-            self.set_selected_index(0, cx);
+            let first = self.clickable_menu_items().next().map(|(index, _)| index);
+            if let Some(first) = first {
+                self.set_selected_index(first, cx);
+            }
             return;
         };
 
@@ -955,7 +978,10 @@ impl PopupMenu {
             return;
         }
 
-        self.set_selected_index(0, cx);
+        let first = self.clickable_menu_items().next().map(|(index, _)| index);
+        if let Some(first) = first {
+            self.set_selected_index(first, cx);
+        }
     }
 
     fn select_left(&mut self, _: &SelectLeft, window: &mut Window, cx: &mut Context<Self>) {
@@ -1062,6 +1088,9 @@ impl PopupMenu {
     ///
     /// The submenu is closed together with its parent, same as macOS menus.
     fn dismiss(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(presenter) = &self.presentation.presenter {
+            presenter.close();
+        }
         self.selected_index = None;
         cx.emit(DismissEvent);
 
@@ -1233,6 +1262,18 @@ impl PopupMenu {
         };
 
         let this = MenuItemElement::new(ix)
+            .delegate_platform(
+                self.presentation
+                    .presenter
+                    .as_ref()
+                    .is_some_and(|p| p.delegated.get()),
+            )
+            .on_prepaint({
+                let bounds = self.presentation.bounds.clone();
+                move |value, _, _| {
+                    bounds.borrow_mut().insert(ix, value);
+                }
+            })
             .relative()
             .text_sm()
             .py_0()
@@ -1444,6 +1485,14 @@ struct RenderOptions {
 impl Render for PopupMenu {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.update_submenu_menu_anchor(window);
+        let delegated = self
+            .presentation
+            .presenter
+            .as_ref()
+            .is_some_and(|p| p.delegated.get());
+        for metadata in self.presentation.metadata.values() {
+            metadata.delegated.set(delegated);
+        }
 
         // Submenus attached via the public `item()` + `PopupMenuItem::submenu()`
         // path (from contexts that only have the menu value, e.g. a table
@@ -1486,7 +1535,8 @@ impl Render for PopupMenu {
         v_flex()
             .id("popup-menu")
             .test_support()
-            .role(Role::Menu)
+            .when(!delegated, |this| this.role(Role::Menu))
+            .when(delegated, |this| this.opacity(0.))
             .key_context(CONTEXT)
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::select_up))
@@ -1521,7 +1571,22 @@ impl Render for PopupMenu {
                             .filter(|(ix, item)| !(*ix + 1 == items_count && item.is_separator()))
                             .map(|(ix, item)| self.render_item(ix, item, options, window, cx)),
                     )
-                    .on_prepaint(move |bounds, _, cx| view.update(cx, |r, _| r.bounds = bounds)),
+                    .on_prepaint(move |bounds, window, cx| {
+                        let (frame, presenter) = view.update(cx, |menu, cx| {
+                            menu.bounds = bounds;
+                            (
+                                menu.presentation(cx.entity().downgrade()),
+                                menu.presentation.presenter.clone(),
+                            )
+                        });
+                        if let Some(presenter) = presenter {
+                            let complete = frame.is_complete();
+                            let requested = (presenter.frame)(frame, window, cx) && complete;
+                            if presenter.delegated.replace(requested) != requested {
+                                view.update(cx, |_, cx| cx.notify());
+                            }
+                        }
+                    }),
             )
             .when(self.scrollable, |this| {
                 this.vertical_scrollbar(&self.scroll_handle)
