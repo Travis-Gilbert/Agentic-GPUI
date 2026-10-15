@@ -85,6 +85,8 @@ actions!(
         Outdent,
         IndentInline,
         OutdentInline,
+        TabNext,
+        TabPrevious,
         MoveUp,
         MoveDown,
         MoveLeft,
@@ -193,8 +195,10 @@ pub(crate) fn init(cx: &mut App) {
         KeyBinding::new("right", MoveRight, Some(CONTEXT)),
         KeyBinding::new("pageup", MovePageUp, Some(CONTEXT)),
         KeyBinding::new("pagedown", MovePageDown, Some(CONTEXT)),
-        KeyBinding::new("tab", IndentInline, Some(CONTEXT)),
-        KeyBinding::new("shift-tab", OutdentInline, Some(CONTEXT)),
+        KeyBinding::new("tab", IndentInline, Some("Input && !TabNavigation")),
+        KeyBinding::new("tab", TabNext, Some("Input && TabNavigation")),
+        KeyBinding::new("shift-tab", OutdentInline, Some("Input && !TabNavigation")),
+        KeyBinding::new("shift-tab", TabPrevious, Some("Input && TabNavigation")),
         KeyBinding::new("shift-left", SelectLeft, Some(CONTEXT)),
         KeyBinding::new("shift-right", SelectRight, Some(CONTEXT)),
         KeyBinding::new("shift-up", SelectUp, Some(CONTEXT)),
@@ -415,6 +419,7 @@ pub struct InputBaseState<M: InputModeKind> {
     pub(super) searchable: bool,
     pub(super) replaceable: bool,
     pub(super) soft_wrap: bool,
+    tab_navigation: bool,
     pub(super) wrapping_indent: WrappingIndent,
     pub(super) scroll_beyond_last_line: Option<usize>,
     pub(super) cursor_surrounding_lines: Option<usize>,
@@ -791,6 +796,7 @@ impl<M: InputModeKind> InputBaseState<M> {
             searchable: false,
             replaceable: true,
             soft_wrap: true,
+            tab_navigation: false,
             wrapping_indent: WrappingIndent::default(),
             scroll_beyond_last_line: None,
             cursor_surrounding_lines: None,
@@ -880,6 +886,21 @@ impl<M: InputModeKind> InputBaseState<M> {
     pub fn replaceable(mut self, allow: bool) -> Self {
         self.replaceable = allow;
         self
+    }
+
+    /// Let physical Tab and Shift-Tab move focus rather than indent.
+    /// Explicit indentation actions keep their existing meaning.
+    pub fn tab_navigation(mut self, enabled: bool) -> Self {
+        self.tab_navigation = enabled;
+        self
+    }
+
+    /// Change whether physical Tab navigates focus.
+    pub fn set_tab_navigation(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        if self.tab_navigation != enabled {
+            self.tab_navigation = enabled;
+            cx.notify();
+        }
     }
 
     /// Set placeholder
@@ -4716,7 +4737,11 @@ impl<M: InputModeKind> Render for InputBaseState<M> {
 
         let element = div()
             .id("input-state")
-            .key_context(CONTEXT)
+            .key_context(if self.tab_navigation {
+                "Input TabNavigation"
+            } else {
+                CONTEXT
+            })
             .track_focus(&self.focus_handle)
             .when(self.is_editable(), |this| {
                 this.on_action(window.listener_for(&entity, InputBaseState::backspace))
@@ -4739,6 +4764,23 @@ impl<M: InputModeKind> Render for InputBaseState<M> {
                             .on_action(window.listener_for(&entity, InputBaseState::indent_block))
                             .on_action(window.listener_for(&entity, InputBaseState::outdent_block))
                     })
+            })
+            .when(self.tab_navigation, |this| {
+                this.on_action(
+                    window.listener_for(&entity, |state, _: &TabNext, window, cx| {
+                        if state.ime_marked_range.is_none() {
+                            window.focus_next(cx);
+                        }
+                    }),
+                )
+                .on_action(window.listener_for(
+                    &entity,
+                    |state, _: &TabPrevious, window, cx| {
+                        if state.ime_marked_range.is_none() {
+                            window.focus_prev(cx);
+                        }
+                    },
+                ))
             })
             .on_action(window.listener_for(&entity, InputBaseState::left))
             .on_action(window.listener_for(&entity, InputBaseState::right))

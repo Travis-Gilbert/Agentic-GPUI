@@ -389,3 +389,79 @@ pub(super) fn sync_focused_input_registry(
         cx.notify();
     });
 }
+
+#[cfg(test)]
+mod tab_navigation_tests {
+    use super::*;
+    use gpui::{
+        AppContext, Context, InteractiveElement, IntoElement, ParentElement, Render, Styled,
+        TestAppContext, div,
+    };
+
+    struct Host {
+        editor: Entity<EditorState>,
+        next: FocusHandle,
+    }
+    impl Render for Host {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .flex()
+                .flex_row()
+                .child(
+                    div()
+                        .w(gpui::px(200.))
+                        .h(gpui::px(100.))
+                        .child(self.editor.clone()),
+                )
+                .child(div().id("next").track_focus(&self.next).size_8())
+        }
+    }
+
+    #[gpui::test]
+    fn physical_tab_navigation_preserves_explicit_indent_actions(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::init(cx);
+            cx.set_global(crate::Theme::default());
+        });
+        let (host, cx) = cx.add_window_view(|window, cx| Host {
+            editor: cx.new(|cx| EditorState::new(window, cx).tab_navigation(true)),
+            next: cx.focus_handle().tab_stop(true),
+        });
+        let editor = host.read_with(cx, |host, _| host.editor.clone());
+        cx.update(|window, cx| {
+            editor.update(cx, |state, cx| {
+                state.focus(window, cx);
+                state.set_value("word", window, cx);
+                state.set_selected_range(4..4, cx);
+            });
+            window.draw(cx).clear(cx);
+        });
+        cx.simulate_keystrokes("tab");
+        cx.update(|window, cx| {
+            assert!(host.read(cx).next.is_focused(window));
+            assert_eq!(editor.read(cx).value().as_ref(), "word");
+        });
+        cx.update(|window, cx| window.focus_prev(cx));
+        // Native traversal wraps from the first item. The opt-in reverse
+        // binding must reach that same coordinator rather than outdent.
+        cx.simulate_keystrokes("shift-tab");
+        cx.update(|window, cx| {
+            assert!(host.read(cx).next.is_focused(window));
+            window.focus_prev(cx);
+            assert!(editor.read(cx).focus_handle(cx).is_focused(window));
+            window.dispatch_action(Box::new(super::super::IndentInline), cx);
+        });
+        cx.update(|window, cx| {
+            assert_eq!(editor.read(cx).value().as_ref(), "word  ");
+            editor.update(cx, |state, cx| {
+                state.set_value("word", window, cx);
+                state.set_selected_range(4..4, cx);
+                state.set_tab_navigation(false, cx);
+            });
+            window.draw(cx).clear(cx);
+        });
+        cx.simulate_keystrokes("tab");
+        cx.update(|_, cx| assert_eq!(editor.read(cx).value().as_ref(), "word  "));
+    }
+}
