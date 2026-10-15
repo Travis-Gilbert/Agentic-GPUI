@@ -171,6 +171,18 @@ impl DockSkin {
         tab_panel::tab_chrome(&self.shared, group, cx)
     }
 
+    /// Keep the existing native panel-menu owner at a browser-measured anchor.
+    /// The caller draws its visible trigger in DOM and invokes only the observed
+    /// actual PopoverState. The deferred menu remains owned by this skin.
+    pub fn tab_menu_anchor(
+        &self,
+        group: &TabGroupContext,
+        presenter: Option<Rc<dyn Fn() -> crate::menu::PopupMenuPresenter>>,
+        ready: impl Fn(WeakEntity<crate::popover::PopoverState>, &mut Window, &mut App) + 'static,
+    ) -> impl gpui::IntoElement {
+        tab_panel::panel_menu_button(group, true, presenter, ready)
+    }
+
     /// Whether a single-panel tab group draws a plain title or a full tab bar.
     pub fn panel_style(&self) -> PanelStyle {
         self.shared.panel_style()
