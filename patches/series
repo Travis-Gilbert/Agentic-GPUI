@@ -25,3 +25,6 @@
 0025-feat-input-take-platform-selections-with-their-direc.patch
 0026-chore-fork-follow-GPUI-platform-drag-and-tab-boundar.patch
 0027-follow-composing-editing-island-refusal.patch
+0028-retained-popup-presentation.patch
+0029-physical-tab-navigation.patch
+0030-follow-canonical-history-and-editor-sync.patch
