@@ -109,9 +109,17 @@ where
         let menu_state =
             window.use_keyed_state(self.id.clone(), cx, |_, _| DropdownMenuState::default());
 
+        let delegated_state = menu_state.clone();
         Popover::new(SharedString::from(format!("popover:{}", self.id)))
             .appearance(false)
             .overlay_closable(false)
+            .delegate_platform_when(move |cx| {
+                delegated_state
+                    .read(cx)
+                    .menu
+                    .as_ref()
+                    .is_some_and(|menu| menu.read(cx).is_platform_delegated())
+            })
             .trigger(self.trigger)
             .anchor(self.anchor)
             .when_some(self.on_open_change, |this, callback| {

@@ -182,6 +182,7 @@ pub struct Popover {
     content: Option<ContentBuilder>,
     mouse_button: MouseButton,
     overlay_closable: bool,
+    platform_delegation: Option<Rc<dyn Fn(&App) -> bool>>,
     on_open_change: Option<OpenChangeHandler>,
 }
 
@@ -200,6 +201,7 @@ impl Popover {
             content: None,
             mouse_button: MouseButton::Left,
             overlay_closable: true,
+            platform_delegation: None,
             on_open_change: None,
         }
     }
@@ -278,6 +280,14 @@ impl Popover {
         self
     }
 
+    /// Read the retained content owner's acknowledged presentation lease.
+    /// Delegation removes the canvas wrapper role without removing its paint
+    /// traversal, action dispatch, focus scope, or dismissal ownership.
+    pub fn delegate_platform_when(mut self, delegated: impl Fn(&App) -> bool + 'static) -> Self {
+        self.platform_delegation = Some(Rc::new(delegated));
+        self
+    }
+
     pub fn content<F, E>(mut self, content: F) -> Self
     where
         E: IntoElement,
@@ -353,7 +363,13 @@ impl RenderOnce for Popover {
             // A popover surface is a non-modal dialog: it takes focus and is
             // dismissed with Escape, which is what this role tells assistive
             // technology to expect.
-            .role(Role::Dialog)
+            .when(
+                !self
+                    .platform_delegation
+                    .as_ref()
+                    .is_some_and(|read| read(cx)),
+                |this| this.role(Role::Dialog),
+            )
             .occlude()
             .tab_group()
             .track_focus(&focus_handle)

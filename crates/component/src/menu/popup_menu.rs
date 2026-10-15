@@ -779,6 +779,8 @@ impl PopupMenu {
         menu.menu_items.clear();
         menu.presentation.metadata.clear();
         menu.presentation.bounds.borrow_mut().clear();
+        menu.presentation.icons.borrow_mut().clear();
+        menu.presentation.shortcuts.borrow_mut().clear();
         menu.selected_index = None;
         *self = f(menu, window, cx);
         self.presentation.revision = revision;
@@ -1251,6 +1253,26 @@ impl PopupMenu {
         };
 
         let selected = self.selected_index == Some(ix);
+        let icon = match item {
+            PopupMenuItem::Item { icon, .. }
+            | PopupMenuItem::ElementItem { icon, .. }
+            | PopupMenuItem::Submenu { icon, .. } => icon.as_ref(),
+            _ => None,
+        };
+        let icon_svg = icon.and_then(|icon| match icon.source_ref() {
+            crate::icon::IconSource::Data(bytes) => Some(bytes.clone()),
+            crate::icon::IconSource::Path(path) => cx
+                .asset_source()
+                .load(path.as_ref())
+                .ok()
+                .flatten()
+                .map(|bytes| std::sync::Arc::from(bytes.as_ref())),
+        });
+        if let Some(bytes) = icon_svg {
+            self.presentation.icons.borrow_mut().insert(ix, bytes);
+        } else {
+            self.presentation.icons.borrow_mut().remove(&ix);
+        }
         const EDGE_PADDING: Pixels = px(4.);
         const INNER_PADDING: Pixels = px(8.);
 
@@ -1363,6 +1385,14 @@ impl PopupMenu {
                 let show_link_icon = *is_link && self.external_link_icon;
                 let action = action.as_ref().map(|action| action.boxed_clone());
                 let key = self.render_key_binding(action, window, cx);
+                if let Some(key) = &key {
+                    self.presentation
+                        .shortcuts
+                        .borrow_mut()
+                        .insert(ix, Kbd::format(key.keystroke()).into());
+                } else {
+                    self.presentation.shortcuts.borrow_mut().remove(&ix);
+                }
 
                 this.when(!disabled, |this| {
                     this.on_click(
@@ -1490,6 +1520,9 @@ impl Render for PopupMenu {
             .presenter
             .as_ref()
             .is_some_and(|p| p.delegated.get());
+        if let Some(presenter) = &self.presentation.presenter {
+            presenter.entity_id.set(Some(cx.entity_id().as_u64()));
+        }
         for metadata in self.presentation.metadata.values() {
             metadata.delegated.set(delegated);
         }
@@ -1508,6 +1541,12 @@ impl Render for PopupMenu {
                         menu.parent_menu = Some(parent.clone());
                         menu.priority = parent_priority + 1;
                     });
+                }
+                if menu.read(cx).presentation.presenter.is_none() {
+                    if let Some(presenter) = &self.presentation.presenter {
+                        let presenter = presenter.for_submenu();
+                        menu.update(cx, |menu, _| menu.presentation.presenter = Some(presenter));
+                    }
                 }
             }
         }

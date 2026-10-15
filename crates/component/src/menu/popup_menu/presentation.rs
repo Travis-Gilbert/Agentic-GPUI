@@ -12,6 +12,7 @@ pub struct MenuItemPresentation {
     id: SharedString,
     label: SharedString,
     description: Option<SharedString>,
+    checkable: bool,
     pub(super) delegated: Rc<Cell<bool>>,
 }
 impl MenuItemPresentation {
@@ -20,6 +21,7 @@ impl MenuItemPresentation {
             id: id.into(),
             label: label.into(),
             description: None,
+            checkable: false,
             delegated: Rc::default(),
         }
     }
@@ -29,6 +31,10 @@ impl MenuItemPresentation {
     }
     pub fn id(&self) -> &SharedString {
         &self.id
+    }
+    pub fn checkable(mut self, checkable: bool) -> Self {
+        self.checkable = checkable;
+        self
     }
     pub fn label(&self) -> &SharedString {
         &self.label
@@ -73,6 +79,9 @@ pub struct MenuRowPresentation {
     kind: MenuRowKind,
     disabled: bool,
     checked: bool,
+    checkable: bool,
+    icon_svg: Option<std::sync::Arc<[u8]>>,
+    shortcut: Option<SharedString>,
     bounds: Bounds<Pixels>,
 }
 impl MenuRowPresentation {
@@ -97,6 +106,15 @@ impl MenuRowPresentation {
     pub fn is_checked(&self) -> bool {
         self.checked
     }
+    pub fn is_checkable(&self) -> bool {
+        self.checkable
+    }
+    pub fn icon_svg(&self) -> Option<&[u8]> {
+        self.icon_svg.as_deref()
+    }
+    pub fn shortcut(&self) -> Option<&SharedString> {
+        self.shortcut.as_ref()
+    }
     pub fn bounds(&self) -> Bounds<Pixels> {
         self.bounds
     }
@@ -112,10 +130,18 @@ pub struct PopupMenuPresentation {
     rows: Vec<MenuRowPresentation>,
     complete: bool,
     delegated: bool,
+    parent: Option<WeakEntity<PopupMenu>>,
+    active_submenu: Option<WeakEntity<PopupMenu>>,
 }
 impl PopupMenuPresentation {
     pub fn entity(&self) -> WeakEntity<PopupMenu> {
         self.entity.clone()
+    }
+    pub fn parent(&self) -> Option<WeakEntity<PopupMenu>> {
+        self.parent.clone()
+    }
+    pub fn active_submenu(&self) -> Option<WeakEntity<PopupMenu>> {
+        self.active_submenu.clone()
     }
     pub fn revision(&self) -> u64 {
         self.revision
@@ -145,26 +171,43 @@ impl PopupMenuPresentation {
 #[derive(Clone)]
 pub struct PopupMenuPresenter {
     pub(super) frame: Rc<dyn Fn(PopupMenuPresentation, &mut Window, &mut App) -> bool>,
-    closed: Rc<dyn Fn()>,
+    closed: Rc<dyn Fn(u64)>,
+    pub(super) entity_id: Rc<Cell<Option<u64>>>,
     pub(super) delegated: Rc<Cell<bool>>,
     is_closed: Rc<Cell<bool>>,
 }
 impl PopupMenuPresenter {
     pub fn new(
         frame: impl Fn(PopupMenuPresentation, &mut Window, &mut App) -> bool + 'static,
-        closed: impl Fn() + 'static,
+        closed: impl Fn(u64) + 'static,
     ) -> Self {
         Self {
             frame: Rc::new(frame),
             closed: Rc::new(closed),
+            entity_id: Rc::default(),
             delegated: Rc::default(),
             is_closed: Rc::default(),
         }
     }
+    /// Whether this actual owner has acknowledged a prepared native region.
+    pub fn is_platform_delegated(&self) -> bool {
+        self.delegated.get() && !self.is_closed.get()
+    }
     pub(super) fn close(&self) {
         if !self.is_closed.replace(true) {
             self.delegated.set(false);
-            (self.closed)();
+            if let Some(id) = self.entity_id.get() {
+                (self.closed)(id);
+            }
+        }
+    }
+    pub(super) fn for_submenu(&self) -> Self {
+        Self {
+            frame: self.frame.clone(),
+            closed: self.closed.clone(),
+            entity_id: Rc::default(),
+            delegated: Rc::default(),
+            is_closed: Rc::default(),
         }
     }
 }
@@ -192,11 +235,20 @@ pub enum MenuInputRefusal {
 pub(super) struct PresentationState {
     pub(super) metadata: BTreeMap<usize, MenuItemPresentation>,
     pub(super) bounds: Rc<RefCell<BTreeMap<usize, Bounds<Pixels>>>>,
+    pub(super) icons: RefCell<BTreeMap<usize, std::sync::Arc<[u8]>>>,
+    pub(super) shortcuts: RefCell<BTreeMap<usize, SharedString>>,
     pub(super) presenter: Option<PopupMenuPresenter>,
     pub(super) revision: u64,
 }
 
 impl PopupMenu {
+    /// The existing menu's acknowledged platform presentation fact.
+    pub fn is_platform_delegated(&self) -> bool {
+        self.presentation
+            .presenter
+            .as_ref()
+            .is_some_and(PopupMenuPresenter::is_platform_delegated)
+    }
     pub fn presented_item(mut self, item: PresentedMenuItem) -> Self {
         self.presentation
             .metadata
@@ -242,6 +294,9 @@ impl PopupMenu {
                     kind,
                     disabled: !item.is_clickable(),
                     checked: item.is_checked(),
+                    checkable: item.is_checked() || metadata.is_some_and(|m| m.checkable),
+                    icon_svg: self.presentation.icons.borrow().get(&index).cloned(),
+                    shortcut: self.presentation.shortcuts.borrow().get(&index).cloned(),
                     bounds: bounds.get(&index).copied().unwrap_or_default(),
                 })
             })
@@ -259,6 +314,8 @@ impl PopupMenu {
                 .presenter
                 .as_ref()
                 .is_some_and(|p| p.delegated.get()),
+            parent: self.parent_menu.clone(),
+            active_submenu: self.active_submenu().map(|menu| menu.downgrade()),
         }
     }
     pub fn presented_input(
@@ -271,12 +328,9 @@ impl PopupMenu {
         if revision != self.presentation.revision {
             return Err(MenuInputRefusal::StaleRevision);
         }
-        if !self
-            .presentation
-            .presenter
-            .as_ref()
-            .is_some_and(|p| p.delegated.get() && !p.is_closed.get())
-        {
+        if !self.presentation.presenter.as_ref().is_some_and(|p| {
+            !p.is_closed.get() && (p.delegated.get() || input == PopupMenuInput::Dismiss)
+        }) {
             return Err(MenuInputRefusal::NotPresented);
         }
         match input {
@@ -331,11 +385,12 @@ mod tests {
         let closed = Rc::new(Cell::new(0));
         let presenter = PopupMenuPresenter::new(|_, _, _| true, {
             let closed = closed.clone();
-            move || closed.set(closed.get() + 1)
+            move |_| closed.set(closed.get() + 1)
         });
         // This owner-only unit test admits the presentation lease directly;
         // browser oracles separately prove the inert/acknowledged handoff.
         presenter.delegated.set(true);
+        presenter.entity_id.set(Some(1));
         let metadata =
             MenuItemPresentation::new("existing-row", "Run").with_description("Existing command");
         let (menu, cx) = cx.add_window_view({
@@ -401,6 +456,67 @@ mod tests {
                 assert_eq!(
                     menu.presented_input(1, PopupMenuInput::Activate(2), window, cx),
                     Err(MenuInputRefusal::NotPresented)
+                );
+            })
+        });
+    }
+
+    #[gpui::test]
+    fn prepared_menu_is_inert_and_can_be_withdrawn(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| cx.set_global(crate::Theme::default()));
+        let invoked = Rc::new(Cell::new(0));
+        let closed = Rc::new(Cell::new(0));
+        let presenter = PopupMenuPresenter::new(|_, _, _| false, {
+            let closed = closed.clone();
+            move |_| closed.set(closed.get() + 1)
+        });
+        let (menu, cx) = cx.add_window_view({
+            let invoked = invoked.clone();
+            move |_, cx| {
+                PopupMenu::new(cx)
+                    .item(
+                        PopupMenuItem::new("Run")
+                            .on_click(move |_, _, _| invoked.set(invoked.get() + 1)),
+                    )
+                    .presenter(presenter)
+            }
+        });
+        cx.update(|window, cx| {
+            menu.update(cx, |menu, cx| {
+                // This owner-only test has no paint callback: record the real
+                // entity identity as render does before its first allocation.
+                menu.presentation
+                    .presenter
+                    .as_ref()
+                    .unwrap()
+                    .entity_id
+                    .set(Some(cx.entity_id().as_u64()));
+                assert!(!menu.is_platform_delegated());
+                assert_eq!(
+                    menu.presented_input(0, PopupMenuInput::Activate(0), window, cx),
+                    Err(MenuInputRefusal::NotPresented)
+                );
+                assert_eq!(invoked.get(), 0);
+                menu.presented_input(0, PopupMenuInput::Dismiss, window, cx)
+                    .unwrap();
+                assert_eq!(
+                    closed.get(),
+                    1,
+                    "preparing a region does not prevent owner withdrawal"
+                );
+                assert_eq!(
+                    menu.presented_input(0, PopupMenuInput::Dismiss, window, cx),
+                    Err(MenuInputRefusal::NotPresented)
+                );
+                assert_eq!(
+                    menu.presented_input(0, PopupMenuInput::Activate(0), window, cx),
+                    Err(MenuInputRefusal::NotPresented)
+                );
+                assert_eq!(invoked.get(), 0);
+                assert_eq!(
+                    closed.get(),
+                    1,
+                    "a closed lease cannot execute or close twice"
                 );
             })
         });

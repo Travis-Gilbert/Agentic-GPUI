@@ -128,6 +128,7 @@ pub struct Popover {
     mouse_button: MouseButton,
     appearance: bool,
     overlay_closable: bool,
+    platform_delegation: Option<Rc<dyn Fn(&App) -> bool>>,
     on_open_change: Option<Rc<dyn Fn(&bool, &mut Window, &mut App)>>,
 }
 
@@ -148,10 +149,19 @@ impl Popover {
             mouse_button: MouseButton::Left,
             appearance: true,
             overlay_closable: true,
+            platform_delegation: None,
             default_open: false,
             open: None,
             on_open_change: None,
         }
+    }
+
+    /// Follow the retained content owner's acknowledged platform lease.
+    /// The base keeps its focus and dismissal behavior while omitting its
+    /// duplicate canvas dialog semantics after the native region is prepared.
+    pub fn delegate_platform_when(mut self, delegated: impl Fn(&App) -> bool + 'static) -> Self {
+        self.platform_delegation = Some(Rc::new(delegated));
+        self
     }
 
     /// Set the anchor corner of the popover, default is [`Anchor::TopLeft`].
@@ -347,6 +357,9 @@ impl RenderOnce for Popover {
             .mouse_button(self.mouse_button)
             .default_open(self.default_open)
             .overlay_closable(self.overlay_closable)
+            .when_some(self.platform_delegation, |this, delegated| {
+                this.delegate_platform_when(move |cx| delegated(cx))
+            })
             .content(move |state, window, cx| {
                 v_flex()
                     .id("content")
