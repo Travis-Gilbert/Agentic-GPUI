@@ -405,3 +405,8 @@ preserves current capability and per-adoption accessible claim ownership. The
 native GPUI crates are byte-identical to the prior7e67ba4 source; only its browser
 adapter and patch metadata change. The new immutable consumer artifact remains
 the required browser/backend acceptance gate.
+
+Patch0047 follows the GPUI current warm text-entry identity fix. The adapter may
+bind its current verified adopted/live text association before presentation;
+fallback retirement remains separately gated by presented and verified identity.
+No native Kit owner/controller or presentation source changes in this follow-up.
