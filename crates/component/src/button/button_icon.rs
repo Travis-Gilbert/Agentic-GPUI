@@ -9,6 +9,7 @@ pub struct ButtonIcon {
     loading_icon: Option<Icon>,
     loading: bool,
     size: Size,
+    observed_bounds: Option<std::rc::Rc<std::cell::Cell<Option<gpui::Bounds<gpui::Pixels>>>>>,
 }
 
 impl<T> From<T> for ButtonIcon
@@ -28,6 +29,22 @@ impl ButtonIcon {
             loading_icon: None,
             loading: false,
             size: Size::Medium,
+            observed_bounds: None,
+        }
+    }
+
+    pub(crate) fn observe_bounds(
+        mut self,
+        bounds: std::rc::Rc<std::cell::Cell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    ) -> Self {
+        self.observed_bounds = Some(bounds);
+        self
+    }
+
+    pub(crate) fn static_icon(&self) -> Option<Icon> {
+        match &self.icon {
+            ButtonIconVariant::Icon(icon) if !self.loading => Some(icon.clone()),
+            _ => None,
         }
     }
 
@@ -115,7 +132,7 @@ impl RenderOnce for ButtonIconVariant {
 
 impl RenderOnce for ButtonIcon {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        if self.loading {
+        let element = if self.loading {
             if self.icon.is_spinner() || self.icon.is_progress() {
                 self.icon.with_size(self.size).into_any_element()
             } else {
@@ -126,7 +143,68 @@ impl RenderOnce for ButtonIcon {
             }
         } else {
             self.icon.with_size(self.size).into_any_element()
+        };
+        if let Some(bounds) = self.observed_bounds {
+            ObservedButtonIcon { element, bounds }.into_any_element()
+        } else {
+            element
         }
+    }
+}
+
+// Delegates the actual icon's exact layout/paint. No wrapper box, text or
+// second SVG is constructed just to measure it.
+struct ObservedButtonIcon {
+    element: gpui::AnyElement,
+    bounds: std::rc::Rc<std::cell::Cell<Option<gpui::Bounds<gpui::Pixels>>>>,
+}
+impl IntoElement for ObservedButtonIcon {
+    type Element = Self;
+    fn into_element(self) -> Self {
+        self
+    }
+}
+impl gpui::Element for ObservedButtonIcon {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+    fn id(&self) -> Option<gpui::ElementId> {
+        None
+    }
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+    fn request_layout(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (gpui::LayoutId, ()) {
+        (self.element.request_layout(window, cx), ())
+    }
+    fn prepaint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        bounds: gpui::Bounds<gpui::Pixels>,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.element.prepaint(window, cx);
+        self.bounds.set(Some(bounds));
+    }
+    fn paint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        _: gpui::Bounds<gpui::Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.element.paint(window, cx);
     }
 }
 

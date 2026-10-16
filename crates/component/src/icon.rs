@@ -171,6 +171,25 @@ impl Icon {
         self
     }
 
+    pub(crate) fn button_presentation(
+        &self,
+        text_size: Pixels,
+        fallback_color: Hsla,
+    ) -> crate::button::ButtonIconPresentation {
+        let mut svg = self.clone().into_svg(text_size, fallback_color);
+        let (path, data) = match &self.source {
+            IconSource::Path(path) => (Some(path.clone()), None),
+            IconSource::Data(data) => (None, Some(data.clone())),
+        };
+        crate::button::ButtonIconPresentation {
+            path,
+            data,
+            style: svg.style().clone(),
+            transformation: self.transformation,
+            inherits_foreground: self.text_color.is_none(),
+        }
+    }
+
     pub(crate) fn into_svg(self, text_size: Pixels, fallback_color: Hsla) -> Svg {
         let text_color = self.text_color.unwrap_or(fallback_color);
         let has_base_size = self.style.size.width.is_some() || self.style.size.height.is_some();

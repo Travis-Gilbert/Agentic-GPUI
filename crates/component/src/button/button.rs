@@ -6,7 +6,7 @@ use crate::{
     button::ButtonIcon,
     h_flex,
     select::Caret,
-    styled::{FocusLine, focus_style},
+    styled::{FocusLine, focus_style_observed},
     tooltip::{ManagedTooltipExt as _, Tooltip},
 };
 use gpui::{
@@ -224,6 +224,8 @@ pub struct Button {
     tooltip_show_delay: Option<Duration>,
     tooltip_builder: Option<Rc<dyn Fn(&mut Window, &mut App) -> gpui::AnyView>>,
     on_click: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
+    presentation_frame: Option<Rc<dyn Fn(Option<ButtonPresentationFrame>, &mut Window, &mut App)>>,
+    delegate_platform: Option<Rc<dyn Fn(&App) -> bool>>,
     on_hover: Option<Rc<dyn Fn(&bool, &mut Window, &mut App)>>,
     loading: bool,
     loading_icon: Option<Icon>,
@@ -273,6 +275,8 @@ impl Button {
             tooltip_show_delay: None,
             tooltip_builder: None,
             on_click: None,
+            presentation_frame: None,
+            delegate_platform: None,
             focus_ring_enabled: true,
             on_hover: None,
             loading: false,
@@ -437,11 +441,92 @@ impl Button {
     }
 
     /// The exact ordinary Button, source styling facts and current handler.
-    pub(crate) fn command_header_action(&mut self)->Option<ButtonHeaderSource>{
-        let (label,description,disabled,handler)=self.notification_action()?;
-        if self.icon.is_some() || self.dropdown_caret || self.loading || self.toggled.is_some() || self.open || self.hover_group.is_some() || self.hover_group_held {return None;}
-        Some(ButtonHeaderSource{id:self.id.clone(),label,description,disabled,selected:self.selected,handler,
-            appearance:ButtonHeaderAppearance{variant:self.variant,outline:self.outline,rounded:self.rounded,size:self.size,selected:self.shows_selected_style(),instance:self.base.style().clone(),content:self.content_style.clone()}})
+    pub(crate) fn command_header_action(&mut self) -> Option<ButtonHeaderSource> {
+        let (label, description, disabled, handler) = self.notification_action()?;
+        if self.icon.is_some()
+            || self.dropdown_caret
+            || self.loading
+            || self.toggled.is_some()
+            || self.open
+            || self.hover_group.is_some()
+            || self.hover_group_held
+        {
+            return None;
+        }
+        Some(ButtonHeaderSource {
+            id: self.id.clone(),
+            label,
+            description,
+            disabled,
+            selected: self.selected,
+            handler,
+            appearance: ButtonHeaderAppearance {
+                variant: self.variant,
+                outline: self.outline,
+                rounded: self.rounded,
+                size: self.size,
+                selected: self.shows_selected_style(),
+                instance: self.base.style().clone(),
+                content: self.content_style.clone(),
+            },
+        })
+    }
+
+    /// Observe this same ordinary native Button after layout. `None` means its
+    /// custom content/behavior has no automatic representation. The observer
+    /// must not invoke handlers during prepaint; its retained owner validates
+    /// current scope, revision and membership before later delivery.
+    pub fn on_presentation_frame(
+        mut self,
+        observer: impl Fn(Option<ButtonPresentationFrame>, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.presentation_frame = Some(Rc::new(observer));
+        self
+    }
+
+    /// Yield only native accessibility/tab participation after the actual
+    /// enclosing owner acknowledges its platform presentation. Native paint,
+    /// identity, focus handle and original behavior remain retained.
+    pub fn delegate_platform_when(mut self, delegated: impl Fn(&App) -> bool + 'static) -> Self {
+        self.delegate_platform = Some(Rc::new(delegated));
+        self
+    }
+
+    fn ordinary_presentation_source(&mut self) -> Option<ButtonFrameSource> {
+        if !self.children.is_empty()
+            || self.loading
+            || self.dropdown_caret
+            || self.hover_group.is_some()
+            || self.hover_group_held
+        {
+            return None;
+        }
+        let icon = match self.icon.as_ref() {
+            Some(icon) => Some(icon.static_icon()?),
+            None => None,
+        };
+        Some(ButtonFrameSource {
+            id: self.id.clone(),
+            label: self.accessible_name()?,
+            description: self.accessibility_description.clone(),
+            visible_label: self.label.clone(),
+            disabled: !self.interactive(),
+            selected: self.selected,
+            toggled: self.toggled,
+            open: self.open,
+            handler: self.on_click.clone()?,
+            hover: self.on_hover.clone(),
+            icon,
+            appearance: ButtonHeaderAppearance {
+                variant: self.variant,
+                outline: self.outline,
+                rounded: self.rounded,
+                size: self.size,
+                selected: self.shows_selected_style(),
+                instance: self.base.style().clone(),
+                content: self.content_style.clone(),
+            },
+        })
     }
 
     /// Set the icon of the button, if the Button have no label, the button well in Icon Button mode.
@@ -655,7 +740,29 @@ impl InteractiveElement for Button {
 }
 
 impl RenderOnce for Button {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(mut self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let observer = self.presentation_frame.clone();
+        let source = observer
+            .as_ref()
+            .and_then(|_| self.ordinary_presentation_source());
+        let delegated = self
+            .delegate_platform
+            .as_ref()
+            .is_some_and(|predicate| predicate(cx));
+        let content_frame = observer
+            .as_ref()
+            .map(|_| Rc::new(std::cell::RefCell::new(None)));
+        let label_bounds = observer
+            .as_ref()
+            .map(|_| Rc::new(std::cell::Cell::new(None)));
+        let observed_label_bounds = label_bounds.clone();
+        let icon_bounds = observer
+            .as_ref()
+            .map(|_| Rc::new(std::cell::Cell::new(None)));
+        let observed_icon_bounds = icon_bounds.clone();
+        let focus_decoration = observer
+            .as_ref()
+            .map(|_| Rc::new(std::cell::RefCell::new(None)));
         let style: ButtonVariant = self.variant;
         let interactive = self.interactive();
         let hoverable = self.hoverable();
@@ -807,7 +914,10 @@ impl RenderOnce for Button {
                 this.child(
                     icon.loading_icon(self.loading_icon)
                         .loading(self.loading)
-                        .with_size(icon_size),
+                        .with_size(icon_size)
+                        .when_some(observed_icon_bounds, |icon, bounds| {
+                            icon.observe_bounds(bounds)
+                        }),
                 )
             })
             .when_some(self.label, |this, label| {
@@ -816,6 +926,11 @@ impl RenderOnce for Button {
                         .min_w_0()
                         .whitespace_nowrap()
                         .text_ellipsis()
+                        .when_some(observed_label_bounds, |this, observed_label_bounds| {
+                            crate::ElementExt::on_prepaint(this, move |bounds, _, _| {
+                                observed_label_bounds.set(Some(bounds));
+                            })
+                        })
                         .child(label),
                 )
             })
@@ -824,118 +939,171 @@ impl RenderOnce for Button {
                 this.when(has_content, |this| this.justify_between())
                     .child(Caret::new(self.size).text_color(normal_style.fg.opacity(0.75)))
             });
-        root.role(self.role.resolve(|| {
-            if self.variant.is_link() {
-                Role::Link
+        let observed_content = content_frame.clone();
+        let content = content.when_some(observed_content, |this, observed_content| {
+            crate::ElementExt::on_prepaint(this, move |bounds, window, _| {
+                *observed_content.borrow_mut() = Some((bounds, window.text_style()));
+            })
+        });
+        let mut root = root
+            .role(if delegated {
+                None
             } else {
-                Role::Button
-            }
-        }))
-        .selected(selected)
-        .disabled(disabled)
-        // Base layers semantic states over the builder chain, so the caller's
-        // own style is replayed inside each state to keep it the closest layer.
-        .styles(|styles| {
-            styles
-                .selected(|style| {
-                    style
-                        .bg(selected_style.bg)
-                        .border_color(selected_style.border)
-                        .text_color(selected_style.fg)
-                        .refine_style(&instance_style)
+                self.role.resolve(|| {
+                    if self.variant.is_link() {
+                        Role::Link
+                    } else {
+                        Role::Button
+                    }
                 })
-                .disabled(|style| {
-                    style
-                        .bg(disabled_style.bg)
-                        .text_color(disabled_style.fg)
-                        .border_color(disabled_style.border)
-                        .shadow_none()
-                        .refine_style(&instance_style)
+            })
+            .selected(selected)
+            .disabled(disabled)
+            // Base layers semantic states over the builder chain, so the caller's
+            // own style is replayed inside each state to keep it the closest layer.
+            .styles(|styles| {
+                styles
+                    .selected(|style| {
+                        style
+                            .bg(selected_style.bg)
+                            .border_color(selected_style.border)
+                            .text_color(selected_style.fg)
+                            .refine_style(&instance_style)
+                    })
+                    .disabled(|style| {
+                        style
+                            .bg(disabled_style.bg)
+                            .text_color(disabled_style.fg)
+                            .border_color(disabled_style.border)
+                            .shadow_none()
+                            .refine_style(&instance_style)
+                    })
+            })
+            .when_some(accessibility_label.filter(|_| !delegated), |this, label| {
+                this.accessibility_label(label)
+            })
+            .when_some(
+                accessibility_description.filter(|_| !delegated),
+                |this, description| this.accessibility_description(description),
+            )
+            .when_some(self.toggled.filter(|_| !delegated), |this, toggled| {
+                this.aria_toggled(if toggled {
+                    gpui::accesskit::Toggled::True
+                } else {
+                    gpui::accesskit::Toggled::False
                 })
-        })
-        .when_some(accessibility_label, |this, label| {
-            this.accessibility_label(label)
-        })
-        .when_some(accessibility_description, |this, description| {
-            this.accessibility_description(description)
-        })
-        .when_some(self.toggled, |this, toggled| {
-            this.aria_toggled(if toggled {
-                gpui::accesskit::Toggled::True
-            } else {
-                gpui::accesskit::Toggled::False
             })
-        })
-        .track_focus(&focus_handle)
-        .tab_index(self.tab_index)
-        .tab_stop(self.tab_stop)
-        .child(content)
-        // Fade the whole button while loading, so every variant is dimmed by
-        // the same amount. Fading `bg`, `border` and `fg` one by one instead
-        // only shows up on variants that have a background to begin with:
-        // `Ghost`, `Link` and `Text` are transparent, so an alpha on their
-        // background changes nothing.
-        .when(loading && !disabled, |this| this.opacity(0.8))
-        .when(!disabled, |this| {
-            this.on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                if loading {
-                    cx.stop_propagation();
-                    return;
+            .track_focus(&focus_handle)
+            .tab_index(self.tab_index)
+            .tab_stop(self.tab_stop && !delegated)
+            .child(content)
+            // Fade the whole button while loading, so every variant is dimmed by
+            // the same amount. Fading `bg`, `border` and `fg` one by one instead
+            // only shows up on variants that have a background to begin with:
+            // `Ghost`, `Link` and `Text` are transparent, so an alpha on their
+            // background changes nothing.
+            .when(loading && !disabled, |this| this.opacity(0.8))
+            .when(!disabled, |this| {
+                this.on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                    if loading {
+                        cx.stop_propagation();
+                        return;
+                    }
+
+                    // Avoid focus on mouse down.
+                    window.prevent_default();
+
+                    // Pressing a button must not start the window-level text selection.
+                    crate::global_state::GlobalState::suppress_text_selection(cx);
+                })
+            })
+            .when_some(self.on_click, |this, on_click| {
+                this.on_click(move |event, window, cx| {
+                    if loading {
+                        cx.stop_propagation();
+                        return;
+                    }
+
+                    on_click(event, window, cx);
+                })
+            })
+            .when(loading, |this| {
+                this.on_click(|_, _, cx| cx.stop_propagation())
+            })
+            .when_some(self.on_hover.filter(|_| hoverable), |this, on_hover| {
+                this.on_hover(move |hovered, window, cx| {
+                    on_hover(hovered, window, cx);
+                })
+            })
+            .map(|this| {
+                if let Some(builder) = self.tooltip_builder {
+                    this.managed_tooltip_with(
+                        tooltip_placement,
+                        tooltip_show_delay,
+                        move |window, cx| builder(window, cx),
+                    )
+                } else if let Some((tooltip, action)) = self.tooltip {
+                    this.managed_tooltip_with(
+                        tooltip_placement,
+                        tooltip_show_delay,
+                        move |window, cx| {
+                            Tooltip::new(tooltip.clone())
+                                .when_some(action.clone(), |this, (action, context)| {
+                                    this.action(
+                                        action.boxed_clone().as_ref(),
+                                        context.as_ref().map(|c| c.as_ref()),
+                                    )
+                                })
+                                .build(window, cx)
+                        },
+                    )
+                } else {
+                    this
                 }
-
-                // Avoid focus on mouse down.
-                window.prevent_default();
-
-                // Pressing a button must not start the window-level text selection.
-                crate::global_state::GlobalState::suppress_text_selection(cx);
             })
-        })
-        .when_some(self.on_click, |this, on_click| {
-            this.on_click(move |event, window, cx| {
-                if loading {
-                    cx.stop_propagation();
-                    return;
-                }
-
-                on_click(event, window, cx);
+            .when(is_focused && self.focus_ring_enabled, |this| {
+                focus_style_observed(this, focus_line, focus_decoration.clone(), window, cx)
+            });
+        let root_style = observer.as_ref().map(|_| root.style().clone());
+        root.when_some(observer, |this, observer| {
+            crate::ElementExt::on_prepaint(this, move |bounds, window, cx| {
+                let frame = source.and_then(|source| {
+                    let (content_bounds, text_style) = content_frame.as_ref()?.borrow().clone()?;
+                    let icon = source.icon.map(|icon| {
+                        icon.with_size(icon_size).button_presentation(
+                            text_style.font_size.to_pixels(window.rem_size()),
+                            text_style.color,
+                        )
+                    });
+                    Some(ButtonPresentationFrame {
+                        id: source.id,
+                        label: source.label,
+                        description: source.description,
+                        visible_label: source.visible_label,
+                        label_bounds: label_bounds.as_ref().and_then(|bounds| bounds.get()),
+                        icon_bounds: icon_bounds.as_ref().and_then(|bounds| bounds.get()),
+                        disabled: source.disabled,
+                        selected: source.selected,
+                        toggled: source.toggled,
+                        open: source.open,
+                        bounds,
+                        root_style: root_style.as_ref()?.clone(),
+                        content_bounds,
+                        text_style,
+                        icon,
+                        styles: source.appearance.styles(cx),
+                        instance_style: source.appearance.instance().clone(),
+                        content_style: source.appearance.content().clone(),
+                        focus: focus_handle.downgrade(),
+                        focus_decoration: focus_decoration
+                            .as_ref()
+                            .and_then(|fact| fact.borrow().clone()),
+                        handler: source.handler,
+                        hover: source.hover,
+                    })
+                });
+                observer(frame, window, cx);
             })
-        })
-        .when(loading, |this| {
-            this.on_click(|_, _, cx| cx.stop_propagation())
-        })
-        .when_some(self.on_hover.filter(|_| hoverable), |this, on_hover| {
-            this.on_hover(move |hovered, window, cx| {
-                on_hover(hovered, window, cx);
-            })
-        })
-        .map(|this| {
-            if let Some(builder) = self.tooltip_builder {
-                this.managed_tooltip_with(
-                    tooltip_placement,
-                    tooltip_show_delay,
-                    move |window, cx| builder(window, cx),
-                )
-            } else if let Some((tooltip, action)) = self.tooltip {
-                this.managed_tooltip_with(
-                    tooltip_placement,
-                    tooltip_show_delay,
-                    move |window, cx| {
-                        Tooltip::new(tooltip.clone())
-                            .when_some(action.clone(), |this, (action, context)| {
-                                this.action(
-                                    action.boxed_clone().as_ref(),
-                                    context.as_ref().map(|c| c.as_ref()),
-                                )
-                            })
-                            .build(window, cx)
-                    },
-                )
-            } else {
-                this
-            }
-        })
-        .when(is_focused && self.focus_ring_enabled, |this| {
-            focus_style(this, focus_line, window, cx)
         })
     }
 }
@@ -991,12 +1159,20 @@ pub struct ButtonPresentationStyles {
     pub disabled: ButtonPresentationStyle,
 }
 impl ButtonVariant {
-    fn draws_border(&self, outline: bool) -> bool { self.is_default() || outline }
+    fn draws_border(&self, outline: bool) -> bool {
+        self.is_default() || outline
+    }
     /// The same four functions consumed by the native Button renderer.
     pub fn presentation_styles(&self, outline: bool, cx: &mut App) -> ButtonPresentationStyles {
-        let mut text = div().button_text_size(Size::default()).line_height(button_line_height());
+        let mut text = div()
+            .button_text_size(Size::default())
+            .line_height(button_line_height());
         ButtonPresentationStyles {
-            default_border_width: if self.draws_border(outline) { gpui::px(1.) } else { Pixels::ZERO },
+            default_border_width: if self.draws_border(outline) {
+                gpui::px(1.)
+            } else {
+                Pixels::ZERO
+            },
             default_radius: button_rounding(ButtonRounded::default(), cx),
             default_text: text.style().text.clone(),
             normal: self.normal(outline, cx).into(),
@@ -2104,49 +2280,328 @@ mod tests {
 }
 
 // Shared native defaults: metadata must not inherit a description's line-height.
-fn button_line_height()->gpui::DefiniteLength{relative(1.25)}
+fn button_line_height() -> gpui::DefiniteLength {
+    relative(1.25)
+}
 pub(crate) struct ButtonHeaderSource {
- pub id:ElementId,pub label:SharedString,pub description:Option<SharedString>,pub disabled:bool,pub selected:bool,
- pub handler:Rc<dyn Fn(&ClickEvent,&mut Window,&mut App)>,pub appearance:ButtonHeaderAppearance,
+    pub id: ElementId,
+    pub label: SharedString,
+    pub description: Option<SharedString>,
+    pub disabled: bool,
+    pub selected: bool,
+    pub handler: Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>,
+    pub appearance: ButtonHeaderAppearance,
 }
 #[derive(Clone)]
-pub(crate) struct ButtonHeaderAppearance {variant:ButtonVariant,outline:bool,rounded:ButtonRounded,size:Size,selected:bool,instance:StyleRefinement,content:StyleRefinement}
+pub(crate) struct ButtonHeaderAppearance {
+    variant: ButtonVariant,
+    outline: bool,
+    rounded: ButtonRounded,
+    size: Size,
+    selected: bool,
+    instance: StyleRefinement,
+    content: StyleRefinement,
+}
 impl ButtonHeaderAppearance {
- pub(crate) fn styles(&self,cx:&mut App)->ButtonPresentationStyles{
-  let mut styles=self.variant.presentation_styles(self.outline,cx);
-  let mut text=div().button_text_size(self.size).line_height(button_line_height());
-  styles.default_text=text.style().text.clone();styles.default_radius=button_rounding(self.rounded,cx);
-  if self.selected {let selected:ButtonPresentationStyle=self.variant.selected(self.outline,cx).into();styles.normal=selected.clone();styles.hovered=selected.clone();styles.active=selected;}
-  styles
- }
- pub(crate) fn instance(&self)->&StyleRefinement{&self.instance}
- pub(crate) fn content(&self)->&StyleRefinement{&self.content}
+    pub(crate) fn styles(&self, cx: &mut App) -> ButtonPresentationStyles {
+        let mut styles = self.variant.presentation_styles(self.outline, cx);
+        let mut text = div()
+            .button_text_size(self.size)
+            .line_height(button_line_height());
+        styles.default_text = text.style().text.clone();
+        styles.default_radius = button_rounding(self.rounded, cx);
+        if self.selected {
+            let selected: ButtonPresentationStyle = self.variant.selected(self.outline, cx).into();
+            styles.normal = selected.clone();
+            styles.hovered = selected.clone();
+            styles.active = selected;
+        }
+        styles
+    }
+    pub(crate) fn instance(&self) -> &StyleRefinement {
+        &self.instance
+    }
+    pub(crate) fn content(&self) -> &StyleRefinement {
+        &self.content
+    }
 }
 
 #[cfg(test)]
 mod platform_default_text_tests {
     use super::*;
     use crate::ElementExt as _;
-    use gpui::{AppContext as _,Context,Render,TestAppContext,Refineable as _,px};
+    use gpui::{AppContext as _, Context, Refineable as _, Render, TestAppContext, px};
     use std::cell::RefCell;
-    struct Fixture {native:Rc<RefCell<Option<gpui::TextStyle>>>,projected:Rc<RefCell<Option<gpui::TextStyle>>>}
+    struct Fixture {
+        native: Rc<RefCell<Option<gpui::TextStyle>>>,
+        projected: Rc<RefCell<Option<gpui::TextStyle>>>,
+    }
     impl Render for Fixture {
-        fn render(&mut self,window:&mut Window,cx:&mut Context<Self>)->impl IntoElement {
-            let mut expected=window.text_style();
-            expected.refine(&ButtonVariant::Default.presentation_styles(false,cx).default_text);
-            *self.projected.borrow_mut()=Some(expected);
-            let native=self.native.clone();
-            div().w(px(300.)).h(px(100.)).child(Button::new("native-default-text-probe").child(
-                div().on_prepaint(move|_,window,_|*native.borrow_mut()=Some(window.text_style())).child("Native button text"),
-            ))
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let mut expected = window.text_style();
+            expected.refine(
+                &ButtonVariant::Default
+                    .presentation_styles(false, cx)
+                    .default_text,
+            );
+            *self.projected.borrow_mut() = Some(expected);
+            let native = self.native.clone();
+            div().w(px(300.)).h(px(100.)).child(
+                Button::new("native-default-text-probe").child(
+                    div()
+                        .on_prepaint(move |_, window, _| {
+                            *native.borrow_mut() = Some(window.text_style())
+                        })
+                        .child("Native button text"),
+                ),
+            )
         }
     }
     #[gpui::test]
-    fn platform_default_button_text_matches_actual_native_content_prepaint(cx:&mut TestAppContext){
-        cx.update(crate::init);let native=Rc::new(RefCell::new(None));let projected=Rc::new(RefCell::new(None));let a=native.clone();let b=projected.clone();
-        let (_view,cx)=cx.add_window_view(move|_,_|Fixture{native:a,projected:b});cx.run_until_parked();
-        let native=native.borrow();let projected=projected.borrow();let native=native.as_ref().expect("actual native content prepaint");let projected=projected.as_ref().unwrap();
-        assert_eq!(native.font_size,projected.font_size);
-        assert_eq!(native.line_height,projected.line_height);
+    fn platform_default_button_text_matches_actual_native_content_prepaint(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(crate::init);
+        let native = Rc::new(RefCell::new(None));
+        let projected = Rc::new(RefCell::new(None));
+        let a = native.clone();
+        let b = projected.clone();
+        let (_view, cx) = cx.add_window_view(move |_, _| Fixture {
+            native: a,
+            projected: b,
+        });
+        cx.run_until_parked();
+        let native = native.borrow();
+        let projected = projected.borrow();
+        let native = native.as_ref().expect("actual native content prepaint");
+        let projected = projected.as_ref().unwrap();
+        assert_eq!(native.font_size, projected.font_size);
+        assert_eq!(native.line_height, projected.line_height);
+    }
+}
+
+/// Read-only source facts from the ordinary Button rendered in this frame.
+/// The enclosing native owner remains responsible for lifetime and delivery.
+#[derive(Clone)]
+pub struct ButtonPresentationFrame {
+    pub id: ElementId,
+    pub label: SharedString,
+    pub description: Option<SharedString>,
+    pub visible_label: Option<SharedString>,
+    pub label_bounds: Option<gpui::Bounds<Pixels>>,
+    pub disabled: bool,
+    pub selected: bool,
+    pub toggled: Option<bool>,
+    pub open: bool,
+    pub bounds: gpui::Bounds<Pixels>,
+    pub root_style: StyleRefinement,
+    pub content_bounds: gpui::Bounds<Pixels>,
+    pub text_style: gpui::TextStyle,
+    pub styles: ButtonPresentationStyles,
+    pub instance_style: StyleRefinement,
+    pub content_style: StyleRefinement,
+    pub icon: Option<ButtonIconPresentation>,
+    pub icon_bounds: Option<gpui::Bounds<Pixels>>,
+    pub focus: gpui::WeakFocusHandle,
+    pub focus_decoration: Option<ButtonFocusDecoration>,
+    handler: Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>,
+    hover: Option<Rc<dyn Fn(&bool, &mut Window, &mut App)>>,
+}
+impl ButtonPresentationFrame {
+    /// Invoke the unchanged handler only after the enclosing owner has verified
+    /// this frame's current scope/revision/membership and released its lease.
+    pub fn invoke(&self, event: &ClickEvent, window: &mut Window, cx: &mut App) -> bool {
+        if self.disabled {
+            return false;
+        }
+        (self.handler)(event, window, cx);
+        true
+    }
+    /// The same owner's optional hover callback, subject to the same current
+    /// scope/revision/membership validation as activation.
+    pub fn hover(&self, hovered: bool, window: &mut Window, cx: &mut App) -> bool {
+        if self.disabled {
+            return false;
+        }
+        let Some(handler) = &self.hover else {
+            return false;
+        };
+        handler(&hovered, window, cx);
+        true
+    }
+}
+#[derive(Clone)]
+pub struct ButtonFocusDecoration {
+    pub bounds: gpui::Bounds<Pixels>,
+    pub style: StyleRefinement,
+}
+
+#[derive(Clone)]
+pub struct ButtonIconPresentation {
+    pub path: Option<SharedString>,
+    pub data: Option<std::sync::Arc<[u8]>>,
+    pub style: StyleRefinement,
+    pub transformation: Option<gpui::Transformation>,
+    pub inherits_foreground: bool,
+}
+struct ButtonFrameSource {
+    id: ElementId,
+    label: SharedString,
+    description: Option<SharedString>,
+    visible_label: Option<SharedString>,
+    disabled: bool,
+    selected: bool,
+    toggled: Option<bool>,
+    open: bool,
+    handler: Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>,
+    hover: Option<Rc<dyn Fn(&bool, &mut Window, &mut App)>>,
+    icon: Option<Icon>,
+    appearance: ButtonHeaderAppearance,
+}
+
+#[cfg(test)]
+mod presentation_frame_tests {
+    use super::*;
+    use gpui::{Context, Render, TestAppContext, px};
+    use std::cell::{Cell, RefCell};
+    struct Fixture {
+        frames: Rc<RefCell<Vec<Option<ButtonPresentationFrame>>>>,
+        disabled: Rc<Cell<bool>>,
+        delegated: Rc<Cell<bool>>,
+        custom: Rc<Cell<bool>>,
+        label: Rc<Cell<bool>>,
+        hits: usize,
+    }
+    impl Render for Fixture {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let frames = self.frames.clone();
+            let delegated = self.delegated.clone();
+            let button = Button::new("actual-apps-move")
+                .ghost()
+                .small()
+                .icon(crate::IconName::Folder)
+                .accessibility_label("Move to group")
+                .accessibility_description("Existing native action")
+                .when(self.label.get(), |this| this.label("Native label"))
+                .selected(true)
+                .toggled(true)
+                .disabled(self.disabled.get())
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.hits += 1;
+                    cx.notify();
+                }))
+                .delegate_platform_when(move |_| delegated.get())
+                .on_presentation_frame(move |frame, _, _| frames.borrow_mut().push(frame))
+                .when(self.custom.get(), |this| {
+                    this.child(div().child("Opaque native content"))
+                });
+            div().w(px(300.)).h(px(100.)).child(button)
+        }
+    }
+    #[gpui::test]
+    fn ordinary_button_frame_keeps_native_icon_state_geometry_and_unleased_handler(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(crate::init);
+        let frames = Rc::new(RefCell::new(Vec::new()));
+        let disabled = Rc::new(Cell::new(false));
+        let delegated = Rc::new(Cell::new(false));
+        let custom = Rc::new(Cell::new(false));
+        let label = Rc::new(Cell::new(false));
+        let (view, cx) = cx.add_window_view({
+            let frames = frames.clone();
+            let disabled = disabled.clone();
+            let delegated = delegated.clone();
+            let custom = custom.clone();
+            let label = label.clone();
+            move |_, _| Fixture {
+                frames,
+                disabled,
+                delegated,
+                custom,
+                label,
+                hits: 0,
+            }
+        });
+        cx.run_until_parked();
+        let first = frames
+            .borrow()
+            .last()
+            .unwrap()
+            .clone()
+            .expect("ordinary actual Button");
+        assert_eq!(first.id, ElementId::Name("actual-apps-move".into()));
+        assert_eq!(first.label, "Move to group");
+        assert!(
+            first.visible_label.is_none(),
+            "accessible name must not become icon-only visible text"
+        );
+        assert!(first.label_bounds.is_none());
+        assert!(first.selected);
+        assert_eq!(first.toggled, Some(true));
+        assert!(!first.disabled);
+        assert!(
+            first.bounds.size.width > Pixels::ZERO
+                && first.content_bounds.size.height > Pixels::ZERO
+        );
+        assert!(
+            first
+                .icon
+                .as_ref()
+                .is_some_and(|icon| icon.path.is_some() || icon.data.is_some())
+        );
+        assert!(first.focus.upgrade().is_some());
+        assert!(first.icon.as_ref().unwrap().inherits_foreground);
+        let glyph = first.icon_bounds.expect("actual native icon allocation");
+        assert!(glyph.size.width > Pixels::ZERO && glyph.size.height > Pixels::ZERO);
+        assert!(glyph.size.width <= first.content_bounds.size.width);
+        cx.update(|window, cx| assert!(first.invoke(&ClickEvent::default(), window, cx)));
+        assert_eq!(
+            view.read_with(cx, |view, _| view.hits),
+            1,
+            "same owner cx.listener reentered after its lease released"
+        );
+        cx.update(|window, cx| {
+            window.focus(&first.focus.upgrade().unwrap(), cx);
+            window.refresh();
+        });
+        cx.run_until_parked();
+        let focused = frames.borrow().last().unwrap().clone().unwrap();
+        assert!(
+            focused
+                .focus_decoration
+                .as_ref()
+                .is_some_and(|decoration| decoration.bounds.size.width > Pixels::ZERO),
+            "actual native focus child allocation is observed"
+        );
+        disabled.set(true);
+        view.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        let refused = frames.borrow().last().unwrap().clone().unwrap();
+        assert!(refused.disabled);
+        cx.update(|window, cx| assert!(!refused.invoke(&ClickEvent::default(), window, cx)));
+        assert_eq!(view.read_with(cx, |view, _| view.hits), 1);
+        disabled.set(false);
+        delegated.set(true);
+        label.set(true);
+        view.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        let labeled = frames.borrow().last().unwrap().clone().unwrap();
+        assert_eq!(labeled.visible_label.as_deref(), Some("Native label"));
+        assert_eq!(labeled.label, "Move to group");
+        assert!(
+            labeled
+                .label_bounds
+                .is_some_and(|bounds| bounds.size.width > Pixels::ZERO)
+        );
+        assert!(labeled.icon_bounds.is_some());
+        assert!(labeled.selected && labeled.toggled == Some(true));
+        custom.set(true);
+        view.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        assert!(
+            frames.borrow().last().unwrap().is_none(),
+            "opaque custom children retain native realization"
+        );
     }
 }

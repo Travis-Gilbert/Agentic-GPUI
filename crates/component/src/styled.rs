@@ -248,17 +248,28 @@ pub(crate) enum FocusLine {
 /// Style a focused element as [`ThemeStyled::focus_ring_style`] does, with
 /// `line` choosing where a borderless element draws its focus line.
 pub(crate) fn focus_style<T: Styled + ParentElement>(
+    element: T,
+    line: FocusLine,
+    window: &Window,
+    cx: &App,
+) -> T {
+    focus_style_observed(element, line, None, window, cx)
+}
+
+pub(crate) fn focus_style_observed<T: Styled + ParentElement>(
     mut element: T,
     line: FocusLine,
+    observer: Option<std::rc::Rc<std::cell::RefCell<Option<crate::button::ButtonFocusDecoration>>>>,
     window: &Window,
     cx: &App,
 ) -> T {
     let theme = cx.theme();
     if theme.focus_ring {
-        return focus_ring(
+        return focus_ring_observed(
             element.border_color(theme.ring),
             window,
             theme.ring.alpha(FOCUS_RING_OPACITY),
+            observer,
         );
     }
 
@@ -280,28 +291,32 @@ pub(crate) fn focus_style<T: Styled + ParentElement>(
     // the element's own corners.
     let radius =
         corner_radii(element.style(), rem_size).map(|value| (*value - inset).max(Pixels::ZERO));
-    element.child(
-        div()
-            .when(cfg!(test), |this| {
-                this.debug_selector(|| "focus-ring".into())
-            })
-            .flex_none()
-            .absolute()
-            .top(inset)
-            .left(inset)
-            .right(inset)
-            .bottom(inset)
-            .border_1()
-            .border_color(color)
-            .refine_style(&corner_radii_refinement(radius)),
-    )
+    let decoration = div()
+        .when(cfg!(test), |this| {
+            this.debug_selector(|| "focus-ring".into())
+        })
+        .flex_none()
+        .absolute()
+        .top(inset)
+        .left(inset)
+        .right(inset)
+        .bottom(inset)
+        .border_1()
+        .border_color(color)
+        .refine_style(&corner_radii_refinement(radius));
+    element.child(observe_focus_decoration(decoration, observer))
 }
 
 /// Paint only the outside band, preserving translucent control backgrounds.
-pub(crate) fn focus_ring<T: Styled + ParentElement>(
+pub(crate) fn focus_ring<T: Styled + ParentElement>(element: T, window: &Window, color: Hsla) -> T {
+    focus_ring_observed(element, window, color, None)
+}
+
+fn focus_ring_observed<T: Styled + ParentElement>(
     mut element: T,
     window: &Window,
     color: Hsla,
+    observer: Option<std::rc::Rc<std::cell::RefCell<Option<crate::button::ButtonFocusDecoration>>>>,
 ) -> T {
     let rem_size = window.rem_size();
     let border_widths = border_widths(element.style(), rem_size);
@@ -309,19 +324,32 @@ pub(crate) fn focus_ring<T: Styled + ParentElement>(
     let ring_style = corner_radii_refinement(radius);
     let inset = FOCUS_RING_WIDTH;
 
-    element.child(
-        div()
-            .when(cfg!(test), |this| {
-                this.debug_selector(|| "focus-ring".into())
-            })
-            .flex_none()
-            .absolute()
-            .top(-(inset + border_widths.top))
-            .left(-(inset + border_widths.left))
-            .right(-(inset + border_widths.right))
-            .bottom(-(inset + border_widths.bottom))
-            .border(FOCUS_RING_WIDTH)
-            .border_color(color)
-            .refine_style(&ring_style),
-    )
+    let decoration = div()
+        .when(cfg!(test), |this| {
+            this.debug_selector(|| "focus-ring".into())
+        })
+        .flex_none()
+        .absolute()
+        .top(-(inset + border_widths.top))
+        .left(-(inset + border_widths.left))
+        .right(-(inset + border_widths.right))
+        .bottom(-(inset + border_widths.bottom))
+        .border(FOCUS_RING_WIDTH)
+        .border_color(color)
+        .refine_style(&ring_style);
+    element.child(observe_focus_decoration(decoration, observer))
+}
+
+fn observe_focus_decoration(
+    mut decoration: gpui::Div,
+    observer: Option<std::rc::Rc<std::cell::RefCell<Option<crate::button::ButtonFocusDecoration>>>>,
+) -> gpui::Div {
+    use crate::ElementExt as _;
+    if let Some(observer) = observer {
+        let style = decoration.style().clone();
+        decoration = decoration.on_prepaint(move |bounds, _, _| {
+            *observer.borrow_mut() = Some(crate::button::ButtonFocusDecoration { bounds, style });
+        });
+    }
+    decoration
 }
