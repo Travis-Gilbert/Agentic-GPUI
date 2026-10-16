@@ -3,8 +3,8 @@ use super::dialog::Dialog;
 use crate::ActiveTheme as _;
 use crate::root::WindowState;
 use gpui::{
-    App, Bounds, FocusHandle, Pixels, Refineable as _, SharedString, StyleRefinement, Styled as _,
-    TextStyle, Window,
+    App, Bounds, FocusHandle, Focusable as _, Pixels, Refineable as _, SharedString,
+    StyleRefinement, Styled as _, TextStyle, Window,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -90,6 +90,28 @@ pub struct DialogButtonPresentation {
     pub bounds: Bounds<Pixels>,
 }
 #[derive(Clone)]
+pub struct DialogIconPresentation {
+    pub svg: std::sync::Arc<[u8]>,
+    pub style: StyleRefinement,
+}
+/// A real single-line input inside a Root-owned Dialog. The frame and
+/// material are observed from that same native Input renderer.
+#[derive(Clone)]
+pub struct DialogFieldPresentation {
+    pub id: SharedString,
+    pub label: SharedString,
+    pub input: gpui::Entity<crate::input::InputState>,
+    pub bounds: Bounds<Pixels>,
+    pub material: StyleRefinement,
+}
+#[derive(Clone)]
+pub(crate) struct DialogField {
+    pub id: SharedString,
+    pub label: SharedString,
+    pub input: gpui::Entity<crate::input::InputState>,
+    pub native: Rc<RefCell<Option<crate::input::InputFramePresentation>>>,
+}
+#[derive(Clone)]
 pub struct DialogPresentation {
     owner: Weak<RefCell<DialogPresentationOwner>>,
     pub id: u64,
@@ -111,6 +133,10 @@ pub struct DialogPresentation {
     pub description_style: TextStyle,
     pub overlay_color: gpui::Hsla,
     pub keyboard: bool,
+    pub overlay_closable: bool,
+    pub close_bounds: Option<Bounds<Pixels>>,
+    pub close_icon: Option<DialogIconPresentation>,
+    pub fields: Vec<DialogFieldPresentation>,
     pub alert: bool,
     focus: FocusHandle,
     complete: bool,
@@ -142,12 +168,7 @@ impl DialogPresentation {
                 .is_some_and(DialogPresenter::is_platform_delegated)
         })
     }
-    pub fn deliver(
-        &self,
-        input: DialogInput,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Result<(), DialogInputRefusal> {
+    fn validate_current(&self, window: &Window, cx: &App) -> Result<(), DialogInputRefusal> {
         let owner = self
             .owner
             .upgrade()
@@ -174,12 +195,42 @@ impl DialogPresentation {
             {
                 return Err(DialogInputRefusal::NotPresented);
             }
-            if matches!(input, DialogInput::Outside)
+        }
+        Ok(())
+    }
+    /// Focus only a field belonging to this actual topmost, current dialog.
+    /// The Root and presentation leases are released before changing focus.
+    pub fn focus_field(
+        &self,
+        id: &str,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<(), DialogInputRefusal> {
+        self.validate_current(window, cx)?;
+        let field = self
+            .fields
+            .iter()
+            .find(|field| field.id.as_ref() == id)
+            .ok_or(DialogInputRefusal::TargetAbsent)?;
+        let focus = field.input.read(cx).focus_handle(cx);
+        window.focus(&focus, cx);
+        Ok(())
+    }
+    pub fn deliver(
+        &self,
+        input: DialogInput,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<(), DialogInputRefusal> {
+        self.validate_current(window, cx)?;
+        {
+            if matches!(input, DialogInput::Outside) && !self.overlay_closable
                 || matches!(input, DialogInput::Escape) && !self.keyboard
             {
                 return Err(DialogInputRefusal::NotAllowed);
             }
-            if input == DialogInput::Cancel && self.cancel.is_none() {
+            if input == DialogInput::Cancel && self.cancel.is_none() && self.close_bounds.is_none()
+            {
                 return Err(DialogInputRefusal::TargetAbsent);
             }
         }
@@ -192,11 +243,9 @@ impl DialogPresentation {
                 window,
                 cx,
             ),
-            DialogInput::Cancel | DialogInput::Escape => {
-                self.focus
-                    .dispatch_action(&gpui_base::actions::Cancel, window, cx)
-            }
-            DialogInput::Outside => unreachable!(),
+            DialogInput::Cancel | DialogInput::Escape | DialogInput::Outside => self
+                .focus
+                .dispatch_action(&gpui_base::actions::Cancel, window, cx),
         }
         Ok(())
     }
@@ -215,6 +264,9 @@ struct Fingerprint {
     cancel: Option<SharedString>,
     danger: bool,
     keyboard: bool,
+    overlay_closable: bool,
+    field: Option<(SharedString, SharedString, u64)>,
+    standard_footer: bool,
 }
 pub(crate) struct DialogPresentationOwner {
     id: u64,
@@ -229,6 +281,8 @@ pub(crate) struct DialogPresentationOwner {
     pub description_bounds: Rc<Cell<Bounds<Pixels>>>,
     pub confirm_bounds: Rc<Cell<Bounds<Pixels>>>,
     pub cancel_bounds: Rc<Cell<Bounds<Pixels>>>,
+    pub close_bounds: Rc<Cell<Bounds<Pixels>>>,
+    field: Option<DialogField>,
 }
 impl Default for DialogPresentationOwner {
     fn default() -> Self {
@@ -246,6 +300,8 @@ impl Default for DialogPresentationOwner {
             description_bounds: Rc::default(),
             confirm_bounds: Rc::default(),
             cancel_bounds: Rc::default(),
+            close_bounds: Rc::default(),
+            field: None,
         }
     }
 }
@@ -289,7 +345,7 @@ impl DialogPresentationOwner {
         owner: &Rc<RefCell<Self>>,
         dialog: &Dialog,
         window: &Window,
-        cx: &App,
+        cx: &mut App,
     ) -> Option<DialogPresentation> {
         let mut state = owner.borrow_mut();
         state.install(dialog.platform_presenter.clone());
@@ -308,15 +364,45 @@ impl DialogPresentationOwner {
             cancel: cancel.clone(),
             danger,
             keyboard: dialog.props.keyboard,
+            overlay_closable: dialog.props.overlay_closable,
+            field: dialog.platform_field.as_ref().map(|field| {
+                (
+                    field.id.clone(),
+                    field.label.clone(),
+                    field.input.entity_id().as_u64(),
+                )
+            }),
+            standard_footer: dialog.standard_footer,
         };
         if state.fingerprint.as_ref() != Some(&fingerprint) {
             state.revision = state.revision.saturating_add(1);
             state.fingerprint = Some(fingerprint);
         }
         state.presenter.as_ref()?;
-        let complete = dialog.platform_text.complete
+        state.field = dialog.platform_field.clone();
+        let field = dialog.platform_field.as_ref().and_then(|field| {
+            field
+                .native
+                .borrow()
+                .clone()
+                .map(|native| DialogFieldPresentation {
+                    id: field.id.clone(),
+                    label: field.label.clone(),
+                    input: field.input.clone(),
+                    bounds: native.bounds,
+                    material: native.material,
+                })
+        });
+        let form_complete = dialog.platform_field.is_some()
+            && dialog.standard_footer
+            && dialog.platform_text.title.is_some()
+            && dialog.children.len() == 1
+            && dialog.content_builder.is_none()
+            && dialog.header.is_none();
+        let complete = (dialog.platform_text.complete
             && dialog.platform_text.alert
-            && !dialog.props.overlay_closable;
+            && !dialog.props.overlay_closable)
+            || form_complete;
         let mut native_material = gpui::div()
             .bg(cx.theme().tokens.background)
             .border_1()
@@ -330,6 +416,27 @@ impl DialogPresentationOwner {
         title_style.refine(&super::DialogTitle::presentation_style().text);
         let mut description_style = inherited;
         description_style.refine(&super::DialogDescription::presentation_style(cx).text);
+        let close_icon = if dialog.props.close_button {
+            use crate::{IconNamed as _, Sizable as _};
+            let color = crate::button::ButtonVariant::Ghost
+                .presentation_styles(false, cx)
+                .normal
+                .foreground;
+            let mut svg = crate::Icon::new(crate::IconName::Close).small().into_svg(
+                window.text_style().font_size.to_pixels(window.rem_size()),
+                color,
+            );
+            cx.asset_source()
+                .load(crate::IconName::Close.path().as_ref())
+                .ok()
+                .flatten()
+                .map(|source| DialogIconPresentation {
+                    svg: std::sync::Arc::from(source.as_ref()),
+                    style: svg.style().clone(),
+                })
+        } else {
+            None
+        };
         Some(DialogPresentation {
             owner: Rc::downgrade(owner),
             id: state.id,
@@ -364,6 +471,10 @@ impl DialogPresentationOwner {
             description_style,
             overlay_color: super::dialog::overlay_color(dialog.props.overlay_visible, cx),
             keyboard: dialog.props.keyboard,
+            overlay_closable: dialog.props.overlay_closable,
+            close_bounds: dialog.props.close_button.then(|| state.close_bounds.get()),
+            close_icon,
+            fields: field.into_iter().collect(),
             alert: dialog.platform_text.alert,
             focus: dialog.focus_handle.clone(),
             complete,
@@ -382,6 +493,29 @@ impl DialogPresentationOwner {
             frame.shadows = super::dialog::dialog_shadow(frame.opacity);
             frame.title_bounds = state.title_bounds.get();
             frame.description_bounds = state.description_bounds.get();
+            if frame.close_bounds.is_some() {
+                frame.close_bounds = Some(state.close_bounds.get());
+            }
+            if let Some(field) = &state.field {
+                frame.fields = field
+                    .native
+                    .borrow()
+                    .clone()
+                    .map(|native| DialogFieldPresentation {
+                        id: field.id.clone(),
+                        label: field.label.clone(),
+                        input: field.input.clone(),
+                        bounds: native.bounds,
+                        material: native.material,
+                    })
+                    .into_iter()
+                    .collect();
+                frame.complete &= frame.fields.iter().any(|field| {
+                    field.bounds.size.width > gpui::px(0.)
+                        && field.bounds.size.height > gpui::px(0.)
+                });
+            }
+
             frame.confirm.bounds = state.confirm_bounds.get();
             if let Some(cancel) = &mut frame.cancel {
                 cancel.bounds = state.cancel_bounds.get();
@@ -394,9 +528,25 @@ impl DialogPresentationOwner {
                 && frame.confirm.bounds.size.width > gpui::px(0.);
             let requested = (presenter.frame)(frame, window, cx) && complete;
             if presenter.delegated.replace(requested) != requested {
-                // Prepaint cannot refresh the window synchronously. The real
-                // Root owner must render its new delegation/focus-trap policy.
-                let _ = WindowState::try_update(window, cx, |_, _, cx| cx.notify());
+                // The native Root must repaint its changed policy outside prepaint.
+                let owner = Rc::downgrade(owner);
+                window.on_next_frame(move |window, cx| {
+                    let Some(owner) = owner.upgrade() else {
+                        return;
+                    };
+                    let current = owner.borrow().presenter.as_ref().is_some_and(|current| {
+                        Rc::ptr_eq(&current.delegated, &presenter.delegated)
+                            && current.delegated.get() == requested
+                    });
+                    let mounted = WindowState::try_read(window, cx).is_some_and(|root| {
+                        root.active_dialogs
+                            .iter()
+                            .any(|dialog| Rc::ptr_eq(&dialog.presentation, &owner))
+                    });
+                    if current && mounted {
+                        let _ = WindowState::try_update(window, cx, |_, _, cx| cx.notify());
+                    }
+                });
             }
         }
     }
@@ -406,7 +556,7 @@ impl DialogPresentationOwner {
 mod tests {
     use super::*;
     use crate::{WindowExt as _, dialog::DialogButtonProps};
-    use gpui::{TestAppContext, px, size};
+    use gpui::{AppContext as _, TestAppContext, px, size};
     fn draw(cx: &mut gpui::VisualTestContext) {
         cx.run_until_parked();
         cx.update(|window, cx| window.draw(cx).clear(cx));
@@ -528,6 +678,117 @@ mod tests {
             Err(DialogInputRefusal::TargetAbsent)
         );
     }
+    #[gpui::test]
+    fn platform_form_retains_the_actual_input_and_native_submit_refusals(cx: &mut TestAppContext) {
+        use gpui::IntoElement as _;
+        let cx = super::super::dialog::tests::window(cx, size(px(600.), px(500.)));
+        let frames: Rc<RefCell<Vec<DialogPresentation>>> = Rc::default();
+        let submitted: Rc<RefCell<Vec<String>>> = Rc::default();
+        let allow = Rc::new(Cell::new(false));
+        let factory: DialogPresenterFactory = Rc::new({
+            let frames = frames.clone();
+            move |_| {
+                DialogPresenter::new(
+                    {
+                        let frames = frames.clone();
+                        move |frame, _, _| {
+                            frames.borrow_mut().push(frame);
+                            true
+                        }
+                    },
+                    |_| {},
+                )
+            }
+        });
+        let input = cx.update(|window, cx| {
+            cx.new(|cx| crate::input::InputState::new(window, cx).default_value("Original"))
+        });
+        cx.update(|window, cx| {
+            let input = input.clone();
+            let submitted = submitted.clone();
+            let allow = allow.clone();
+            window.open_dialog(cx, move |dialog, _, _| {
+                let confirmed = input.clone();
+                let submitted = submitted.clone();
+                let allow = allow.clone();
+                dialog
+                    .title_text("Rename conversation")
+                    .text_field("chat.rename.title", "Title", input.clone(), |native| {
+                        native.into_any_element()
+                    })
+                    .standard_footer()
+                    .button_props(
+                        DialogButtonProps::default()
+                            .ok_text("Rename")
+                            .show_cancel(true),
+                    )
+                    .presenter("chat.more", factory.clone())
+                    .on_ok(move |_, _, cx| {
+                        submitted
+                            .borrow_mut()
+                            .push(confirmed.read(cx).value().to_string());
+                        allow.get()
+                    })
+            });
+        });
+        draw(cx);
+        draw(cx);
+        let frame = frames.borrow().last().unwrap().clone();
+        assert!(frame.is_complete());
+        assert!(frame.is_platform_delegated());
+        assert!(!frame.alert);
+        assert_eq!(frame.fields.len(), 1);
+        let field = &frame.fields[0];
+        assert_eq!(field.id.as_ref(), "chat.rename.title");
+        assert_eq!(field.input.entity_id(), input.entity_id());
+        assert!(field.bounds.size.width > px(0.));
+        assert!(field.bounds.size.height > px(0.));
+        assert!(
+            field.material.background.is_some(),
+            "material comes from the real Input frame"
+        );
+        assert!(frame.confirm.bounds.size.width > px(0.));
+        assert!(frame.cancel.as_ref().unwrap().bounds.size.width > px(0.));
+        cx.update(|window, cx| frame.focus_field("chat.rename.title", window, cx).unwrap());
+        cx.simulate_keystrokes("cmd-a");
+        cx.simulate_input("Revised");
+        assert_eq!(
+            cx.update(|_, cx| input.read(cx).value().to_string()),
+            "Revised"
+        );
+        cx.simulate_keystrokes("cmd-z");
+        assert_ne!(
+            cx.update(|_, cx| input.read(cx).value().to_string()),
+            "Revised",
+            "the actual input's undo changes its canonical value"
+        );
+        cx.simulate_keystrokes("cmd-shift-z");
+        assert_eq!(
+            cx.update(|_, cx| input.read(cx).value().to_string()),
+            "Revised"
+        );
+        draw(cx);
+        let current = frames.borrow().last().unwrap().clone();
+        cx.update(|window, cx| current.deliver(DialogInput::Confirm, window, cx).unwrap());
+        assert_eq!(submitted.borrow().as_slice(), &["Revised"]);
+        assert!(
+            cx.update(|window, cx| window.has_active_dialog(cx)),
+            "original callback refuses close"
+        );
+        allow.set(true);
+        cx.update(|window, cx| current.deliver(DialogInput::Confirm, window, cx).unwrap());
+        assert_eq!(submitted.borrow().as_slice(), &["Revised", "Revised"]);
+        assert!(!cx.update(|window, cx| window.has_active_dialog(cx)));
+        assert_eq!(
+            cx.update(|window, cx| current.deliver(DialogInput::Confirm, window, cx)),
+            Err(DialogInputRefusal::TargetAbsent)
+        );
+        assert_eq!(
+            cx.update(|window, cx| current.focus_field("chat.rename.title", window, cx)),
+            Err(DialogInputRefusal::TargetAbsent)
+        );
+    }
+
     #[gpui::test]
     fn platform_focus_restore_runs_after_the_actual_root_releases_its_lease(
         cx: &mut TestAppContext,

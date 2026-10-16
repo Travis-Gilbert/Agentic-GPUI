@@ -384,7 +384,26 @@ impl CommandState {
         let requested =
             (presenter.frame)(frame, window, cx) && complete && !presenter.retired.get();
         if presenter.delegated.replace(requested) != requested {
-            cx.notify();
+            let owner = cx.weak_entity();
+            window.on_next_frame(move |_, cx| {
+                let Some(owner) = owner.upgrade() else {
+                    return;
+                };
+                let current =
+                    owner
+                        .read(cx)
+                        .presentation
+                        .presenter
+                        .as_ref()
+                        .is_some_and(|current| {
+                            Rc::ptr_eq(&current.delegated, &presenter.delegated)
+                                && !current.retired.get()
+                                && current.delegated.get() == requested
+                        });
+                if current {
+                    owner.update(cx, |_, cx| cx.notify());
+                }
+            });
         }
     }
 }

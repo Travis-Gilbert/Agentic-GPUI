@@ -13,9 +13,9 @@ use crate::{
     styled::{popover_ring, popover_shadow},
     v_flex,
 };
-use gpui_base::Placement;
 use gpui_base::Popover as BasePopover;
 pub use gpui_base::PopoverState;
+use gpui_base::{ElementExt as _, Placement};
 
 pub(crate) fn init(_: &mut App) {}
 
@@ -103,6 +103,18 @@ pub(crate) fn dropdown_popup(
     ))
 }
 
+/// Facts observed from the actual retained Popover's native content surface.
+/// The weak controller remains the authority for open, dismissal and focus.
+#[derive(Clone)]
+pub struct PopoverContentFrame {
+    pub state: gpui::WeakEntity<PopoverState>,
+    pub bounds: Bounds<Pixels>,
+    pub clip: Bounds<Pixels>,
+    pub material: StyleRefinement,
+    pub text_style: gpui::TextStyle,
+}
+type ContentObserver = Rc<dyn Fn(PopoverContentFrame, &mut Window, &mut App)>;
+
 /// A popover element that can be triggered by a button or any other element.
 #[derive(IntoElement)]
 pub struct Popover {
@@ -129,6 +141,7 @@ pub struct Popover {
     appearance: bool,
     overlay_closable: bool,
     platform_delegation: Option<Rc<dyn Fn(&App) -> bool>>,
+    content_observer: Option<ContentObserver>,
     state_observer: Option<Rc<dyn Fn(gpui::WeakEntity<PopoverState>, &mut Window, &mut App)>>,
     on_open_change: Option<Rc<dyn Fn(&bool, &mut Window, &mut App)>>,
 }
@@ -151,6 +164,7 @@ impl Popover {
             appearance: true,
             overlay_closable: true,
             platform_delegation: None,
+            content_observer: None,
             state_observer: None,
             default_open: false,
             open: None,
@@ -174,6 +188,17 @@ impl Popover {
     /// duplicate canvas dialog semantics after the native region is prepared.
     pub fn delegate_platform_when(mut self, delegated: impl Fn(&App) -> bool + 'static) -> Self {
         self.platform_delegation = Some(Rc::new(delegated));
+        self
+    }
+
+    /// Observe the same surface after native allocation. This opt-in permits
+    /// `delegate_platform_when` to suppress that surface's canvas ink after
+    /// acknowledgement; it keeps native layout, controller and event routing.
+    pub fn on_content_frame(
+        mut self,
+        observer: impl Fn(PopoverContentFrame, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.content_observer = Some(Rc::new(observer));
         self
     }
 
@@ -362,6 +387,11 @@ impl RenderOnce for Popover {
         let children = self.children;
         let content = self.content;
         let trigger_style = self.trigger_style;
+        let content_observer = self.content_observer;
+        let delegated = self
+            .platform_delegation
+            .as_ref()
+            .is_some_and(|read| read(cx));
 
         BasePopover::new(self.id)
             .anchor(self.anchor)
@@ -374,7 +404,8 @@ impl RenderOnce for Popover {
                 this.delegate_platform_when(move |cx| delegated(cx))
             })
             .content(move |state, window, cx| {
-                v_flex()
+                let owner = cx.entity().downgrade();
+                let mut surface = v_flex()
                     .id("content")
                     .occlude()
                     .tab_group()
@@ -426,7 +457,26 @@ impl RenderOnce for Popover {
                             .inset_0()
                             .size_full(),
                         )
-                    })
+                    });
+                if let Some(observer) = content_observer {
+                    let material = surface.style().clone();
+                    surface = surface
+                        .on_prepaint(move |bounds, window, cx| {
+                            observer(
+                                PopoverContentFrame {
+                                    state: owner,
+                                    bounds,
+                                    clip: window.content_mask().bounds,
+                                    material,
+                                    text_style: window.text_style(),
+                                },
+                                window,
+                                cx,
+                            );
+                        })
+                        .when(delegated, |surface| surface.opacity(0.));
+                }
+                surface
             })
             .when_some(self.trigger, |this, trigger| this.trigger_with(trigger))
             .when_some(trigger_style, |this, style| this.refine_style(&style))
@@ -942,6 +992,96 @@ mod tests {
         // A change callback reports state transitions, not redundant dismissal
         // requests. The base host may see both paths, but only the first closes.
         assert_eq!(&*changes.borrow(), &[true, false]);
+    }
+
+    struct ObservedContentHarness {
+        present: bool,
+        delegated: Rc<Cell<bool>>,
+        frames: Rc<RefCell<Vec<PopoverContentFrame>>>,
+    }
+    impl Render for ObservedContentHarness {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            if !self.present {
+                return div().into_any_element();
+            }
+            let delegated = self.delegated.clone();
+            let frames = self.frames.clone();
+            Popover::new("observed-content")
+                .default_open(true)
+                .trigger(Button::new("observed-trigger").label("Open actual owner"))
+                .content(|_, _, _| div().size(px(40.)).bg(gpui::white()))
+                .delegate_platform_when(move |_| delegated.get())
+                .on_content_frame(move |frame, _, _| frames.borrow_mut().push(frame))
+                .into_any_element()
+        }
+    }
+    #[gpui::test]
+    fn observed_content_keeps_actual_controller_and_native_material_until_retirement(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| {
+            gpui_base::GlobalState::init(cx);
+            cx.set_global(Theme::default());
+            init(cx);
+        });
+        let delegated = Rc::new(Cell::new(false));
+        let frames = Rc::new(RefCell::new(Vec::new()));
+        let (view, cx) = cx.add_window_view({
+            let delegated = delegated.clone();
+            let frames = frames.clone();
+            move |_, _| ObservedContentHarness {
+                present: true,
+                delegated,
+                frames,
+            }
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let native = frames.borrow().last().unwrap().clone();
+        assert!(native.bounds.size.width > px(40.));
+        assert!(native.clip.size.width > px(0.));
+        assert!(native.material.background.is_some());
+        assert!(!native.material.box_shadow.as_ref().unwrap().is_empty());
+        assert!(cx.update(|_, cx| native.state.upgrade().unwrap().read(cx).is_open()));
+        let visible = |window: &Window| {
+            window
+                .painted_quads()
+                .iter()
+                .filter(|quad| !quad.background.is_transparent() || quad.border_color.a > 0.)
+                .count()
+        };
+        let before = cx.update(|window, _| visible(window));
+        delegated.set(true);
+        view.update(cx, |_, cx| cx.notify());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let after = cx.update(|window, _| visible(window));
+        assert!(
+            after < before,
+            "acknowledged presentation suppresses actual native surface ink while preserving layout: {before}->{after}"
+        );
+        let delegated_frame = frames.borrow().last().unwrap().clone();
+        assert_eq!(delegated_frame.bounds, native.bounds);
+        assert!(
+            cx.update(|_, cx| delegated_frame.state.upgrade().unwrap().read(cx).is_open()),
+            "the same actual controller remains open"
+        );
+        cx.update(|window, cx| {
+            delegated_frame
+                .state
+                .upgrade()
+                .unwrap()
+                .update(cx, |state, cx| state.dismiss(window, cx))
+        });
+        assert!(!cx.update(|_, cx| delegated_frame.state.upgrade().unwrap().read(cx).is_open()));
+        view.update(cx, |view, cx| {
+            view.present = false;
+            cx.notify();
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(
+            cx.update(|_, _| delegated_frame.state.upgrade().is_none()),
+            "removing the actual invoker retires its native weak controller"
+        );
     }
 
     struct DefaultOpenHarness;

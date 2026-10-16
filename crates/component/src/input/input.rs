@@ -106,9 +106,17 @@ pub(crate) fn input_style(disabled: bool, cx: &App) -> (Hsla, Hsla) {
     }
 }
 
+/// Native frame facts captured after the same Base style-state resolver.
+#[derive(Clone)]
+pub struct InputFramePresentation {
+    pub bounds: gpui::Bounds<gpui::Pixels>,
+    pub material: StyleRefinement,
+}
+type InputFrameObserver = Rc<dyn Fn(InputFramePresentation)>;
 /// A text input element bind to an [`InputState`].
 #[derive(IntoElement)]
 pub struct Input {
+    frame_observer: Option<InputFrameObserver>,
     token_renderer: Option<gpui_base::input::InlineTokenRenderer>,
     token_click_listener: Option<gpui_base::input::InlineTokenClickListener>,
     token_hover_listener: Option<gpui_base::input::InlineTokenHoverListener>,
@@ -203,6 +211,10 @@ impl Input {
         self
     }
 
+    pub fn observe_frame(mut self, observer: impl Fn(InputFramePresentation) + 'static) -> Self {
+        self.frame_observer = Some(Rc::new(observer));
+        self
+    }
     /// Sets the GPUI identity of the input frame. By default it uses the state entity ID.
     pub fn id(mut self, id: impl Into<ElementId>) -> Self {
         self.id = Some(id.into());
@@ -224,6 +236,7 @@ impl Input {
 
     fn with_state(state: TextInputState) -> Self {
         Self {
+            frame_observer: None,
             id: None,
             state,
             size: Size::default(),
@@ -738,7 +751,8 @@ impl RenderOnce for Input {
         let id = self
             .id
             .unwrap_or_else(|| ("input", state.entity_id()).into());
-        BaseInput::new(id)
+        let frame_observer = self.frame_observer;
+        let frame = BaseInput::new(id)
             .focused(focused)
             .disabled(disabled)
             .track_focus(&frame_focus_handle)
@@ -852,8 +866,17 @@ impl RenderOnce for Input {
                         }
                     }
                 })
+            });
+        let material = frame_observer.as_ref().map(|_| frame.resolved_style());
+        let frame = if let (Some(observer), Some(material)) = (frame_observer, material) {
+            use crate::ElementExt as _;
+            frame.on_prepaint(move |bounds, _, _| {
+                observer(InputFramePresentation { bounds, material })
             })
-            .render(window, cx)
+        } else {
+            frame
+        };
+        frame.render(window, cx)
     }
 }
 
@@ -1152,6 +1175,42 @@ mod tests {
         });
         assert_eq!(state.read_with(cx, |state, _| state.value()), "updated🦀");
         assert_eq!(*captured.lock().unwrap(), Some((None, true)));
+    }
+
+    #[gpui::test]
+    fn platform_text_capability_tracks_actual_readonly_and_disabled_state(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use gpui::{AppContext as _, EntityInputHandler as _, Render};
+        struct Probe(Entity<crate::input::EditorState>);
+        impl Render for Probe {
+            fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+                div().child(crate::input::Editor::new(&self.0))
+            }
+        }
+        cx.update(crate::init);
+        let (probe, cx) = cx.add_window_view(|window, cx| {
+            Probe(cx.new(|cx| crate::input::EditorState::new(window, cx)))
+        });
+        let input = probe.read_with(cx, |probe, _| probe.0.clone());
+        cx.update(|window, cx| {
+            input.update(cx, |state, cx| {
+                assert!(state.accepts_text_input(window, cx));
+                state.set_readonly(true, cx);
+                assert!(!state.accepts_text_input(window, cx));
+                state.replace_text_in_range(None, "refused", window, cx);
+                assert!(state.value().is_empty());
+                state.set_readonly(false, cx);
+                state.set_disabled(true, cx);
+                assert!(!state.accepts_text_input(window, cx));
+                state.replace_text_in_range(None, "refused", window, cx);
+                assert!(state.value().is_empty());
+                state.set_disabled(false, cx);
+                assert!(state.accepts_text_input(window, cx));
+                state.replace_text_in_range(None, "accepted", window, cx);
+                assert_eq!(state.value(), "accepted");
+            });
+        });
     }
 
     #[gpui::test]

@@ -174,6 +174,21 @@ impl DialogButtonProps {
     ) -> AnyElement {
         self.render_button(false, window, cx, bounds, delegated)
     }
+    pub(crate) fn render_footer(
+        &self,
+        window: &mut Window,
+        cx: &mut App,
+        confirm: Option<Rc<std::cell::Cell<gpui::Bounds<Pixels>>>>,
+        cancel: Option<Rc<std::cell::Cell<gpui::Bounds<Pixels>>>>,
+        delegated: bool,
+    ) -> AnyElement {
+        super::DialogFooter::new()
+            .when(self.is_cancel_shown(), |footer| {
+                footer.child(self.render_cancel_observed(window, cx, cancel, delegated))
+            })
+            .child(self.render_ok_observed(window, cx, confirm, delegated))
+            .into_any_element()
+    }
     fn render_button(
         &self,
         ok: bool,
@@ -244,7 +259,7 @@ pub(crate) struct DialogProps {
     width: Pixels,
     max_width: Option<Pixels>,
     margin_top: Option<Pixels>,
-    close_button: bool,
+    pub(crate) close_button: bool,
 
     overlay: bool,
     pub(super) overlay_closable: bool,
@@ -351,7 +366,9 @@ pub struct Dialog {
         Option<Rc<std::cell::RefCell<super::presentation::DialogPresentationOwner>>>,
     base: Option<BaseDialogRoot>,
     pub(crate) style: StyleRefinement,
-    children: Vec<AnyElement>,
+    pub(crate) children: Vec<AnyElement>,
+    pub(crate) platform_field: Option<super::presentation::DialogField>,
+    pub(crate) standard_footer: bool,
     trigger: Option<AnyElement>,
     title: Option<AnyElement>,
     pub(crate) header: Option<AnyElement>,
@@ -412,6 +429,8 @@ impl Dialog {
             content_builder: None,
             props: DialogProps::default(),
             children: Vec::new(),
+            platform_field: None,
+            standard_footer: false,
             layer_ix: 0,
             selection_scope: TextSelectionScopeId::default(),
             button_props: DialogButtonProps::default(),
@@ -450,6 +469,55 @@ impl Dialog {
         self
     }
 
+    /// A source-owned title shared with the native and platform presenters.
+    pub fn title_text(mut self, title: impl Into<SharedString>) -> Self {
+        let title = title.into();
+        self.title = Some(title.clone().into_any_element());
+        self.platform_text.title = Some(title);
+        self
+    }
+    /// Whether this actual Root dialog has acknowledged a platform presenter.
+    /// Callers use it only to delegate their diagnostic semantic wrapper.
+    pub fn is_platform_delegated(&self) -> bool {
+        self.platform_owner
+            .as_ref()
+            .is_some_and(|owner| owner.borrow().delegated())
+    }
+    /// Place this actual InputState once, retaining a caller's native semantic
+    /// wrapper. It is an ordinary native Input even without a platform presenter.
+    pub fn text_field(
+        mut self,
+        id: impl Into<SharedString>,
+        label: impl Into<SharedString>,
+        input: gpui::Entity<crate::input::InputState>,
+        wrap: impl FnOnce(crate::input::Input) -> AnyElement,
+    ) -> Self {
+        let native = Rc::new(std::cell::RefCell::new(None));
+        let observed = native.clone();
+        let field = super::presentation::DialogField {
+            id: id.into(),
+            label: label.into(),
+            input: input.clone(),
+            native,
+        };
+        let native = crate::input::Input::new(&input)
+            .observe_frame(move |frame| *observed.borrow_mut() = Some(frame));
+        let native = if self.is_platform_delegated() {
+            native.role(crate::RoleOverride::Presentational)
+        } else {
+            native
+        };
+        self.children.push(wrap(native));
+        self.platform_field = Some(field);
+        self
+    }
+    /// Opt into the same native Confirm/Cancel footer used by AlertDialog.
+    /// Plain Dialog otherwise keeps its existing explicitly-composed footer.
+    pub fn standard_footer(mut self) -> Self {
+        self.standard_footer = true;
+        self
+    }
+
     /// Sets the header of the dialog, rendered above the title and content.
     pub(crate) fn header(mut self, header: impl IntoElement) -> Self {
         self.header = Some(header.into_any_element());
@@ -465,6 +533,7 @@ impl Dialog {
     /// [`AlertDialog`](crate::dialog::AlertDialog), which builds a default
     /// footer from `button_props` when no footer is set.
     pub fn footer(mut self, footer: impl IntoElement) -> Self {
+        self.standard_footer = false;
         self.footer = Some(footer.into_any_element());
         self
     }
@@ -657,8 +726,32 @@ impl RenderOnce for Dialog {
             return self.render_trigger(trigger, window, cx);
         }
 
+        if self.standard_footer && self.footer.is_none() {
+            let delegated = self
+                .platform_owner
+                .as_ref()
+                .is_some_and(|owner| owner.borrow().delegated());
+            let confirm = self
+                .platform_owner
+                .as_ref()
+                .map(|owner| owner.borrow().confirm_bounds.clone());
+            let cancel = self
+                .platform_owner
+                .as_ref()
+                .map(|owner| owner.borrow().cancel_bounds.clone());
+            self.footer = Some(
+                self.button_props
+                    .render_footer(window, cx, confirm, cancel, delegated),
+            );
+        }
         let platform_owner = self.platform_owner.clone();
         let platform_animation_owner = platform_owner.clone();
+        let title_bounds = platform_owner
+            .as_ref()
+            .map(|owner| owner.borrow().title_bounds.clone());
+        let close_bounds = platform_owner
+            .as_ref()
+            .map(|owner| owner.borrow().close_bounds.clone());
         let platform_frame = platform_owner.as_ref().and_then(|owner| {
             super::presentation::DialogPresentationOwner::prepare(owner, &self, window, cx)
         });
@@ -820,7 +913,8 @@ impl RenderOnce for Dialog {
                                                         DialogTitle::new()
                                                             .pl(paddings.left)
                                                             .pr(paddings.right)
-                                                            .child(title),
+                                                            .child(title)
+                                                            .on_prepaint(move|bounds,_,_|{if let Some(cell)=title_bounds{cell.set(bounds);}}),
                                                     )
                                                 })
                                                 .when_some(self.content_builder, |this, builder| {
@@ -869,7 +963,7 @@ impl RenderOnce for Dialog {
                                                         .small()
                                                         .ghost()
                                                         .icon(IconName::Close)
-                                                })
+                                                }).on_prepaint(move|bounds,_,_|{if let Some(cell)=close_bounds{cell.set(bounds);}})
                                         }))
                                         .child(gpui::canvas(move|_,window,cx|{
                                             if let (Some(owner),Some(frame))=(platform_owner,platform_frame){super::presentation::DialogPresentationOwner::publish(&owner,frame,window,cx);}

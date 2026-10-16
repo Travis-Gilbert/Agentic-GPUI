@@ -171,7 +171,7 @@ impl Icon {
         self
     }
 
-    fn into_svg(self, text_size: Pixels, fallback_color: Hsla) -> Svg {
+    pub(crate) fn into_svg(self, text_size: Pixels, fallback_color: Hsla) -> Svg {
         let text_color = self.text_color.unwrap_or(fallback_color);
         let has_base_size = self.style.size.width.is_some() || self.style.size.height.is_some();
 

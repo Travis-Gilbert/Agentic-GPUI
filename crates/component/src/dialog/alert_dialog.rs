@@ -7,7 +7,7 @@ use crate::{
     StyledExt as _, WindowExt as _,
     button::ButtonVariant,
     dialog::{
-        Dialog, DialogButtonProps, DialogDescription, DialogEntrance, DialogFooter, DialogHeader,
+        Dialog, DialogButtonProps, DialogDescription, DialogEntrance, DialogHeader,
         DialogTitle,
     },
     h_flex, v_flex,
@@ -417,23 +417,13 @@ impl AlertDialog {
             .children(self.children)
             .when(!has_footer, |this| {
                 // Default footer for AlertDialog if user doesn't provide one, with OK and optional Cancel button
-                this.footer(
-                    DialogFooter::new()
-                        .when(button_props.is_cancel_shown(), |this| {
-                            this.child(button_props.render_cancel_observed(
-                                window,
-                                cx,
-                                cancel_bounds,
-                                delegated,
-                            ))
-                        })
-                        .child(button_props.render_ok_observed(
-                            window,
-                            cx,
-                            confirm_bounds,
-                            delegated,
-                        )),
-                )
+                this.footer(button_props.render_footer(
+                    window,
+                    cx,
+                    confirm_bounds,
+                    cancel_bounds,
+                    delegated,
+                ))
             });
         result.platform_text = text;
         result

@@ -136,7 +136,9 @@ pub struct PopupMenuPresentation {
 }
 impl PopupMenuPresentation {
     /// The actual menu dispatch node, including after its owner is retired.
-    pub fn focus(&self) -> gpui::WeakFocusHandle { self.focus.clone() }
+    pub fn focus(&self) -> gpui::WeakFocusHandle {
+        self.focus.clone()
+    }
     pub fn entity(&self) -> WeakEntity<PopupMenu> {
         self.entity.clone()
     }
@@ -398,6 +400,68 @@ mod tests {
     use super::*;
 
     #[gpui::test]
+    fn external_ack_needs_a_settling_native_frame_to_publish_delegation(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(crate::init);
+        let observed = Rc::new(Cell::new(false));
+        let frames: Rc<RefCell<Vec<PopupMenuPresentation>>> = Rc::default();
+        let (menu, cx) = cx.add_window_view({
+            let observed = observed.clone();
+            let frames = frames.clone();
+            move |_, cx| {
+                PopupMenu::new(cx)
+                    .item(PopupMenuItem::new("Original action"))
+                    .presenter(PopupMenuPresenter::new(
+                        move |frame, _, _| {
+                            frames.borrow_mut().push(frame);
+                            observed.get()
+                        },
+                        |_| {},
+                    ))
+            }
+        });
+        cx.run_until_parked();
+        assert!(frames.borrow().last().unwrap().is_complete());
+        assert!(!frames.borrow().last().unwrap().is_platform_delegated());
+        observed.set(true);
+        let owner = menu.downgrade();
+        cx.update(|window, _| {
+            window.on_next_frame(move |window, cx| {
+                let Some(owner) = owner.upgrade() else {
+                    return;
+                };
+                owner.update(cx, |_, cx| cx.notify());
+                window.refresh();
+            });
+        });
+        cx.update(|window, cx| {
+            assert_eq!(window.simulate_next_frame(cx), 1);
+            window.draw(cx).clear(cx);
+        });
+        assert!(menu.read_with(cx, |menu, _| menu.is_platform_delegated()));
+        assert!(
+            !frames.borrow().last().unwrap().is_platform_delegated(),
+            "the first acknowledgement callback precedes the renderer's delegation write"
+        );
+        cx.update(|window, cx| {
+            assert_eq!(window.simulate_next_frame(cx), 1);
+            window.draw(cx).clear(cx);
+        });
+        assert!(
+            frames.borrow().last().unwrap().is_platform_delegated(),
+            "the bounded settling frame publishes the actual renderer's accepted state"
+        );
+        cx.update(|window, cx| {
+            assert_eq!(
+                window.simulate_next_frame(cx),
+                0,
+                "acknowledgement does not create a perpetual frame source"
+            );
+        });
+    }
+
+    #[gpui::test]
     fn presented_menu_rejects_stale_and_disabled_rows_before_the_existing_handler(
         cx: &mut gpui::TestAppContext,
     ) {
@@ -573,24 +637,49 @@ mod tests {
 #[cfg(test)]
 mod focus_restore_tests {
     use super::*;
-    fn verify_native_close_decision(cx:&mut gpui::TestAppContext,moved:bool){
-        cx.update(|cx|cx.set_global(crate::Theme::default()));
-        let reported=Rc::new(Cell::new(None));
-        let presenter=PopupMenuPresenter::new(|_,_,_|true,|_|{}).on_focus_close({let reported=reported.clone();move |id,moved|reported.set(Some((id,moved)))});
-        let menu_presenter=presenter.clone();
-        let(menu,cx)=cx.add_window_view(move |_,cx|PopupMenu::new(cx).presenter(menu_presenter));
-        let identity=menu.entity_id().as_u64();
-        presenter.delegated.set(true);
-        let other_focus=cx.update(|window,cx|{
-            let focus=menu.read(cx).focus_handle.clone();focus.focus(window,cx);
-            if moved{let other=cx.focus_handle();other.focus(window,cx);Some(other)}else{None}
+    fn verify_native_close_decision(cx: &mut gpui::TestAppContext, moved: bool) {
+        cx.update(|cx| cx.set_global(crate::Theme::default()));
+        let reported = Rc::new(Cell::new(None));
+        let presenter = PopupMenuPresenter::new(|_, _, _| true, |_| {}).on_focus_close({
+            let reported = reported.clone();
+            move |id, moved| reported.set(Some((id, moved)))
         });
-        menu.update_in(cx,|menu,window,cx|{menu.presented_input(menu.presentation.revision,PopupMenuInput::Dismiss,window,cx).unwrap();});
-        assert_eq!(reported.get(),Some((identity,moved)));
+        let menu_presenter = presenter.clone();
+        let (menu, cx) =
+            cx.add_window_view(move |_, cx| PopupMenu::new(cx).presenter(menu_presenter));
+        let identity = menu.entity_id().as_u64();
+        presenter.delegated.set(true);
+        let other_focus = cx.update(|window, cx| {
+            let focus = menu.read(cx).focus_handle.clone();
+            focus.focus(window, cx);
+            if moved {
+                let other = cx.focus_handle();
+                other.focus(window, cx);
+                Some(other)
+            } else {
+                None
+            }
+        });
+        menu.update_in(cx, |menu, window, cx| {
+            menu.presented_input(
+                menu.presentation.revision,
+                PopupMenuInput::Dismiss,
+                window,
+                cx,
+            )
+            .unwrap();
+        });
+        assert_eq!(reported.get(), Some((identity, moved)));
         drop(other_focus);
     }
     #[gpui::test]
-    fn escape_reports_the_existing_owner_focus_restore_decision(cx:&mut gpui::TestAppContext){verify_native_close_decision(cx,false);}
+    fn escape_reports_the_existing_owner_focus_restore_decision(cx: &mut gpui::TestAppContext) {
+        verify_native_close_decision(cx, false);
+    }
     #[gpui::test]
-    fn action_moved_focus_reports_the_existing_native_refusal_to_restore(cx:&mut gpui::TestAppContext){verify_native_close_decision(cx,true);}
+    fn action_moved_focus_reports_the_existing_native_refusal_to_restore(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        verify_native_close_decision(cx, true);
+    }
 }

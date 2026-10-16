@@ -4,7 +4,7 @@ mod description;
 mod dialog;
 pub(crate) mod presentation;
 pub use presentation::{
-    DialogButtonPresentation, DialogInput, DialogInputRefusal, DialogPresentation, DialogPresenter,
+    DialogButtonPresentation, DialogFieldPresentation, DialogIconPresentation, DialogInput, DialogInputRefusal, DialogPresentation, DialogPresenter,
     DialogPresenterFactory,
 };
 mod dispatch_anchor;

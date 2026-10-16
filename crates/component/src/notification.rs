@@ -421,7 +421,7 @@ impl Render for Notification {
         self.capture_action(action.as_ref());
         let action_bounds = self.presentation.action_bounds.clone();
         let dismiss_bounds = self.presentation.dismiss_bounds.clone();
-        let copy_bounds=self.presentation.copy_bounds.clone();
+        let copy_bounds = self.presentation.copy_bounds.clone();
         let delegated = self
             .presentation
             .presenter
@@ -436,7 +436,7 @@ impl Render for Notification {
         let has_icon = icon.is_some();
         let placement = self.placement.unwrap_or(cx.theme().notification.placement);
 
-        let animation_opacity=self.presentation.opacity.clone();
+        let animation_opacity = self.presentation.opacity.clone();
         let owner = cx.entity().downgrade();
         let icon_svg = icon.as_ref().and_then(|icon| match icon.source_ref() {
             crate::icon::IconSource::Data(bytes) => Some(bytes.clone()),
@@ -464,7 +464,22 @@ impl Render for Notification {
                         let complete = frame.is_complete();
                         let requested = (presenter.frame)(frame, window, cx) && complete;
                         if presenter.delegated.replace(requested) != requested {
-                            owner.update(cx, |_, cx| cx.notify());
+                            let owner = owner.downgrade();
+                            window.on_next_frame(move |_, cx| {
+                                let Some(owner) = owner.upgrade() else {
+                                    return;
+                                };
+                                let current =
+                                    owner.read(cx).presentation.presenter.as_ref().is_some_and(
+                                        |current| {
+                                            Rc::ptr_eq(&current.delegated, &presenter.delegated)
+                                                && current.delegated.get() == requested
+                                        },
+                                    );
+                                if current {
+                                    owner.update(cx, |_, cx| cx.notify());
+                                }
+                            });
                         }
                     }
                 }
@@ -489,7 +504,7 @@ impl Render for Notification {
             })
             .child(
                 v_flex()
-                    .on_prepaint(move |bounds,_,_|copy_bounds.set(bounds))
+                    .on_prepaint(move |bounds, _, _| copy_bounds.set(bounds))
                     .flex_1()
                     .overflow_hidden()
                     .when(has_icon, |this| this.pl_6())
@@ -1107,15 +1122,19 @@ impl Render for NotificationList {
                     self.stacks.len() - 1
                 });
             let stack = &self.stacks[stack_ix].1;
-            stack.state.set_platform_interaction(items.iter().any(|(_,note)|note.read(cx).presentation.hovered||note.read(cx).presentation.focused));
+            stack
+                .state
+                .set_platform_interaction(items.iter().any(|(_, note)| {
+                    note.read(cx).presentation.hovered || note.read(cx).presentation.focused
+                }));
 
             items
                 .into_iter()
                 .fold(
                     ToastStack::new(stack_id, stack.state.clone()),
                     |stack, (id, item)| {
-                        let presentation=item.read(cx).presentation.stack.clone();
-                        stack.item_with_presentation(format!("{id:?}"),item,presentation)
+                        let presentation = item.read(cx).presentation.stack.clone();
+                        stack.item_with_presentation(format!("{id:?}"), item, presentation)
                     },
                 )
                 .placement(anchor)

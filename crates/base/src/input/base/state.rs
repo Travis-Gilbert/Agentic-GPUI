@@ -4235,6 +4235,10 @@ impl<M: InputModeKind> InputBaseState<M> {
 }
 
 impl<M: InputModeKind> EntityInputHandler for InputBaseState<M> {
+    fn accepts_text_input(&self, _window: &mut Window, _cx: &mut Context<Self>) -> bool {
+        self.is_editable()
+    }
+
     fn text_input_configuration(
         &mut self,
         _window: &mut Window,

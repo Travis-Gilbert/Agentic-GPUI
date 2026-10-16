@@ -53,6 +53,8 @@ pub struct NotificationPresentation {
     pub type_: Option<NotificationType>,
     pub phase: ToastTransitionStatus,
     pub opacity: f32,
+    /// The same current animation helper used by the native Toast renderer.
+    pub shadows: Vec<gpui::BoxShadow>,
     pub visible: bool,
     pub action: Option<NotificationActionPresentation>,
     pub clickable: bool,
@@ -165,6 +167,7 @@ impl Notification {
             type_: self.type_,
             phase: self.transition_status,
             opacity: self.presentation.opacity.get() * self.presentation.stack.opacity(),
+            shadows: crate::styled::toast_shadow(self.presentation.opacity.get().powi(3)),
             visible: self.presentation.stack.is_visible(),
             action: self.presentation.action.clone().map(|mut action| {
                 action.bounds = self.presentation.action_bounds.get();

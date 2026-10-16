@@ -171,7 +171,8 @@ impl InputBase {
         self
     }
 
-    fn resolved_style(&self) -> StyleRefinement {
+    /// The exact style consumed by the native frame, after state refinements.
+    pub fn resolved_style(&self) -> StyleRefinement {
         crate::state_style::resolve_style(
             &self.style,
             [

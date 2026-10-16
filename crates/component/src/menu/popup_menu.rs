@@ -1622,7 +1622,22 @@ impl Render for PopupMenu {
                             let complete = frame.is_complete();
                             let requested = (presenter.frame)(frame, window, cx) && complete;
                             if presenter.delegated.replace(requested) != requested {
-                                view.update(cx, |_, cx| cx.notify());
+                                let owner = view.downgrade();
+                                window.on_next_frame(move |_, cx| {
+                                    let Some(owner) = owner.upgrade() else {
+                                        return;
+                                    };
+                                    let current =
+                                        owner.read(cx).presentation.presenter.as_ref().is_some_and(
+                                            |current| {
+                                                Rc::ptr_eq(&current.delegated, &presenter.delegated)
+                                                    && current.delegated.get() == requested
+                                            },
+                                        );
+                                    if current {
+                                        owner.update(cx, |_, cx| cx.notify());
+                                    }
+                                });
                             }
                         }
                     }),
