@@ -3,7 +3,7 @@
 This hard fork tracks `longbridge/gpui-kit` tag `v0.7.3`. The files listed in
 `series` are applied in order and are never proposed upstream. The fork pins
 the entire GPUI family to one immutable revision of `Travis-Gilbert/zed`
-(`7e67ba4d1d82ad4c3e2444c53a76eb6543037747`) in place of upstream's
+(`5f454172b52042cee1f57ff60f0cebae829c393b`) in place of upstream's
 `gpui-pre =0.3.9` crates.
 
 The replay workflow applies this series to `v0.7.3` for branch validation and
@@ -370,3 +370,38 @@ and two focused owner/actual Button prepaint tests byte for byte. The actual for
 Component library check passes against the paired GPUI revision. A redundant cold
 focused rerun was stopped before tests executed; it supplies no additional result.
 Product browser header placement and full overlay acceptance remain separate.
+
+
+## Current capability, forms and owner wake (patch0044)
+
+The canonical InputState reports actual readonly/disabled capability. Its focused
+native test passes and replacing the answer with the old unconditional true
+fails before writes; fixed source is restored. Ordinary opt-in Dialog fields
+continue editing/submitting through the original InputState and Root handlers.
+Popover content and toast material observations remain on their actual native
+owners. A delegated transition now schedules its guarded weak-owner notification
+on the existing next native frame: prepaint notification suppression no longer
+starves the acknowledged state. The red actual PopupMenu control reproduces the
+old missing settling frame. Actual combined native92 owner/capability tests pass,
+and the Component library check passes.
+
+## Observed ordinary Button source (patch0045)
+
+Opt-in frames expose the same rendered Button's state, source names, native
+material, original click/hover handlers, weak focus and actual root/content/
+label/icon/focus-decoration allocations. Icon-only accessible names remain
+separate from visible labels. Custom/opaque behavior has no automatic projection.
+The enclosing retained owner still validates current scope, revision and
+membership before delivery outside its entity lease; there is no new button
+controller. Default nonobserved rendering allocates no observer resources.
+
+All43 selected actual native Button/style tests pass. A preserved red caught
+explicit GenericContainer assignment, corrected by the existing None role
+policy during delegation. Native test layout uses its test text system; source
+metadata/owner behavior does not claim OS paint/font or product browser parity.
+
+The final paired pin (patch0046) selects Zed5f454172, whose shared input handoff
+preserves current capability and per-adoption accessible claim ownership. The
+native GPUI crates are byte-identical to the prior7e67ba4 source; only its browser
+adapter and patch metadata change. The new immutable consumer artifact remains
+the required browser/backend acceptance gate.

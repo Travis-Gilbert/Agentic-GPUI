@@ -41,3 +41,6 @@
 0041-atomic-native-input-presentation.patch
 0042-retained-command-and-modal-presentation.patch
 0043-retained-command-header-actions.patch
+0044-current-input-and-acknowledged-owners.patch
+0045-observed-native-button-source-frame.patch
+0046-current-input-handoff-gpui-pin.patch

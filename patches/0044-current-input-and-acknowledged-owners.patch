@@ -1,0 +1,1370 @@
+From 8aab4bff6140781dd976c04eae60ebdf0f5d54d4 Mon Sep 17 00:00:00 2001
+From: Travis Gilbert <1travisgilbert@gmail.com>
+Date: Thu, 15 Oct 2026 20:09:42 -0400
+Subject: [PATCH] fix(components): retain current input and acknowledged native
+ owners
+
+---
+ crates/base/src/input/base/mod.rs             |   3 +-
+ crates/base/src/input/base/state.rs           |   4 +
+ .../src/command/state/presentation.rs         |  21 +-
+ crates/component/src/dialog/alert_dialog.rs   |  26 +-
+ crates/component/src/dialog/dialog.rs         | 102 +++++-
+ crates/component/src/dialog/mod.rs            |   2 +-
+ crates/component/src/dialog/presentation.rs   | 305 ++++++++++++++++--
+ crates/component/src/icon.rs                  |   2 +-
+ crates/component/src/input/input.rs           |  63 +++-
+ crates/component/src/menu/popup_menu.rs       |  17 +-
+ .../src/menu/popup_menu/presentation.rs       | 119 ++++++-
+ crates/component/src/notification.rs          |  33 +-
+ .../src/notification/presentation.rs          |   3 +
+ crates/component/src/popover.rs               | 146 ++++++++-
+ 14 files changed, 770 insertions(+), 76 deletions(-)
+
+diff --git a/crates/base/src/input/base/mod.rs b/crates/base/src/input/base/mod.rs
+index 60550118..19f55264 100644
+--- a/crates/base/src/input/base/mod.rs
++++ b/crates/base/src/input/base/mod.rs
+@@ -171,7 +171,8 @@ impl InputBase {
+         self
+     }
+ 
+-    fn resolved_style(&self) -> StyleRefinement {
++    /// The exact style consumed by the native frame, after state refinements.
++    pub fn resolved_style(&self) -> StyleRefinement {
+         crate::state_style::resolve_style(
+             &self.style,
+             [
+diff --git a/crates/base/src/input/base/state.rs b/crates/base/src/input/base/state.rs
+index 0730366e..b25429f7 100644
+--- a/crates/base/src/input/base/state.rs
++++ b/crates/base/src/input/base/state.rs
+@@ -4235,6 +4235,10 @@ impl<M: InputModeKind> InputBaseState<M> {
+ }
+ 
+ impl<M: InputModeKind> EntityInputHandler for InputBaseState<M> {
++    fn accepts_text_input(&self, _window: &mut Window, _cx: &mut Context<Self>) -> bool {
++        self.is_editable()
++    }
++
+     fn text_input_configuration(
+         &mut self,
+         _window: &mut Window,
+diff --git a/crates/component/src/command/state/presentation.rs b/crates/component/src/command/state/presentation.rs
+index f2d3bde4..33834684 100644
+--- a/crates/component/src/command/state/presentation.rs
++++ b/crates/component/src/command/state/presentation.rs
+@@ -384,7 +384,26 @@ impl CommandState {
+         let requested =
+             (presenter.frame)(frame, window, cx) && complete && !presenter.retired.get();
+         if presenter.delegated.replace(requested) != requested {
+-            cx.notify();
++            let owner = cx.weak_entity();
++            window.on_next_frame(move |_, cx| {
++                let Some(owner) = owner.upgrade() else {
++                    return;
++                };
++                let current =
++                    owner
++                        .read(cx)
++                        .presentation
++                        .presenter
++                        .as_ref()
++                        .is_some_and(|current| {
++                            Rc::ptr_eq(&current.delegated, &presenter.delegated)
++                                && !current.retired.get()
++                                && current.delegated.get() == requested
++                        });
++                if current {
++                    owner.update(cx, |_, cx| cx.notify());
++                }
++            });
+         }
+     }
+ }
+diff --git a/crates/component/src/dialog/alert_dialog.rs b/crates/component/src/dialog/alert_dialog.rs
+index f953239b..41d284c4 100644
+--- a/crates/component/src/dialog/alert_dialog.rs
++++ b/crates/component/src/dialog/alert_dialog.rs
+@@ -7,7 +7,7 @@ use crate::{
+     StyledExt as _, WindowExt as _,
+     button::ButtonVariant,
+     dialog::{
+-        Dialog, DialogButtonProps, DialogDescription, DialogEntrance, DialogFooter, DialogHeader,
++        Dialog, DialogButtonProps, DialogDescription, DialogEntrance, DialogHeader,
+         DialogTitle,
+     },
+     h_flex, v_flex,
+@@ -417,23 +417,13 @@ impl AlertDialog {
+             .children(self.children)
+             .when(!has_footer, |this| {
+                 // Default footer for AlertDialog if user doesn't provide one, with OK and optional Cancel button
+-                this.footer(
+-                    DialogFooter::new()
+-                        .when(button_props.is_cancel_shown(), |this| {
+-                            this.child(button_props.render_cancel_observed(
+-                                window,
+-                                cx,
+-                                cancel_bounds,
+-                                delegated,
+-                            ))
+-                        })
+-                        .child(button_props.render_ok_observed(
+-                            window,
+-                            cx,
+-                            confirm_bounds,
+-                            delegated,
+-                        )),
+-                )
++                this.footer(button_props.render_footer(
++                    window,
++                    cx,
++                    confirm_bounds,
++                    cancel_bounds,
++                    delegated,
++                ))
+             });
+         result.platform_text = text;
+         result
+diff --git a/crates/component/src/dialog/dialog.rs b/crates/component/src/dialog/dialog.rs
+index 33406248..cbc9a727 100644
+--- a/crates/component/src/dialog/dialog.rs
++++ b/crates/component/src/dialog/dialog.rs
+@@ -174,6 +174,21 @@ impl DialogButtonProps {
+     ) -> AnyElement {
+         self.render_button(false, window, cx, bounds, delegated)
+     }
++    pub(crate) fn render_footer(
++        &self,
++        window: &mut Window,
++        cx: &mut App,
++        confirm: Option<Rc<std::cell::Cell<gpui::Bounds<Pixels>>>>,
++        cancel: Option<Rc<std::cell::Cell<gpui::Bounds<Pixels>>>>,
++        delegated: bool,
++    ) -> AnyElement {
++        super::DialogFooter::new()
++            .when(self.is_cancel_shown(), |footer| {
++                footer.child(self.render_cancel_observed(window, cx, cancel, delegated))
++            })
++            .child(self.render_ok_observed(window, cx, confirm, delegated))
++            .into_any_element()
++    }
+     fn render_button(
+         &self,
+         ok: bool,
+@@ -244,7 +259,7 @@ pub(crate) struct DialogProps {
+     width: Pixels,
+     max_width: Option<Pixels>,
+     margin_top: Option<Pixels>,
+-    close_button: bool,
++    pub(crate) close_button: bool,
+ 
+     overlay: bool,
+     pub(super) overlay_closable: bool,
+@@ -351,7 +366,9 @@ pub struct Dialog {
+         Option<Rc<std::cell::RefCell<super::presentation::DialogPresentationOwner>>>,
+     base: Option<BaseDialogRoot>,
+     pub(crate) style: StyleRefinement,
+-    children: Vec<AnyElement>,
++    pub(crate) children: Vec<AnyElement>,
++    pub(crate) platform_field: Option<super::presentation::DialogField>,
++    pub(crate) standard_footer: bool,
+     trigger: Option<AnyElement>,
+     title: Option<AnyElement>,
+     pub(crate) header: Option<AnyElement>,
+@@ -412,6 +429,8 @@ impl Dialog {
+             content_builder: None,
+             props: DialogProps::default(),
+             children: Vec::new(),
++            platform_field: None,
++            standard_footer: false,
+             layer_ix: 0,
+             selection_scope: TextSelectionScopeId::default(),
+             button_props: DialogButtonProps::default(),
+@@ -450,6 +469,55 @@ impl Dialog {
+         self
+     }
+ 
++    /// A source-owned title shared with the native and platform presenters.
++    pub fn title_text(mut self, title: impl Into<SharedString>) -> Self {
++        let title = title.into();
++        self.title = Some(title.clone().into_any_element());
++        self.platform_text.title = Some(title);
++        self
++    }
++    /// Whether this actual Root dialog has acknowledged a platform presenter.
++    /// Callers use it only to delegate their diagnostic semantic wrapper.
++    pub fn is_platform_delegated(&self) -> bool {
++        self.platform_owner
++            .as_ref()
++            .is_some_and(|owner| owner.borrow().delegated())
++    }
++    /// Place this actual InputState once, retaining a caller's native semantic
++    /// wrapper. It is an ordinary native Input even without a platform presenter.
++    pub fn text_field(
++        mut self,
++        id: impl Into<SharedString>,
++        label: impl Into<SharedString>,
++        input: gpui::Entity<crate::input::InputState>,
++        wrap: impl FnOnce(crate::input::Input) -> AnyElement,
++    ) -> Self {
++        let native = Rc::new(std::cell::RefCell::new(None));
++        let observed = native.clone();
++        let field = super::presentation::DialogField {
++            id: id.into(),
++            label: label.into(),
++            input: input.clone(),
++            native,
++        };
++        let native = crate::input::Input::new(&input)
++            .observe_frame(move |frame| *observed.borrow_mut() = Some(frame));
++        let native = if self.is_platform_delegated() {
++            native.role(crate::RoleOverride::Presentational)
++        } else {
++            native
++        };
++        self.children.push(wrap(native));
++        self.platform_field = Some(field);
++        self
++    }
++    /// Opt into the same native Confirm/Cancel footer used by AlertDialog.
++    /// Plain Dialog otherwise keeps its existing explicitly-composed footer.
++    pub fn standard_footer(mut self) -> Self {
++        self.standard_footer = true;
++        self
++    }
++
+     /// Sets the header of the dialog, rendered above the title and content.
+     pub(crate) fn header(mut self, header: impl IntoElement) -> Self {
+         self.header = Some(header.into_any_element());
+@@ -465,6 +533,7 @@ impl Dialog {
+     /// [`AlertDialog`](crate::dialog::AlertDialog), which builds a default
+     /// footer from `button_props` when no footer is set.
+     pub fn footer(mut self, footer: impl IntoElement) -> Self {
++        self.standard_footer = false;
+         self.footer = Some(footer.into_any_element());
+         self
+     }
+@@ -657,8 +726,32 @@ impl RenderOnce for Dialog {
+             return self.render_trigger(trigger, window, cx);
+         }
+ 
++        if self.standard_footer && self.footer.is_none() {
++            let delegated = self
++                .platform_owner
++                .as_ref()
++                .is_some_and(|owner| owner.borrow().delegated());
++            let confirm = self
++                .platform_owner
++                .as_ref()
++                .map(|owner| owner.borrow().confirm_bounds.clone());
++            let cancel = self
++                .platform_owner
++                .as_ref()
++                .map(|owner| owner.borrow().cancel_bounds.clone());
++            self.footer = Some(
++                self.button_props
++                    .render_footer(window, cx, confirm, cancel, delegated),
++            );
++        }
+         let platform_owner = self.platform_owner.clone();
+         let platform_animation_owner = platform_owner.clone();
++        let title_bounds = platform_owner
++            .as_ref()
++            .map(|owner| owner.borrow().title_bounds.clone());
++        let close_bounds = platform_owner
++            .as_ref()
++            .map(|owner| owner.borrow().close_bounds.clone());
+         let platform_frame = platform_owner.as_ref().and_then(|owner| {
+             super::presentation::DialogPresentationOwner::prepare(owner, &self, window, cx)
+         });
+@@ -820,7 +913,8 @@ impl RenderOnce for Dialog {
+                                                         DialogTitle::new()
+                                                             .pl(paddings.left)
+                                                             .pr(paddings.right)
+-                                                            .child(title),
++                                                            .child(title)
++                                                            .on_prepaint(move|bounds,_,_|{if let Some(cell)=title_bounds{cell.set(bounds);}}),
+                                                     )
+                                                 })
+                                                 .when_some(self.content_builder, |this, builder| {
+@@ -869,7 +963,7 @@ impl RenderOnce for Dialog {
+                                                         .small()
+                                                         .ghost()
+                                                         .icon(IconName::Close)
+-                                                })
++                                                }).on_prepaint(move|bounds,_,_|{if let Some(cell)=close_bounds{cell.set(bounds);}})
+                                         }))
+                                         .child(gpui::canvas(move|_,window,cx|{
+                                             if let (Some(owner),Some(frame))=(platform_owner,platform_frame){super::presentation::DialogPresentationOwner::publish(&owner,frame,window,cx);}
+diff --git a/crates/component/src/dialog/mod.rs b/crates/component/src/dialog/mod.rs
+index cfa8e7a8..3470437c 100644
+--- a/crates/component/src/dialog/mod.rs
++++ b/crates/component/src/dialog/mod.rs
+@@ -4,7 +4,7 @@ mod description;
+ mod dialog;
+ pub(crate) mod presentation;
+ pub use presentation::{
+-    DialogButtonPresentation, DialogInput, DialogInputRefusal, DialogPresentation, DialogPresenter,
++    DialogButtonPresentation, DialogFieldPresentation, DialogIconPresentation, DialogInput, DialogInputRefusal, DialogPresentation, DialogPresenter,
+     DialogPresenterFactory,
+ };
+ mod dispatch_anchor;
+diff --git a/crates/component/src/dialog/presentation.rs b/crates/component/src/dialog/presentation.rs
+index 8d85ac58..da4ee92f 100644
+--- a/crates/component/src/dialog/presentation.rs
++++ b/crates/component/src/dialog/presentation.rs
+@@ -3,8 +3,8 @@ use super::dialog::Dialog;
+ use crate::ActiveTheme as _;
+ use crate::root::WindowState;
+ use gpui::{
+-    App, Bounds, FocusHandle, Pixels, Refineable as _, SharedString, StyleRefinement, Styled as _,
+-    TextStyle, Window,
++    App, Bounds, FocusHandle, Focusable as _, Pixels, Refineable as _, SharedString,
++    StyleRefinement, Styled as _, TextStyle, Window,
+ };
+ use std::{
+     cell::{Cell, RefCell},
+@@ -90,6 +90,28 @@ pub struct DialogButtonPresentation {
+     pub bounds: Bounds<Pixels>,
+ }
+ #[derive(Clone)]
++pub struct DialogIconPresentation {
++    pub svg: std::sync::Arc<[u8]>,
++    pub style: StyleRefinement,
++}
++/// A real single-line input inside a Root-owned Dialog. The frame and
++/// material are observed from that same native Input renderer.
++#[derive(Clone)]
++pub struct DialogFieldPresentation {
++    pub id: SharedString,
++    pub label: SharedString,
++    pub input: gpui::Entity<crate::input::InputState>,
++    pub bounds: Bounds<Pixels>,
++    pub material: StyleRefinement,
++}
++#[derive(Clone)]
++pub(crate) struct DialogField {
++    pub id: SharedString,
++    pub label: SharedString,
++    pub input: gpui::Entity<crate::input::InputState>,
++    pub native: Rc<RefCell<Option<crate::input::InputFramePresentation>>>,
++}
++#[derive(Clone)]
+ pub struct DialogPresentation {
+     owner: Weak<RefCell<DialogPresentationOwner>>,
+     pub id: u64,
+@@ -111,6 +133,10 @@ pub struct DialogPresentation {
+     pub description_style: TextStyle,
+     pub overlay_color: gpui::Hsla,
+     pub keyboard: bool,
++    pub overlay_closable: bool,
++    pub close_bounds: Option<Bounds<Pixels>>,
++    pub close_icon: Option<DialogIconPresentation>,
++    pub fields: Vec<DialogFieldPresentation>,
+     pub alert: bool,
+     focus: FocusHandle,
+     complete: bool,
+@@ -142,12 +168,7 @@ impl DialogPresentation {
+                 .is_some_and(DialogPresenter::is_platform_delegated)
+         })
+     }
+-    pub fn deliver(
+-        &self,
+-        input: DialogInput,
+-        window: &mut Window,
+-        cx: &mut App,
+-    ) -> Result<(), DialogInputRefusal> {
++    fn validate_current(&self, window: &Window, cx: &App) -> Result<(), DialogInputRefusal> {
+         let owner = self
+             .owner
+             .upgrade()
+@@ -174,12 +195,42 @@ impl DialogPresentation {
+             {
+                 return Err(DialogInputRefusal::NotPresented);
+             }
+-            if matches!(input, DialogInput::Outside)
++        }
++        Ok(())
++    }
++    /// Focus only a field belonging to this actual topmost, current dialog.
++    /// The Root and presentation leases are released before changing focus.
++    pub fn focus_field(
++        &self,
++        id: &str,
++        window: &mut Window,
++        cx: &mut App,
++    ) -> Result<(), DialogInputRefusal> {
++        self.validate_current(window, cx)?;
++        let field = self
++            .fields
++            .iter()
++            .find(|field| field.id.as_ref() == id)
++            .ok_or(DialogInputRefusal::TargetAbsent)?;
++        let focus = field.input.read(cx).focus_handle(cx);
++        window.focus(&focus, cx);
++        Ok(())
++    }
++    pub fn deliver(
++        &self,
++        input: DialogInput,
++        window: &mut Window,
++        cx: &mut App,
++    ) -> Result<(), DialogInputRefusal> {
++        self.validate_current(window, cx)?;
++        {
++            if matches!(input, DialogInput::Outside) && !self.overlay_closable
+                 || matches!(input, DialogInput::Escape) && !self.keyboard
+             {
+                 return Err(DialogInputRefusal::NotAllowed);
+             }
+-            if input == DialogInput::Cancel && self.cancel.is_none() {
++            if input == DialogInput::Cancel && self.cancel.is_none() && self.close_bounds.is_none()
++            {
+                 return Err(DialogInputRefusal::TargetAbsent);
+             }
+         }
+@@ -192,11 +243,9 @@ impl DialogPresentation {
+                 window,
+                 cx,
+             ),
+-            DialogInput::Cancel | DialogInput::Escape => {
+-                self.focus
+-                    .dispatch_action(&gpui_base::actions::Cancel, window, cx)
+-            }
+-            DialogInput::Outside => unreachable!(),
++            DialogInput::Cancel | DialogInput::Escape | DialogInput::Outside => self
++                .focus
++                .dispatch_action(&gpui_base::actions::Cancel, window, cx),
+         }
+         Ok(())
+     }
+@@ -215,6 +264,9 @@ struct Fingerprint {
+     cancel: Option<SharedString>,
+     danger: bool,
+     keyboard: bool,
++    overlay_closable: bool,
++    field: Option<(SharedString, SharedString, u64)>,
++    standard_footer: bool,
+ }
+ pub(crate) struct DialogPresentationOwner {
+     id: u64,
+@@ -229,6 +281,8 @@ pub(crate) struct DialogPresentationOwner {
+     pub description_bounds: Rc<Cell<Bounds<Pixels>>>,
+     pub confirm_bounds: Rc<Cell<Bounds<Pixels>>>,
+     pub cancel_bounds: Rc<Cell<Bounds<Pixels>>>,
++    pub close_bounds: Rc<Cell<Bounds<Pixels>>>,
++    field: Option<DialogField>,
+ }
+ impl Default for DialogPresentationOwner {
+     fn default() -> Self {
+@@ -246,6 +300,8 @@ impl Default for DialogPresentationOwner {
+             description_bounds: Rc::default(),
+             confirm_bounds: Rc::default(),
+             cancel_bounds: Rc::default(),
++            close_bounds: Rc::default(),
++            field: None,
+         }
+     }
+ }
+@@ -289,7 +345,7 @@ impl DialogPresentationOwner {
+         owner: &Rc<RefCell<Self>>,
+         dialog: &Dialog,
+         window: &Window,
+-        cx: &App,
++        cx: &mut App,
+     ) -> Option<DialogPresentation> {
+         let mut state = owner.borrow_mut();
+         state.install(dialog.platform_presenter.clone());
+@@ -308,15 +364,45 @@ impl DialogPresentationOwner {
+             cancel: cancel.clone(),
+             danger,
+             keyboard: dialog.props.keyboard,
++            overlay_closable: dialog.props.overlay_closable,
++            field: dialog.platform_field.as_ref().map(|field| {
++                (
++                    field.id.clone(),
++                    field.label.clone(),
++                    field.input.entity_id().as_u64(),
++                )
++            }),
++            standard_footer: dialog.standard_footer,
+         };
+         if state.fingerprint.as_ref() != Some(&fingerprint) {
+             state.revision = state.revision.saturating_add(1);
+             state.fingerprint = Some(fingerprint);
+         }
+         state.presenter.as_ref()?;
+-        let complete = dialog.platform_text.complete
++        state.field = dialog.platform_field.clone();
++        let field = dialog.platform_field.as_ref().and_then(|field| {
++            field
++                .native
++                .borrow()
++                .clone()
++                .map(|native| DialogFieldPresentation {
++                    id: field.id.clone(),
++                    label: field.label.clone(),
++                    input: field.input.clone(),
++                    bounds: native.bounds,
++                    material: native.material,
++                })
++        });
++        let form_complete = dialog.platform_field.is_some()
++            && dialog.standard_footer
++            && dialog.platform_text.title.is_some()
++            && dialog.children.len() == 1
++            && dialog.content_builder.is_none()
++            && dialog.header.is_none();
++        let complete = (dialog.platform_text.complete
+             && dialog.platform_text.alert
+-            && !dialog.props.overlay_closable;
++            && !dialog.props.overlay_closable)
++            || form_complete;
+         let mut native_material = gpui::div()
+             .bg(cx.theme().tokens.background)
+             .border_1()
+@@ -330,6 +416,27 @@ impl DialogPresentationOwner {
+         title_style.refine(&super::DialogTitle::presentation_style().text);
+         let mut description_style = inherited;
+         description_style.refine(&super::DialogDescription::presentation_style(cx).text);
++        let close_icon = if dialog.props.close_button {
++            use crate::{IconNamed as _, Sizable as _};
++            let color = crate::button::ButtonVariant::Ghost
++                .presentation_styles(false, cx)
++                .normal
++                .foreground;
++            let mut svg = crate::Icon::new(crate::IconName::Close).small().into_svg(
++                window.text_style().font_size.to_pixels(window.rem_size()),
++                color,
++            );
++            cx.asset_source()
++                .load(crate::IconName::Close.path().as_ref())
++                .ok()
++                .flatten()
++                .map(|source| DialogIconPresentation {
++                    svg: std::sync::Arc::from(source.as_ref()),
++                    style: svg.style().clone(),
++                })
++        } else {
++            None
++        };
+         Some(DialogPresentation {
+             owner: Rc::downgrade(owner),
+             id: state.id,
+@@ -364,6 +471,10 @@ impl DialogPresentationOwner {
+             description_style,
+             overlay_color: super::dialog::overlay_color(dialog.props.overlay_visible, cx),
+             keyboard: dialog.props.keyboard,
++            overlay_closable: dialog.props.overlay_closable,
++            close_bounds: dialog.props.close_button.then(|| state.close_bounds.get()),
++            close_icon,
++            fields: field.into_iter().collect(),
+             alert: dialog.platform_text.alert,
+             focus: dialog.focus_handle.clone(),
+             complete,
+@@ -382,6 +493,29 @@ impl DialogPresentationOwner {
+             frame.shadows = super::dialog::dialog_shadow(frame.opacity);
+             frame.title_bounds = state.title_bounds.get();
+             frame.description_bounds = state.description_bounds.get();
++            if frame.close_bounds.is_some() {
++                frame.close_bounds = Some(state.close_bounds.get());
++            }
++            if let Some(field) = &state.field {
++                frame.fields = field
++                    .native
++                    .borrow()
++                    .clone()
++                    .map(|native| DialogFieldPresentation {
++                        id: field.id.clone(),
++                        label: field.label.clone(),
++                        input: field.input.clone(),
++                        bounds: native.bounds,
++                        material: native.material,
++                    })
++                    .into_iter()
++                    .collect();
++                frame.complete &= frame.fields.iter().any(|field| {
++                    field.bounds.size.width > gpui::px(0.)
++                        && field.bounds.size.height > gpui::px(0.)
++                });
++            }
++
+             frame.confirm.bounds = state.confirm_bounds.get();
+             if let Some(cancel) = &mut frame.cancel {
+                 cancel.bounds = state.cancel_bounds.get();
+@@ -394,9 +528,25 @@ impl DialogPresentationOwner {
+                 && frame.confirm.bounds.size.width > gpui::px(0.);
+             let requested = (presenter.frame)(frame, window, cx) && complete;
+             if presenter.delegated.replace(requested) != requested {
+-                // Prepaint cannot refresh the window synchronously. The real
+-                // Root owner must render its new delegation/focus-trap policy.
+-                let _ = WindowState::try_update(window, cx, |_, _, cx| cx.notify());
++                // The native Root must repaint its changed policy outside prepaint.
++                let owner = Rc::downgrade(owner);
++                window.on_next_frame(move |window, cx| {
++                    let Some(owner) = owner.upgrade() else {
++                        return;
++                    };
++                    let current = owner.borrow().presenter.as_ref().is_some_and(|current| {
++                        Rc::ptr_eq(&current.delegated, &presenter.delegated)
++                            && current.delegated.get() == requested
++                    });
++                    let mounted = WindowState::try_read(window, cx).is_some_and(|root| {
++                        root.active_dialogs
++                            .iter()
++                            .any(|dialog| Rc::ptr_eq(&dialog.presentation, &owner))
++                    });
++                    if current && mounted {
++                        let _ = WindowState::try_update(window, cx, |_, _, cx| cx.notify());
++                    }
++                });
+             }
+         }
+     }
+@@ -406,7 +556,7 @@ impl DialogPresentationOwner {
+ mod tests {
+     use super::*;
+     use crate::{WindowExt as _, dialog::DialogButtonProps};
+-    use gpui::{TestAppContext, px, size};
++    use gpui::{AppContext as _, TestAppContext, px, size};
+     fn draw(cx: &mut gpui::VisualTestContext) {
+         cx.run_until_parked();
+         cx.update(|window, cx| window.draw(cx).clear(cx));
+@@ -528,6 +678,117 @@ mod tests {
+             Err(DialogInputRefusal::TargetAbsent)
+         );
+     }
++    #[gpui::test]
++    fn platform_form_retains_the_actual_input_and_native_submit_refusals(cx: &mut TestAppContext) {
++        use gpui::IntoElement as _;
++        let cx = super::super::dialog::tests::window(cx, size(px(600.), px(500.)));
++        let frames: Rc<RefCell<Vec<DialogPresentation>>> = Rc::default();
++        let submitted: Rc<RefCell<Vec<String>>> = Rc::default();
++        let allow = Rc::new(Cell::new(false));
++        let factory: DialogPresenterFactory = Rc::new({
++            let frames = frames.clone();
++            move |_| {
++                DialogPresenter::new(
++                    {
++                        let frames = frames.clone();
++                        move |frame, _, _| {
++                            frames.borrow_mut().push(frame);
++                            true
++                        }
++                    },
++                    |_| {},
++                )
++            }
++        });
++        let input = cx.update(|window, cx| {
++            cx.new(|cx| crate::input::InputState::new(window, cx).default_value("Original"))
++        });
++        cx.update(|window, cx| {
++            let input = input.clone();
++            let submitted = submitted.clone();
++            let allow = allow.clone();
++            window.open_dialog(cx, move |dialog, _, _| {
++                let confirmed = input.clone();
++                let submitted = submitted.clone();
++                let allow = allow.clone();
++                dialog
++                    .title_text("Rename conversation")
++                    .text_field("chat.rename.title", "Title", input.clone(), |native| {
++                        native.into_any_element()
++                    })
++                    .standard_footer()
++                    .button_props(
++                        DialogButtonProps::default()
++                            .ok_text("Rename")
++                            .show_cancel(true),
++                    )
++                    .presenter("chat.more", factory.clone())
++                    .on_ok(move |_, _, cx| {
++                        submitted
++                            .borrow_mut()
++                            .push(confirmed.read(cx).value().to_string());
++                        allow.get()
++                    })
++            });
++        });
++        draw(cx);
++        draw(cx);
++        let frame = frames.borrow().last().unwrap().clone();
++        assert!(frame.is_complete());
++        assert!(frame.is_platform_delegated());
++        assert!(!frame.alert);
++        assert_eq!(frame.fields.len(), 1);
++        let field = &frame.fields[0];
++        assert_eq!(field.id.as_ref(), "chat.rename.title");
++        assert_eq!(field.input.entity_id(), input.entity_id());
++        assert!(field.bounds.size.width > px(0.));
++        assert!(field.bounds.size.height > px(0.));
++        assert!(
++            field.material.background.is_some(),
++            "material comes from the real Input frame"
++        );
++        assert!(frame.confirm.bounds.size.width > px(0.));
++        assert!(frame.cancel.as_ref().unwrap().bounds.size.width > px(0.));
++        cx.update(|window, cx| frame.focus_field("chat.rename.title", window, cx).unwrap());
++        cx.simulate_keystrokes("cmd-a");
++        cx.simulate_input("Revised");
++        assert_eq!(
++            cx.update(|_, cx| input.read(cx).value().to_string()),
++            "Revised"
++        );
++        cx.simulate_keystrokes("cmd-z");
++        assert_ne!(
++            cx.update(|_, cx| input.read(cx).value().to_string()),
++            "Revised",
++            "the actual input's undo changes its canonical value"
++        );
++        cx.simulate_keystrokes("cmd-shift-z");
++        assert_eq!(
++            cx.update(|_, cx| input.read(cx).value().to_string()),
++            "Revised"
++        );
++        draw(cx);
++        let current = frames.borrow().last().unwrap().clone();
++        cx.update(|window, cx| current.deliver(DialogInput::Confirm, window, cx).unwrap());
++        assert_eq!(submitted.borrow().as_slice(), &["Revised"]);
++        assert!(
++            cx.update(|window, cx| window.has_active_dialog(cx)),
++            "original callback refuses close"
++        );
++        allow.set(true);
++        cx.update(|window, cx| current.deliver(DialogInput::Confirm, window, cx).unwrap());
++        assert_eq!(submitted.borrow().as_slice(), &["Revised", "Revised"]);
++        assert!(!cx.update(|window, cx| window.has_active_dialog(cx)));
++        assert_eq!(
++            cx.update(|window, cx| current.deliver(DialogInput::Confirm, window, cx)),
++            Err(DialogInputRefusal::TargetAbsent)
++        );
++        assert_eq!(
++            cx.update(|window, cx| current.focus_field("chat.rename.title", window, cx)),
++            Err(DialogInputRefusal::TargetAbsent)
++        );
++    }
++
+     #[gpui::test]
+     fn platform_focus_restore_runs_after_the_actual_root_releases_its_lease(
+         cx: &mut TestAppContext,
+diff --git a/crates/component/src/icon.rs b/crates/component/src/icon.rs
+index 3ff75b2e..2747b78f 100644
+--- a/crates/component/src/icon.rs
++++ b/crates/component/src/icon.rs
+@@ -171,7 +171,7 @@ impl Icon {
+         self
+     }
+ 
+-    fn into_svg(self, text_size: Pixels, fallback_color: Hsla) -> Svg {
++    pub(crate) fn into_svg(self, text_size: Pixels, fallback_color: Hsla) -> Svg {
+         let text_color = self.text_color.unwrap_or(fallback_color);
+         let has_base_size = self.style.size.width.is_some() || self.style.size.height.is_some();
+ 
+diff --git a/crates/component/src/input/input.rs b/crates/component/src/input/input.rs
+index 93a91083..2c02b08b 100644
+--- a/crates/component/src/input/input.rs
++++ b/crates/component/src/input/input.rs
+@@ -106,9 +106,17 @@ pub(crate) fn input_style(disabled: bool, cx: &App) -> (Hsla, Hsla) {
+     }
+ }
+ 
++/// Native frame facts captured after the same Base style-state resolver.
++#[derive(Clone)]
++pub struct InputFramePresentation {
++    pub bounds: gpui::Bounds<gpui::Pixels>,
++    pub material: StyleRefinement,
++}
++type InputFrameObserver = Rc<dyn Fn(InputFramePresentation)>;
+ /// A text input element bind to an [`InputState`].
+ #[derive(IntoElement)]
+ pub struct Input {
++    frame_observer: Option<InputFrameObserver>,
+     token_renderer: Option<gpui_base::input::InlineTokenRenderer>,
+     token_click_listener: Option<gpui_base::input::InlineTokenClickListener>,
+     token_hover_listener: Option<gpui_base::input::InlineTokenHoverListener>,
+@@ -203,6 +211,10 @@ impl Input {
+         self
+     }
+ 
++    pub fn observe_frame(mut self, observer: impl Fn(InputFramePresentation) + 'static) -> Self {
++        self.frame_observer = Some(Rc::new(observer));
++        self
++    }
+     /// Sets the GPUI identity of the input frame. By default it uses the state entity ID.
+     pub fn id(mut self, id: impl Into<ElementId>) -> Self {
+         self.id = Some(id.into());
+@@ -224,6 +236,7 @@ impl Input {
+ 
+     fn with_state(state: TextInputState) -> Self {
+         Self {
++            frame_observer: None,
+             id: None,
+             state,
+             size: Size::default(),
+@@ -738,7 +751,8 @@ impl RenderOnce for Input {
+         let id = self
+             .id
+             .unwrap_or_else(|| ("input", state.entity_id()).into());
+-        BaseInput::new(id)
++        let frame_observer = self.frame_observer;
++        let frame = BaseInput::new(id)
+             .focused(focused)
+             .disabled(disabled)
+             .track_focus(&frame_focus_handle)
+@@ -852,8 +866,17 @@ impl RenderOnce for Input {
+                         }
+                     }
+                 })
++            });
++        let material = frame_observer.as_ref().map(|_| frame.resolved_style());
++        let frame = if let (Some(observer), Some(material)) = (frame_observer, material) {
++            use crate::ElementExt as _;
++            frame.on_prepaint(move |bounds, _, _| {
++                observer(InputFramePresentation { bounds, material })
+             })
+-            .render(window, cx)
++        } else {
++            frame
++        };
++        frame.render(window, cx)
+     }
+ }
+ 
+@@ -1154,6 +1177,42 @@ mod tests {
+         assert_eq!(*captured.lock().unwrap(), Some((None, true)));
+     }
+ 
++    #[gpui::test]
++    fn platform_text_capability_tracks_actual_readonly_and_disabled_state(
++        cx: &mut gpui::TestAppContext,
++    ) {
++        use gpui::{AppContext as _, EntityInputHandler as _, Render};
++        struct Probe(Entity<crate::input::EditorState>);
++        impl Render for Probe {
++            fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
++                div().child(crate::input::Editor::new(&self.0))
++            }
++        }
++        cx.update(crate::init);
++        let (probe, cx) = cx.add_window_view(|window, cx| {
++            Probe(cx.new(|cx| crate::input::EditorState::new(window, cx)))
++        });
++        let input = probe.read_with(cx, |probe, _| probe.0.clone());
++        cx.update(|window, cx| {
++            input.update(cx, |state, cx| {
++                assert!(state.accepts_text_input(window, cx));
++                state.set_readonly(true, cx);
++                assert!(!state.accepts_text_input(window, cx));
++                state.replace_text_in_range(None, "refused", window, cx);
++                assert!(state.value().is_empty());
++                state.set_readonly(false, cx);
++                state.set_disabled(true, cx);
++                assert!(!state.accepts_text_input(window, cx));
++                state.replace_text_in_range(None, "refused", window, cx);
++                assert!(state.value().is_empty());
++                state.set_disabled(false, cx);
++                assert!(state.accepts_text_input(window, cx));
++                state.replace_text_in_range(None, "accepted", window, cx);
++                assert_eq!(state.value(), "accepted");
++            });
++        });
++    }
++
+     #[gpui::test]
+     fn accessibility_set_value_preserves_exact_editor_text(cx: &mut gpui::TestAppContext) {
+         use gpui::{AppContext as _, Render};
+diff --git a/crates/component/src/menu/popup_menu.rs b/crates/component/src/menu/popup_menu.rs
+index 639db8af..00fe4083 100644
+--- a/crates/component/src/menu/popup_menu.rs
++++ b/crates/component/src/menu/popup_menu.rs
+@@ -1622,7 +1622,22 @@ impl Render for PopupMenu {
+                             let complete = frame.is_complete();
+                             let requested = (presenter.frame)(frame, window, cx) && complete;
+                             if presenter.delegated.replace(requested) != requested {
+-                                view.update(cx, |_, cx| cx.notify());
++                                let owner = view.downgrade();
++                                window.on_next_frame(move |_, cx| {
++                                    let Some(owner) = owner.upgrade() else {
++                                        return;
++                                    };
++                                    let current =
++                                        owner.read(cx).presentation.presenter.as_ref().is_some_and(
++                                            |current| {
++                                                Rc::ptr_eq(&current.delegated, &presenter.delegated)
++                                                    && current.delegated.get() == requested
++                                            },
++                                        );
++                                    if current {
++                                        owner.update(cx, |_, cx| cx.notify());
++                                    }
++                                });
+                             }
+                         }
+                     }),
+diff --git a/crates/component/src/menu/popup_menu/presentation.rs b/crates/component/src/menu/popup_menu/presentation.rs
+index 5e0762d1..9ede8138 100644
+--- a/crates/component/src/menu/popup_menu/presentation.rs
++++ b/crates/component/src/menu/popup_menu/presentation.rs
+@@ -136,7 +136,9 @@ pub struct PopupMenuPresentation {
+ }
+ impl PopupMenuPresentation {
+     /// The actual menu dispatch node, including after its owner is retired.
+-    pub fn focus(&self) -> gpui::WeakFocusHandle { self.focus.clone() }
++    pub fn focus(&self) -> gpui::WeakFocusHandle {
++        self.focus.clone()
++    }
+     pub fn entity(&self) -> WeakEntity<PopupMenu> {
+         self.entity.clone()
+     }
+@@ -397,6 +399,68 @@ impl PopupMenu {
+ mod tests {
+     use super::*;
+ 
++    #[gpui::test]
++    fn external_ack_needs_a_settling_native_frame_to_publish_delegation(
++        cx: &mut gpui::TestAppContext,
++    ) {
++        cx.update(crate::init);
++        let observed = Rc::new(Cell::new(false));
++        let frames: Rc<RefCell<Vec<PopupMenuPresentation>>> = Rc::default();
++        let (menu, cx) = cx.add_window_view({
++            let observed = observed.clone();
++            let frames = frames.clone();
++            move |_, cx| {
++                PopupMenu::new(cx)
++                    .item(PopupMenuItem::new("Original action"))
++                    .presenter(PopupMenuPresenter::new(
++                        move |frame, _, _| {
++                            frames.borrow_mut().push(frame);
++                            observed.get()
++                        },
++                        |_| {},
++                    ))
++            }
++        });
++        cx.run_until_parked();
++        assert!(frames.borrow().last().unwrap().is_complete());
++        assert!(!frames.borrow().last().unwrap().is_platform_delegated());
++        observed.set(true);
++        let owner = menu.downgrade();
++        cx.update(|window, _| {
++            window.on_next_frame(move |window, cx| {
++                let Some(owner) = owner.upgrade() else {
++                    return;
++                };
++                owner.update(cx, |_, cx| cx.notify());
++                window.refresh();
++            });
++        });
++        cx.update(|window, cx| {
++            assert_eq!(window.simulate_next_frame(cx), 1);
++            window.draw(cx).clear(cx);
++        });
++        assert!(menu.read_with(cx, |menu, _| menu.is_platform_delegated()));
++        assert!(
++            !frames.borrow().last().unwrap().is_platform_delegated(),
++            "the first acknowledgement callback precedes the renderer's delegation write"
++        );
++        cx.update(|window, cx| {
++            assert_eq!(window.simulate_next_frame(cx), 1);
++            window.draw(cx).clear(cx);
++        });
++        assert!(
++            frames.borrow().last().unwrap().is_platform_delegated(),
++            "the bounded settling frame publishes the actual renderer's accepted state"
++        );
++        cx.update(|window, cx| {
++            assert_eq!(
++                window.simulate_next_frame(cx),
++                0,
++                "acknowledgement does not create a perpetual frame source"
++            );
++        });
++    }
++
+     #[gpui::test]
+     fn presented_menu_rejects_stale_and_disabled_rows_before_the_existing_handler(
+         cx: &mut gpui::TestAppContext,
+@@ -573,24 +637,49 @@ mod tests {
+ #[cfg(test)]
+ mod focus_restore_tests {
+     use super::*;
+-    fn verify_native_close_decision(cx:&mut gpui::TestAppContext,moved:bool){
+-        cx.update(|cx|cx.set_global(crate::Theme::default()));
+-        let reported=Rc::new(Cell::new(None));
+-        let presenter=PopupMenuPresenter::new(|_,_,_|true,|_|{}).on_focus_close({let reported=reported.clone();move |id,moved|reported.set(Some((id,moved)))});
+-        let menu_presenter=presenter.clone();
+-        let(menu,cx)=cx.add_window_view(move |_,cx|PopupMenu::new(cx).presenter(menu_presenter));
+-        let identity=menu.entity_id().as_u64();
++    fn verify_native_close_decision(cx: &mut gpui::TestAppContext, moved: bool) {
++        cx.update(|cx| cx.set_global(crate::Theme::default()));
++        let reported = Rc::new(Cell::new(None));
++        let presenter = PopupMenuPresenter::new(|_, _, _| true, |_| {}).on_focus_close({
++            let reported = reported.clone();
++            move |id, moved| reported.set(Some((id, moved)))
++        });
++        let menu_presenter = presenter.clone();
++        let (menu, cx) =
++            cx.add_window_view(move |_, cx| PopupMenu::new(cx).presenter(menu_presenter));
++        let identity = menu.entity_id().as_u64();
+         presenter.delegated.set(true);
+-        let other_focus=cx.update(|window,cx|{
+-            let focus=menu.read(cx).focus_handle.clone();focus.focus(window,cx);
+-            if moved{let other=cx.focus_handle();other.focus(window,cx);Some(other)}else{None}
++        let other_focus = cx.update(|window, cx| {
++            let focus = menu.read(cx).focus_handle.clone();
++            focus.focus(window, cx);
++            if moved {
++                let other = cx.focus_handle();
++                other.focus(window, cx);
++                Some(other)
++            } else {
++                None
++            }
+         });
+-        menu.update_in(cx,|menu,window,cx|{menu.presented_input(menu.presentation.revision,PopupMenuInput::Dismiss,window,cx).unwrap();});
+-        assert_eq!(reported.get(),Some((identity,moved)));
++        menu.update_in(cx, |menu, window, cx| {
++            menu.presented_input(
++                menu.presentation.revision,
++                PopupMenuInput::Dismiss,
++                window,
++                cx,
++            )
++            .unwrap();
++        });
++        assert_eq!(reported.get(), Some((identity, moved)));
+         drop(other_focus);
+     }
+     #[gpui::test]
+-    fn escape_reports_the_existing_owner_focus_restore_decision(cx:&mut gpui::TestAppContext){verify_native_close_decision(cx,false);}
++    fn escape_reports_the_existing_owner_focus_restore_decision(cx: &mut gpui::TestAppContext) {
++        verify_native_close_decision(cx, false);
++    }
+     #[gpui::test]
+-    fn action_moved_focus_reports_the_existing_native_refusal_to_restore(cx:&mut gpui::TestAppContext){verify_native_close_decision(cx,true);}
++    fn action_moved_focus_reports_the_existing_native_refusal_to_restore(
++        cx: &mut gpui::TestAppContext,
++    ) {
++        verify_native_close_decision(cx, true);
++    }
+ }
+diff --git a/crates/component/src/notification.rs b/crates/component/src/notification.rs
+index 6a134f4b..29088266 100644
+--- a/crates/component/src/notification.rs
++++ b/crates/component/src/notification.rs
+@@ -421,7 +421,7 @@ impl Render for Notification {
+         self.capture_action(action.as_ref());
+         let action_bounds = self.presentation.action_bounds.clone();
+         let dismiss_bounds = self.presentation.dismiss_bounds.clone();
+-        let copy_bounds=self.presentation.copy_bounds.clone();
++        let copy_bounds = self.presentation.copy_bounds.clone();
+         let delegated = self
+             .presentation
+             .presenter
+@@ -436,7 +436,7 @@ impl Render for Notification {
+         let has_icon = icon.is_some();
+         let placement = self.placement.unwrap_or(cx.theme().notification.placement);
+ 
+-        let animation_opacity=self.presentation.opacity.clone();
++        let animation_opacity = self.presentation.opacity.clone();
+         let owner = cx.entity().downgrade();
+         let icon_svg = icon.as_ref().and_then(|icon| match icon.source_ref() {
+             crate::icon::IconSource::Data(bytes) => Some(bytes.clone()),
+@@ -464,7 +464,22 @@ impl Render for Notification {
+                         let complete = frame.is_complete();
+                         let requested = (presenter.frame)(frame, window, cx) && complete;
+                         if presenter.delegated.replace(requested) != requested {
+-                            owner.update(cx, |_, cx| cx.notify());
++                            let owner = owner.downgrade();
++                            window.on_next_frame(move |_, cx| {
++                                let Some(owner) = owner.upgrade() else {
++                                    return;
++                                };
++                                let current =
++                                    owner.read(cx).presentation.presenter.as_ref().is_some_and(
++                                        |current| {
++                                            Rc::ptr_eq(&current.delegated, &presenter.delegated)
++                                                && current.delegated.get() == requested
++                                        },
++                                    );
++                                if current {
++                                    owner.update(cx, |_, cx| cx.notify());
++                                }
++                            });
+                         }
+                     }
+                 }
+@@ -489,7 +504,7 @@ impl Render for Notification {
+             })
+             .child(
+                 v_flex()
+-                    .on_prepaint(move |bounds,_,_|copy_bounds.set(bounds))
++                    .on_prepaint(move |bounds, _, _| copy_bounds.set(bounds))
+                     .flex_1()
+                     .overflow_hidden()
+                     .when(has_icon, |this| this.pl_6())
+@@ -1107,15 +1122,19 @@ impl Render for NotificationList {
+                     self.stacks.len() - 1
+                 });
+             let stack = &self.stacks[stack_ix].1;
+-            stack.state.set_platform_interaction(items.iter().any(|(_,note)|note.read(cx).presentation.hovered||note.read(cx).presentation.focused));
++            stack
++                .state
++                .set_platform_interaction(items.iter().any(|(_, note)| {
++                    note.read(cx).presentation.hovered || note.read(cx).presentation.focused
++                }));
+ 
+             items
+                 .into_iter()
+                 .fold(
+                     ToastStack::new(stack_id, stack.state.clone()),
+                     |stack, (id, item)| {
+-                        let presentation=item.read(cx).presentation.stack.clone();
+-                        stack.item_with_presentation(format!("{id:?}"),item,presentation)
++                        let presentation = item.read(cx).presentation.stack.clone();
++                        stack.item_with_presentation(format!("{id:?}"), item, presentation)
+                     },
+                 )
+                 .placement(anchor)
+diff --git a/crates/component/src/notification/presentation.rs b/crates/component/src/notification/presentation.rs
+index d7896a24..a6a7a3b2 100644
+--- a/crates/component/src/notification/presentation.rs
++++ b/crates/component/src/notification/presentation.rs
+@@ -53,6 +53,8 @@ pub struct NotificationPresentation {
+     pub type_: Option<NotificationType>,
+     pub phase: ToastTransitionStatus,
+     pub opacity: f32,
++    /// The same current animation helper used by the native Toast renderer.
++    pub shadows: Vec<gpui::BoxShadow>,
+     pub visible: bool,
+     pub action: Option<NotificationActionPresentation>,
+     pub clickable: bool,
+@@ -165,6 +167,7 @@ impl Notification {
+             type_: self.type_,
+             phase: self.transition_status,
+             opacity: self.presentation.opacity.get() * self.presentation.stack.opacity(),
++            shadows: crate::styled::toast_shadow(self.presentation.opacity.get().powi(3)),
+             visible: self.presentation.stack.is_visible(),
+             action: self.presentation.action.clone().map(|mut action| {
+                 action.bounds = self.presentation.action_bounds.get();
+diff --git a/crates/component/src/popover.rs b/crates/component/src/popover.rs
+index 7ec97de7..49755f73 100644
+--- a/crates/component/src/popover.rs
++++ b/crates/component/src/popover.rs
+@@ -13,9 +13,9 @@ use crate::{
+     styled::{popover_ring, popover_shadow},
+     v_flex,
+ };
+-use gpui_base::Placement;
+ use gpui_base::Popover as BasePopover;
+ pub use gpui_base::PopoverState;
++use gpui_base::{ElementExt as _, Placement};
+ 
+ pub(crate) fn init(_: &mut App) {}
+ 
+@@ -103,6 +103,18 @@ pub(crate) fn dropdown_popup(
+     ))
+ }
+ 
++/// Facts observed from the actual retained Popover's native content surface.
++/// The weak controller remains the authority for open, dismissal and focus.
++#[derive(Clone)]
++pub struct PopoverContentFrame {
++    pub state: gpui::WeakEntity<PopoverState>,
++    pub bounds: Bounds<Pixels>,
++    pub clip: Bounds<Pixels>,
++    pub material: StyleRefinement,
++    pub text_style: gpui::TextStyle,
++}
++type ContentObserver = Rc<dyn Fn(PopoverContentFrame, &mut Window, &mut App)>;
++
+ /// A popover element that can be triggered by a button or any other element.
+ #[derive(IntoElement)]
+ pub struct Popover {
+@@ -129,6 +141,7 @@ pub struct Popover {
+     appearance: bool,
+     overlay_closable: bool,
+     platform_delegation: Option<Rc<dyn Fn(&App) -> bool>>,
++    content_observer: Option<ContentObserver>,
+     state_observer: Option<Rc<dyn Fn(gpui::WeakEntity<PopoverState>, &mut Window, &mut App)>>,
+     on_open_change: Option<Rc<dyn Fn(&bool, &mut Window, &mut App)>>,
+ }
+@@ -151,6 +164,7 @@ impl Popover {
+             appearance: true,
+             overlay_closable: true,
+             platform_delegation: None,
++            content_observer: None,
+             state_observer: None,
+             default_open: false,
+             open: None,
+@@ -177,6 +191,17 @@ impl Popover {
+         self
+     }
+ 
++    /// Observe the same surface after native allocation. This opt-in permits
++    /// `delegate_platform_when` to suppress that surface's canvas ink after
++    /// acknowledgement; it keeps native layout, controller and event routing.
++    pub fn on_content_frame(
++        mut self,
++        observer: impl Fn(PopoverContentFrame, &mut Window, &mut App) + 'static,
++    ) -> Self {
++        self.content_observer = Some(Rc::new(observer));
++        self
++    }
++
+     /// Set the anchor corner of the popover, default is [`Anchor::TopLeft`].
+     ///
+     /// This names the popover's own anchor, not a corner of the trigger.
+@@ -362,6 +387,11 @@ impl RenderOnce for Popover {
+         let children = self.children;
+         let content = self.content;
+         let trigger_style = self.trigger_style;
++        let content_observer = self.content_observer;
++        let delegated = self
++            .platform_delegation
++            .as_ref()
++            .is_some_and(|read| read(cx));
+ 
+         BasePopover::new(self.id)
+             .anchor(self.anchor)
+@@ -374,7 +404,8 @@ impl RenderOnce for Popover {
+                 this.delegate_platform_when(move |cx| delegated(cx))
+             })
+             .content(move |state, window, cx| {
+-                v_flex()
++                let owner = cx.entity().downgrade();
++                let mut surface = v_flex()
+                     .id("content")
+                     .occlude()
+                     .tab_group()
+@@ -426,7 +457,26 @@ impl RenderOnce for Popover {
+                             .inset_0()
+                             .size_full(),
+                         )
+-                    })
++                    });
++                if let Some(observer) = content_observer {
++                    let material = surface.style().clone();
++                    surface = surface
++                        .on_prepaint(move |bounds, window, cx| {
++                            observer(
++                                PopoverContentFrame {
++                                    state: owner,
++                                    bounds,
++                                    clip: window.content_mask().bounds,
++                                    material,
++                                    text_style: window.text_style(),
++                                },
++                                window,
++                                cx,
++                            );
++                        })
++                        .when(delegated, |surface| surface.opacity(0.));
++                }
++                surface
+             })
+             .when_some(self.trigger, |this, trigger| this.trigger_with(trigger))
+             .when_some(trigger_style, |this, style| this.refine_style(&style))
+@@ -944,6 +994,96 @@ mod tests {
+         assert_eq!(&*changes.borrow(), &[true, false]);
+     }
+ 
++    struct ObservedContentHarness {
++        present: bool,
++        delegated: Rc<Cell<bool>>,
++        frames: Rc<RefCell<Vec<PopoverContentFrame>>>,
++    }
++    impl Render for ObservedContentHarness {
++        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++            if !self.present {
++                return div().into_any_element();
++            }
++            let delegated = self.delegated.clone();
++            let frames = self.frames.clone();
++            Popover::new("observed-content")
++                .default_open(true)
++                .trigger(Button::new("observed-trigger").label("Open actual owner"))
++                .content(|_, _, _| div().size(px(40.)).bg(gpui::white()))
++                .delegate_platform_when(move |_| delegated.get())
++                .on_content_frame(move |frame, _, _| frames.borrow_mut().push(frame))
++                .into_any_element()
++        }
++    }
++    #[gpui::test]
++    fn observed_content_keeps_actual_controller_and_native_material_until_retirement(
++        cx: &mut gpui::TestAppContext,
++    ) {
++        cx.update(|cx| {
++            gpui_base::GlobalState::init(cx);
++            cx.set_global(Theme::default());
++            init(cx);
++        });
++        let delegated = Rc::new(Cell::new(false));
++        let frames = Rc::new(RefCell::new(Vec::new()));
++        let (view, cx) = cx.add_window_view({
++            let delegated = delegated.clone();
++            let frames = frames.clone();
++            move |_, _| ObservedContentHarness {
++                present: true,
++                delegated,
++                frames,
++            }
++        });
++        cx.update(|window, cx| window.draw(cx).clear(cx));
++        let native = frames.borrow().last().unwrap().clone();
++        assert!(native.bounds.size.width > px(40.));
++        assert!(native.clip.size.width > px(0.));
++        assert!(native.material.background.is_some());
++        assert!(!native.material.box_shadow.as_ref().unwrap().is_empty());
++        assert!(cx.update(|_, cx| native.state.upgrade().unwrap().read(cx).is_open()));
++        let visible = |window: &Window| {
++            window
++                .painted_quads()
++                .iter()
++                .filter(|quad| !quad.background.is_transparent() || quad.border_color.a > 0.)
++                .count()
++        };
++        let before = cx.update(|window, _| visible(window));
++        delegated.set(true);
++        view.update(cx, |_, cx| cx.notify());
++        cx.update(|window, cx| window.draw(cx).clear(cx));
++        let after = cx.update(|window, _| visible(window));
++        assert!(
++            after < before,
++            "acknowledged presentation suppresses actual native surface ink while preserving layout: {before}->{after}"
++        );
++        let delegated_frame = frames.borrow().last().unwrap().clone();
++        assert_eq!(delegated_frame.bounds, native.bounds);
++        assert!(
++            cx.update(|_, cx| delegated_frame.state.upgrade().unwrap().read(cx).is_open()),
++            "the same actual controller remains open"
++        );
++        cx.update(|window, cx| {
++            delegated_frame
++                .state
++                .upgrade()
++                .unwrap()
++                .update(cx, |state, cx| state.dismiss(window, cx))
++        });
++        assert!(!cx.update(|_, cx| delegated_frame.state.upgrade().unwrap().read(cx).is_open()));
++        view.update(cx, |view, cx| {
++            view.present = false;
++            cx.notify();
++        });
++        cx.update(|window, cx| window.draw(cx).clear(cx));
++        cx.update(|window, cx| window.draw(cx).clear(cx));
++        assert!(
++            cx.update(|_, _| delegated_frame.state.upgrade().is_none()),
++            "removing the actual invoker retires its native weak controller"
++        );
++    }
++
+     struct DefaultOpenHarness;
+ 
+     impl Render for DefaultOpenHarness {
+-- 
+2.53.0
+
