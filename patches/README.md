@@ -410,3 +410,10 @@ Patch0047 follows the GPUI current warm text-entry identity fix. The adapter may
 bind its current verified adopted/live text association before presentation;
 fallback retirement remains separately gated by presented and verified identity.
 No native Kit owner/controller or presentation source changes in this follow-up.
+
+Patch0048 follows two GPUI web fixes (Zed patches 0050 and 0051). Focusing a
+conduit reasserts the mirror's stored selection, so WebKit's caret at the start
+of a newly focused contenteditable root is no longer imported as the person's;
+and a window created without ResizeObserver measures its canvas at creation and
+on every window resize, so it paints instead of keeping a 1x1 backing store.
+No Kit owner, controller or presentation source changes in this follow-up.
