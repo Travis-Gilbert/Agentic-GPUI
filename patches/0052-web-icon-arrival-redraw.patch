@@ -1,0 +1,166 @@
+From cfe72aa9192cabc268c4381088927da964ad0417 Mon Sep 17 00:00:00 2001
+From: Travis Gilbert <1travisgilbert@gmail.com>
+Date: Sun, 18 Oct 2026 15:38:21 -0400
+Subject: [PATCH] fix(assets): redraw windows when an on-demand web icon
+ arrives
+
+The web asset source answers an error while an icon is in flight and
+assumed GPUI would retry. GPUI draws only when something asks, so a frame
+drawn before the icon arrived stayed without it until unrelated input. A
+tile whose glyph is missing also withholds its frame, so a panel built
+from such tiles could not be published until then.
+
+gpui_kit_assets::init now redraws every window once per burst of icons
+reaching the cache, and the Kit's init calls it. A failed fetch asks for
+nothing, so an icon that never arrives cannot keep the page drawing.
+The native source's init is a no-op.
+---
+ Cargo.lock                         |  1 +
+ crates/assets/Cargo.toml           |  2 ++
+ crates/assets/src/lib.rs           |  4 ++--
+ crates/assets/src/native_assets.rs |  6 ++++-
+ crates/assets/src/wasm_assets.rs   | 38 +++++++++++++++++++++++++++---
+ crates/component/src/lib.rs        |  1 +
+ 6 files changed, 46 insertions(+), 6 deletions(-)
+
+diff --git a/Cargo.lock b/Cargo.lock
+index f643cbe7..512e3d32 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -4185,6 +4185,7 @@ name = "gpui-kit-assets"
+ version = "0.7.3"
+ dependencies = [
+  "anyhow",
++ "async-channel",
+  "gpui",
+  "gpui_platform",
+  "log",
+diff --git a/crates/assets/Cargo.toml b/crates/assets/Cargo.toml
+index 7689d174..884e1281 100644
+--- a/crates/assets/Cargo.toml
++++ b/crates/assets/Cargo.toml
+@@ -26,6 +26,8 @@ gpui_platform.workspace = true
+ rust-embed = { version = "8.7.2", features = ["interpolate-folder-path", "include-exclude"] }
+ 
+ [target.'cfg(target_family = "wasm")'.dependencies]
++# Already in every GPUI build; carries icon arrivals to `init`.
++async-channel = "2.5.0"
+ reqwest = { workspace = true }
+ wasm-bindgen = "0.2"
+ wasm-bindgen-futures = "0.4"
+diff --git a/crates/assets/src/lib.rs b/crates/assets/src/lib.rs
+index 745c8d3e..44abb924 100644
+--- a/crates/assets/src/lib.rs
++++ b/crates/assets/src/lib.rs
+@@ -38,10 +38,10 @@ mod native_assets;
+ mod wasm_assets;
+ 
+ #[cfg(not(target_family = "wasm"))]
+-pub use native_assets::{AllAssets, Assets};
++pub use native_assets::{AllAssets, Assets, init};
+ 
+ #[cfg(target_family = "wasm")]
+-pub use wasm_assets::Assets;
++pub use wasm_assets::{Assets, init};
+ 
+ /// On WASM, the complete catalog uses the same on-demand CDN source.
+ #[cfg(target_family = "wasm")]
+diff --git a/crates/assets/src/native_assets.rs b/crates/assets/src/native_assets.rs
+index fb40e3c6..c757c912 100644
+--- a/crates/assets/src/native_assets.rs
++++ b/crates/assets/src/native_assets.rs
+@@ -1,5 +1,5 @@
+ use anyhow::anyhow;
+-use gpui::{AssetSource, Result, SharedString};
++use gpui::{App, AssetSource, Result, SharedString};
+ use std::borrow::Cow;
+ 
+ include!(concat!(env!("OUT_DIR"), "/default_assets.rs"));
+@@ -40,3 +40,7 @@ macro_rules! impl_asset_source {
+ 
+ impl_asset_source!(Assets);
+ impl_asset_source!(AllAssets);
++
++/// Embedded assets are present before the first frame, so nothing waits on an
++/// arrival. The web source's `init` redraws when a fetched icon lands.
++pub fn init(_cx: &mut App) {}
+diff --git a/crates/assets/src/wasm_assets.rs b/crates/assets/src/wasm_assets.rs
+index 3da9268d..309440f2 100644
+--- a/crates/assets/src/wasm_assets.rs
++++ b/crates/assets/src/wasm_assets.rs
+@@ -1,10 +1,41 @@
+ use anyhow::anyhow;
+-use gpui::{AssetSource, Result, SharedString};
++use gpui::{App, AssetSource, Result, SharedString};
+ use std::borrow::Cow;
+ use std::collections::HashMap;
+-use std::sync::{Arc, RwLock};
++use std::sync::{Arc, Mutex, RwLock};
+ use wasm_bindgen_futures::spawn_local;
+ 
++/// Told once for each icon that reaches the cache; [`init`] holds the other end.
++static ARRIVALS: Mutex<Option<async_channel::Sender<()>>> = Mutex::new(None);
++
++/// Redraw every window when an on-demand icon reaches the cache.
++///
++/// `load` answers an error while an icon is in flight, and a frame drawn then
++/// drew no icon. GPUI draws only when something asks, so without this the
++/// frame that would draw the icon waits for unrelated input. A burst of
++/// arrivals is one redraw. A failed fetch asks for nothing, so an icon that
++/// never arrives cannot keep the page drawing.
++pub fn init(cx: &mut App) {
++    let (sender, receiver) = async_channel::unbounded();
++    if let Ok(mut arrivals) = ARRIVALS.lock() {
++        *arrivals = Some(sender);
++    }
++    cx.spawn(async move |cx| {
++        while receiver.recv().await.is_ok() {
++            while receiver.try_recv().is_ok() {}
++            cx.refresh();
++        }
++    })
++    .detach();
++}
++
++fn arrived() {
++    let sender = ARRIVALS.lock().ok().and_then(|arrivals| arrivals.clone());
++    if let Some(sender) = sender {
++        let _ = sender.try_send(());
++    }
++}
++
+ /// WASM implementation - download assets on-demand
+ pub struct Assets {
+     endpoint: SharedString,
+@@ -69,6 +100,7 @@ impl AssetSource for Assets {
+                                         if let Ok(mut cache) = cache.write() {
+                                             cache.insert(path_clone.clone(), bytes.to_vec());
+                                         }
++                                        arrived();
+                                     }
+                                     Err(e) => {
+                                         log::warn!("Failed to read icon {}: {}", path_clone, e);
+@@ -94,7 +126,7 @@ impl AssetSource for Assets {
+                 });
+             }
+ 
+-            // Return error so GPUI will retry (but only log once per icon)
++            // Return an error; `init` redraws once the icon is cached.
+             Err(anyhow!("Wasm assets loading, will be available soon..."))
+         } else {
+             Ok(None)
+diff --git a/crates/component/src/lib.rs b/crates/component/src/lib.rs
+index 69a9c9ee..33e088d0 100644
+--- a/crates/component/src/lib.rs
++++ b/crates/component/src/lib.rs
+@@ -131,6 +131,7 @@ rust_i18n::i18n!("locales", fallback = "en");
+ /// You must initialize the components at your application's entry point.
+ pub fn init(cx: &mut App) {
+     theme::init(cx);
++    gpui_kit_assets::init(cx);
+     global_state::init(cx);
+     #[cfg(any(feature = "inspector", debug_assertions))]
+     inspector::init(cx);
+-- 
+2.53.0
+

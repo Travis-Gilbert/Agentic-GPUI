@@ -434,3 +434,12 @@ conduit (Tab, or the page's own `focus()`) restores the selection the mirror
 stored and schedules a sync, so a selection the browser moved while the conduit
 was unfocused no longer holds off every later write. No Kit owner, controller or
 presentation source changes in this follow-up.
+
+Patch0052 makes the web asset source redraw when an icon arrives. `load` answers
+an error while an icon is in flight, on the assumption that GPUI retries; GPUI
+draws only when something asks, so the frame that would draw the icon waited for
+unrelated input, and a panel built from icon tiles (which withhold their frame
+until their glyph loads) could not publish until then. `gpui_kit_assets::init`,
+called from the Kit's `init`, redraws every window once per burst of icons
+reaching the cache. A failed fetch asks for nothing, so an icon that never
+arrives cannot keep the page drawing. Native `init` is a no-op.
