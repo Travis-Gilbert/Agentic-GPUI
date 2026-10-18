@@ -428,3 +428,9 @@ hold focus now takes the text a sync writes into it: the guard that holds off
 writes during an IME selection move applies only while the conduit holds focus,
 so an agent's revision or an undo reaches a parked draft. No Kit owner,
 controller or presentation source changes in this follow-up.
+
+Patch0051 follows one GPUI web fix (Zed patch 0054). Focus the page gives a
+conduit (Tab, or the page's own `focus()`) restores the selection the mirror
+stored and schedules a sync, so a selection the browser moved while the conduit
+was unfocused no longer holds off every later write. No Kit owner, controller or
+presentation source changes in this follow-up.
