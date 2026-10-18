@@ -417,3 +417,8 @@ of a newly focused contenteditable root is no longer imported as the person's;
 and a window created without ResizeObserver measures its canvas at creation and
 on every window resize, so it paints instead of keeping a 1x1 backing store.
 No Kit owner, controller or presentation source changes in this follow-up.
+
+Patch0049 follows one GPUI web fix (Zed patch 0052). A styled root that does not
+hold focus no longer has the stored caret written into the document selection,
+which in Chromium focused the root and took focus back from wherever it had
+gone. No Kit owner, controller or presentation source changes in this follow-up.
