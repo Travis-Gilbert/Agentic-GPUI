@@ -4185,6 +4185,7 @@ name = "gpui-kit-assets"
 version = "0.7.3"
 dependencies = [
  "anyhow",
+ "async-channel",
  "gpui",
  "gpui_platform",
  "log",

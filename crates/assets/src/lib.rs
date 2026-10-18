@@ -38,10 +38,10 @@ mod native_assets;
 mod wasm_assets;
 
 #[cfg(not(target_family = "wasm"))]
-pub use native_assets::{AllAssets, Assets};
+pub use native_assets::{AllAssets, Assets, init};
 
 #[cfg(target_family = "wasm")]
-pub use wasm_assets::Assets;
+pub use wasm_assets::{Assets, init};
 
 /// On WASM, the complete catalog uses the same on-demand CDN source.
 #[cfg(target_family = "wasm")]

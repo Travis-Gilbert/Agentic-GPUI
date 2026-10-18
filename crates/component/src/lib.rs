@@ -131,6 +131,7 @@ rust_i18n::i18n!("locales", fallback = "en");
 /// You must initialize the components at your application's entry point.
 pub fn init(cx: &mut App) {
     theme::init(cx);
+    gpui_kit_assets::init(cx);
     global_state::init(cx);
     #[cfg(any(feature = "inspector", debug_assertions))]
     inspector::init(cx);

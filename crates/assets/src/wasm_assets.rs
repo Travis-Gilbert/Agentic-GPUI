@@ -1,9 +1,40 @@
 use anyhow::anyhow;
-use gpui::{AssetSource, Result, SharedString};
+use gpui::{App, AssetSource, Result, SharedString};
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use wasm_bindgen_futures::spawn_local;
+
+/// Told once for each icon that reaches the cache; [`init`] holds the other end.
+static ARRIVALS: Mutex<Option<async_channel::Sender<()>>> = Mutex::new(None);
+
+/// Redraw every window when an on-demand icon reaches the cache.
+///
+/// `load` answers an error while an icon is in flight, and a frame drawn then
+/// drew no icon. GPUI draws only when something asks, so without this the
+/// frame that would draw the icon waits for unrelated input. A burst of
+/// arrivals is one redraw. A failed fetch asks for nothing, so an icon that
+/// never arrives cannot keep the page drawing.
+pub fn init(cx: &mut App) {
+    let (sender, receiver) = async_channel::unbounded();
+    if let Ok(mut arrivals) = ARRIVALS.lock() {
+        *arrivals = Some(sender);
+    }
+    cx.spawn(async move |cx| {
+        while receiver.recv().await.is_ok() {
+            while receiver.try_recv().is_ok() {}
+            cx.refresh();
+        }
+    })
+    .detach();
+}
+
+fn arrived() {
+    let sender = ARRIVALS.lock().ok().and_then(|arrivals| arrivals.clone());
+    if let Some(sender) = sender {
+        let _ = sender.try_send(());
+    }
+}
 
 /// WASM implementation - download assets on-demand
 pub struct Assets {
@@ -69,6 +100,7 @@ impl AssetSource for Assets {
                                         if let Ok(mut cache) = cache.write() {
                                             cache.insert(path_clone.clone(), bytes.to_vec());
                                         }
+                                        arrived();
                                     }
                                     Err(e) => {
                                         log::warn!("Failed to read icon {}: {}", path_clone, e);
@@ -94,7 +126,7 @@ impl AssetSource for Assets {
                 });
             }
 
-            // Return error so GPUI will retry (but only log once per icon)
+            // Return an error; `init` redraws once the icon is cached.
             Err(anyhow!("Wasm assets loading, will be available soon..."))
         } else {
             Ok(None)

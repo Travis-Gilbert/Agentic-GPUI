@@ -1,5 +1,5 @@
 use anyhow::anyhow;
-use gpui::{AssetSource, Result, SharedString};
+use gpui::{App, AssetSource, Result, SharedString};
 use std::borrow::Cow;
 
 include!(concat!(env!("OUT_DIR"), "/default_assets.rs"));
@@ -40,3 +40,7 @@ macro_rules! impl_asset_source {
 
 impl_asset_source!(Assets);
 impl_asset_source!(AllAssets);
+
+/// Embedded assets are present before the first frame, so nothing waits on an
+/// arrival. The web source's `init` redraws when a fetched icon lands.
+pub fn init(_cx: &mut App) {}
