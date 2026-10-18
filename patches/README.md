@@ -422,3 +422,9 @@ Patch0049 follows one GPUI web fix (Zed patch 0052). A styled root that does not
 hold focus no longer has the stored caret written into the document selection,
 which in Chromium focused the root and took focus back from wherever it had
 gone. No Kit owner, controller or presentation source changes in this follow-up.
+
+Patch0050 follows one GPUI web fix (Zed patch 0053). A styled root that does not
+hold focus now takes the text a sync writes into it: the guard that holds off
+writes during an IME selection move applies only while the conduit holds focus,
+so an agent's revision or an undo reaches a parked draft. No Kit owner,
+controller or presentation source changes in this follow-up.
